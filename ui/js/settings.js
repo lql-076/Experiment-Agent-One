@@ -207,7 +207,7 @@ sv.addEventListener('click', function (ev) {
 
   else if (t.id === 'setupGo') setupStart(t);
   else if (t.id === 'setupStop') setupStop();
-  else if (t.id === 'recheck') runChecks(false).then(function () { toast('自检完成：已就绪 ' + readyCount() + ' / ' + LIVE_CHECKS.length); });
+  else if (t.id === 'recheck') checkPanel(true);
   else if (t.id === 'nightNow') { t.disabled = true; t.textContent = '在跑…'; api('POST', '/api/actions/nightly_run', {}, 600000).then(function (j) { var e = j.res.errs || {}; toast(Object.keys(e).length ? '跑完了，有问题：' + Object.values(e).join('；') : '每日差事跑完了', 6000); }).catch(function (e) { toast(e.message); }).then(function () { t.disabled = false; t.textContent = '现在跑一次每日差事'; }); }
   else if (t.dataset.go) goSec(t.dataset.go);
   else if (t.dataset.reveal) { var i = $('#' + t.dataset.reveal); i.type = i.type === 'password' ? 'text' : 'password'; }

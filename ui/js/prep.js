@@ -57,52 +57,86 @@ function updatePrepUI(k) {
 var BOOT_ICON = { ok: ICONS.check, miss: ICONS.cross, wait: ICONS.dash };
 function bootRow(c, r) {
   var row = $('#br-' + c.k); if (!row) return;
-  var st = r.st === 'ok' || S.manual[c.k] ? 'ok' : r.st; var b = row.querySelector('.bst'); b.className = 'bst ' + st; b.innerHTML = BOOT_ICON[st] || '';
+  var st = r.st === 'ok' || S.manual[c.k] ? 'ok' : r.st; var b = row.querySelector('.bst'); b.className = 'bst ' + st; b.innerHTML = BOOT_ICON[st] || ''; row.className = 'brow r-' + st;
   row.querySelector('.bdet').textContent = S.manual[c.k] && r.st !== 'ok' ? '已手动确认' : r.d;
 }
 function demoCheck(c) { return delay(rnd(120, 520)).then(function () { return { st: c.demo[0], d: c.demo[1] + '（演示）' }; }); }
-function runChecks(boot) {
+/* 自检：14 项同时查，哪项先查完先显示（相邻两项至少隔一点时间，看得清是一项一项亮的）。
+   panel=true 时同步更新自检窗口（启动自检、重新自检共用一个窗口）。 */
+function runChecks(panel) {
   if (S.checking) return Promise.resolve();
   S.checking = true;
   LIVE_CHECKS.forEach(function (c) { S.check[c.k] = { st: 'run', d: '检测中' }; });
   if ($('#prepReady')) $('#sbody').innerHTML = sectionBody(secById('prep'));
-  var done = 0, total = LIVE_CHECKS.length;
-  var reveal = function (c, r, i) {
-    return delay((boot ? 260 : 120) + i * (boot ? 90 : 50)).then(function () {
+  var done = 0, total = LIVE_CHECKS.length, t0 = performance.now(), next = t0 + (panel ? 260 : 120), gap = panel ? 80 : 45;
+  var slot = function () { var now = performance.now(); next = Math.max(now, next + gap); return delay(next - now); };
+  var reveal = function (c, r) {
+    return slot().then(function () {
       S.check[c.k] = r; done++;
-      if (boot) { bootRow(c, r); $('#bootBar').style.transform = 'scaleX(' + (done / total).toFixed(3) + ')'; }
+      if (panel) { bootRow(c, r); $('#bootBar').style.transform = 'scaleX(' + (done / total).toFixed(3) + ')'; if (!$('#boot').classList.contains('done')) $('#bootSum').textContent = '已查 ' + done + ' / ' + total; }
       updatePrepUI(c.k);
     });
   };
   var p;
   if (useLive()) {
-    p = api('POST', '/api/checks/run', null, 60000).then(function (j) {
-      if (j.places) PLACES = j.places;
-      return Promise.all(LIVE_CHECKS.map(function (c, i) { return reveal(c, j.res[c.k] || { st: 'wait', d: '' }, i); }));
-    }).catch(function (e) {
-      return Promise.all(LIVE_CHECKS.map(function (c, i) { return reveal(c, { st: 'wait', d: '自检没跑完：' + e.message }, i); }));
-    });
+    p = Promise.all(LIVE_CHECKS.map(function (c) {
+      return api('POST', '/api/checks/' + c.k + '/run?quick=1', null, 45000)
+        .catch(function (e) { return { st: 'wait', d: '没查完：' + e.message }; })
+        .then(function (r) { return reveal(c, r); });
+    })).then(function () { return api('GET', '/api/checks').then(function (j) { if (j.places) PLACES = j.places; }, function () {}); });
   } else {
-    var t0 = performance.now();
-    p = Promise.all(LIVE_CHECKS.map(function (c, i) { return demoCheck(c).then(function (r) { return delay(Math.max(0, (boot ? 380 : 160) + i * (boot ? 90 : 60) - (performance.now() - t0))).then(function () { S.check[c.k] = r; done++; if (boot) { bootRow(c, r); $('#bootBar').style.transform = 'scaleX(' + (done / total).toFixed(3) + ')'; } updatePrepUI(c.k); }); }); }));
+    p = Promise.all(LIVE_CHECKS.map(function (c) { return demoCheck(c).then(function (r) { return reveal(c, r); }); }));
   }
   return p.then(function () { S.checking = false; S.lastCheck = new Date(); updatePrepUI(); var pw = $('#prepWhen'); if (pw) pw.textContent = '上次自检 ' + pad(S.lastCheck.getHours()) + ':' + pad(S.lastCheck.getMinutes()) + ' · Agent 文件夹：' + P('root'); });
 }
 function afterCheck() { var m = missingCount(); if (m) toast('整备缺 ' + m + ' 项，去 设置 › 整备 查看', 3500); }
 function boot() {
   if (!S.set.bootShow) { runChecks(false).then(afterCheck); return; }
-  var b = $('#boot');
-  $('#bootTitle').textContent = '启动自检' + (useLive() ? '' : '（演示）');
+  checkPanel(false);
+}
+/* 自检窗口：启动时自动弹（查完自己关）；整备里点「重新自检」也弹这个（查完停在结果上，等你看完再关）。 */
+function checkPanel(manual) {
+  if (S.checking) { if (manual) toast('正在自检，稍等'); return; }
+  var b = $('#boot'), total = LIVE_CHECKS.length, t0 = performance.now();
+  var skip = $('#bootSkip'), go = $('#bootGo');
+  $('#bootTitle').textContent = (manual ? '重新自检' : '启动自检') + (useLive() ? '' : '（演示）');
+  $('#bootSub').textContent = '正在检查整备清单';
+  $('#bootSum').textContent = '已查 0 / ' + total;
+  $('#bootBar').style.transform = 'scaleX(0)';
   $('#bootList').innerHTML = LIVE_CHECKS.map(function (c, i) { return '<div class="brow" id="br-' + c.k + '" style="--i:' + i + '"><span class="bst run"></span><span>' + esc(c.t) + '</span><span class="bdet">检测中</span></div>'; }).join('');
-  b.classList.add('on');
+  skip.textContent = manual ? '后台继续' : '跳过'; go.hidden = true;
+  b.classList.remove('done', 'out'); b.classList.toggle('manual', !!manual); b.classList.add('on');
   var closed = false;
-  var close = function () { if (closed) return; closed = true; b.classList.add('out'); setTimeout(function () { b.classList.remove('on', 'out', 'done'); }, 460); };
-  b.onclick = close;
+  var onKey = function (e) { if (e.key === 'Escape') close(); };
+  var close = function () {
+    if (closed) return; closed = true; document.removeEventListener('keydown', onKey);
+    b.classList.add('out'); setTimeout(function () { b.classList.remove('on', 'out', 'done', 'manual'); }, 460);
+  };
+  document.addEventListener('keydown', onKey);
+  b.onclick = function (e) {
+    if (e.target.closest('#bootGo')) { close(); gotoTodo(); return; }
+    // 重新自检时，点卡片里面不关（方便看结果）；点按钮或卡片外面才关
+    if (manual && e.target.closest('.boot-card') && !e.target.closest('button')) return;
+    close();
+  };
   runChecks(true).then(function () {
-    var n = readyCount(), m = missingCount();
+    var n = readyCount(), todo = total - n;
     b.classList.add('done');
-    $('#bootSub').textContent = m ? '有 ' + m + ' 项需要补' : '全部就绪';
-    $('#bootSum').textContent = '已就绪 ' + n + ' / ' + LIVE_CHECKS.length;
-    return delay(m ? 1600 : 800);
-  }).then(function () { close(); afterCheck(); });
+    $('#bootSub').textContent = todo ? '有 ' + todo + ' 项要处理' : '全部就绪';
+    $('#bootSum').textContent = '已就绪 ' + n + ' / ' + total + (manual ? ' · 用时 ' + ((performance.now() - t0) / 1000).toFixed(1) + ' 秒' : '');
+    if (!manual) return delay(missingCount() ? 1600 : 800).then(function () { close(); afterCheck(); });
+    if (closed) { toast('自检完成：已就绪 ' + n + ' / ' + total + (todo ? '，' + todo + ' 项要处理' : ''), 3500); return; }
+    skip.textContent = '好'; go.hidden = !todo;
+  });
+}
+/* 自检窗口里点「去处理」：回到整备，滚到第一张要处理的卡片，闪一下 */
+function gotoTodo() {
+  var first = LIVE_CHECKS.filter(function (c) { return !isReady(c); })[0];
+  if (!first) return;
+  var show = function () {
+    var el = $('#su-' + first.k); if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+  };
+  if (S.view !== 'settings' || S.sec !== 'prep') { S.sec = 'prep'; renderSettings(); goView('settings'); setTimeout(show, 450); } else show();
 }

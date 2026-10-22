@@ -21,6 +21,7 @@ tools/wheels/*
 
 # ── 开发用 ──
 dist/
+docs/旧版说明*/
 dev/.run/
 __pycache__/
 *.pyc

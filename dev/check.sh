@@ -15,9 +15,12 @@ else
   step "语法检查" "$PY" -m compileall -q app scripts dev
 fi
 step "界面 · 演示模式" "$PY" dev/ui_smoke.py dev/.run/shots-demo --demo
+step "重新自检窗口 · 演示模式" "$PY" dev/ui/recheck.py dev/.run/shots-demo --demo
 step "起测试环境" "$DEV/serve.sh" start
 step "界面 · 连后端" "$PY" dev/ui_smoke.py dev/.run/shots
 step "说明页" "$PY" dev/ui/docs.py dev/.run/shots
+step "说明页树状图" "$PY" dev/ui/tree.py dev/.run/shots
+step "重新自检窗口 · 连后端" "$PY" dev/ui/recheck.py dev/.run/shots
 step "游戏帧数统计" "$PY" dev/test_fps.py
 "$DEV/serve.sh" stop
 

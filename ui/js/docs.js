@@ -1,8 +1,11 @@
 'use strict';
-/* 「说明」页：docs 文件夹里的操作手册、架构说明（Markdown），加上一张按实时状态上色的架构图。
-   文档是后端从 docs 文件夹读的；「自动生成 › 当前结构」每次启动按代码重写，不会过时。 */
-var DOCS = { list: null, cur: null, doc: null };
-try { DOCS.cur = localStorage.getItem('agentDocs.cur') || null; } catch (e) {}
+/* 「说明」页：给人看图，给 AI 看文字。
+   - 架构图（docs/AI文档/架构）：默认只画树状图（每篇开头的 mermaid 段，tree.js 画），总览再加一张实时架构图；能切到文字版。
+   - 操作手册、更新记录：照常显示文字。
+   文档是后端从 docs 文件夹读的；AI文档/当前结构.md 每次启动按代码重写，不会过时。 */
+var DOCS = { list: null, cur: null, doc: null, mode: 'tree', timer: 0 };
+try { DOCS.cur = localStorage.getItem('agentDocs.cur') || null; DOCS.mode = localStorage.getItem('agentDocs.mode') || 'tree'; } catch (e) {}
+function isArch(rel) { return /^AI文档\/架构\//.test(rel || ''); }
 
 /* ---------- 一个够用的 Markdown 渲染：标题、段落、列表、表格、代码、引用、链接、粗体 ---------- */
 function mdInline(s) {
@@ -37,8 +40,10 @@ function mdHTML(src) {
     if (/^\s*$/.test(ln)) { i++; continue; }
     if (/^<!--\s*live:arch\s*-->$/.test(ln.trim())) { out.push('<div class="live-arch" id="liveArch">读取实时状态…</div>'); i++; skipCode = true; continue; }
     if (/^```/.test(ln)) {
-      var code = []; i++; while (i < L.length && !/^```/.test(L[i])) code.push(L[i++]); i++;
+      var fence = ln.match(/^`+/)[0], lang = ln.slice(fence.length).trim();
+      var code = []; i++; while (i < L.length && L[i].trim() !== fence) code.push(L[i++]); i++;
       if (skipCode) { skipCode = false; continue; }          // 紧跟在实时架构图后面的文字版，是给记事本看的，界面里不重复显示
+      if (lang === 'mermaid' && /^\s*mindmap/.test(code.join('\n'))) { out.push(treeSlot(code.join('\n'))); continue; }
       out.push('<pre class="md-code">' + esc(code.join('\n')) + '</pre>'); continue;
     }
     skipCode = false;
@@ -97,11 +102,37 @@ function archSVG(svcs) {
   return h + '</svg><div class="la-legend"><span><i style="background:var(--ok)"></i>正常</span><span><i style="background:var(--c-neu)"></i>进行中</span><span><i style="background:var(--bad)"></i>出错</span><span><i style="background:var(--text3)"></i>没在运行</span><span class="cap">颜色是现在的实时状态，和「后台」页一样</span></div>';
 }
 function fillLiveArch() {
-  var el = $('#liveArch'); if (!el) return;
-  if (!useLive()) { el.innerHTML = archSVG([]); return; }
-  var draw = function () { var e = $('#liveArch'); if (e) e.innerHTML = archSVG((MON.data && MON.data.services) || []); };
-  if (MON.data) draw();
-  api('GET', '/api/monitor', null, 8000).then(function (j) { MON.data = j; draw(); }).catch(draw);
+  var draw = function () { var e = $('#liveArch'); if (e) e.innerHTML = archSVG(useLive() ? (MON.data && MON.data.services) || [] : []); treeLive(); };
+  draw();
+  if (useLive()) api('GET', '/api/monitor', null, 8000).then(function (j) { MON.data = j; draw(); }).catch(draw);
+}
+/* 停在「说明」页时，每 5 秒刷新一次状态灯和实时架构图；切走就停 */
+function docsLiveTick() {
+  if (S.view !== 'docs') { clearInterval(DOCS.timer); DOCS.timer = 0; return; }
+  if (useLive() && $('.tn-dot, #liveArch')) fillLiveArch();
+}
+
+/* 架构图模式：标题、一句话、树状图；总览再加实时架构图。文字版在 docs/AI文档 里，给 AI 看 */
+function archLead(src) {
+  var L = src.split('\n'), i = L.findIndex(function (l) { return /^##\s.*(做什么|一句话)/.test(l); });
+  if (i < 0) return '';
+  var p = [];
+  for (i++; i < L.length; i++) {
+    var l = L[i].trim();
+    if (!l) { if (p.length) break; continue; }
+    if (/^(#|\||```|[-*]\s|\d+\.\s|>|<!--)/.test(l)) break;
+    p.push(l);
+  }
+  return p.join('');
+}
+function treeModeHTML(d) {
+  var src = d.text.replace(/\r/g, ''), title = (src.match(/^# (.*)$/m) || [0, ''])[1], codes = [], lead = archLead(src);
+  src.replace(/```mermaid\n([\s\S]*?)```/g, function (m, c) { codes.push(c); });
+  if (!codes.length) return mdHTML(d.text);
+  var h = '<h1>' + esc(title.replace(/^架构\s*·\s*/, '')) + '</h1>' + (lead ? '<p class="doc-lead">' + mdInline(lead.replace(/：$/, '。')) + '</p>' : '');
+  h += codes.map(treeSlot).join('');
+  if (/<!--\s*live:arch\s*-->/.test(src)) h += '<h2>现在运行着的程序（实时）</h2><div class="live-arch" id="liveArch">读取实时状态…</div>';
+  return h;
 }
 
 /* ---------- 页面 ---------- */
@@ -123,7 +154,8 @@ function renderDocs() {
   }
   v.innerHTML = '<div class="settings docs"><nav class="snav" id="docNav">' + (DOCS.list ? docsNav() : '<div class="cap">读取中…</div>') + '</nav>' +
     '<article class="sbody md" id="docBody">' + (DOCS.doc ? docBodyHTML() : '<div class="cap">读取中…</div>') + '</article></div>';
-  if (DOCS.doc) fillLiveArch();
+  if (DOCS.doc) { drawTrees($('#docBody')); fillLiveArch(); }
+  if (!DOCS.timer) DOCS.timer = setInterval(docsLiveTick, 5000);
   api('GET', '/api/docs', null, 8000).then(function (j) {
     DOCS.list = j.items || []; DOCS.root = j.root;
     if (!DOCS.cur || !DOCS.list.some(function (d) { return d.rel === DOCS.cur; })) DOCS.cur = (DOCS.list[0] || {}).rel;
@@ -132,8 +164,16 @@ function renderDocs() {
   }).catch(function (e) { var b = $('#docBody'); if (b) b.innerHTML = '<div class="empty">读不了说明文档：' + esc(e.message) + '</div>'; });
 }
 function docBodyHTML() {
-  var d = DOCS.doc, t = new Date(d.mtime * 1000);
-  return '<div class="doc-meta cap num">' + esc(d.path) + ' · 改于 ' + (t.getMonth() + 1) + '-' + t.getDate() + ' ' + pad(t.getHours()) + ':' + pad(t.getMinutes()) + '</div>' + mdHTML(d.text);
+  var d = DOCS.doc, t = new Date(d.mtime * 1000), arch = isArch(d.rel), tree = arch && DOCS.mode === 'tree';
+  TREES = {};
+  var meta = '<div class="doc-meta cap num">' + (tree ? '文字版（给 AI 看）：' : '') + esc(d.path) + ' · 改于 ' + (t.getMonth() + 1) + '-' + t.getDate() + ' ' + pad(t.getHours()) + ':' + pad(t.getMinutes()) + '</div>';
+  var seg = arch ? '<div class="seg doc-mode" role="group" aria-label="看图还是看文字"><button data-doc-mode="tree" aria-pressed="' + tree + '">图</button><button data-doc-mode="text" aria-pressed="' + !tree + '">文字版</button></div>' : '';
+  return '<div class="doc-top">' + meta + seg + '</div>' + (tree ? treeModeHTML(d) : mdHTML(d.text));
+}
+function showDoc(scrollTop) {
+  var b = $('#docBody'); if (!b || !DOCS.doc) return;
+  b.innerHTML = docBodyHTML(); if (scrollTop) b.scrollTop = 0;
+  drawTrees(b); fillLiveArch();
 }
 function openDoc(rel, hash) {
   if (!rel) return;
@@ -141,15 +181,22 @@ function openDoc(rel, hash) {
   $$('#docNav [data-doc]').forEach(function (b) { b.setAttribute('aria-current', b.dataset.doc === rel ? 'page' : 'false'); });
   api('GET', '/api/docs/' + rel.split('/').map(encodeURIComponent).join('/'), null, 8000).then(function (d) {
     DOCS.doc = d;
-    var b = $('#docBody'); if (!b) return;
-    b.innerHTML = docBodyHTML(); b.scrollTop = 0;
-    fillLiveArch();
+    if (!$('#docBody')) return;
+    showDoc(true);
     if (hash) { var h = document.getElementById(decodeURIComponent(hash)); if (h) h.scrollIntoView(); }
   }).catch(function (e) { toast('打不开：' + e.message); });
 }
 $('#view-docs').addEventListener('click', function (ev) {
   var b = ev.target.closest('[data-doc]');
   if (b) { openDoc(b.dataset.doc); return; }
+  var m = ev.target.closest('[data-doc-mode]');
+  if (m) { DOCS.mode = m.dataset.docMode; try { localStorage.setItem('agentDocs.mode', DOCS.mode); } catch (e) {} showDoc(true); return; }
+  var g = ev.target.closest('[data-go-doc]');
+  if (g) {
+    var hit = (DOCS.list || []).filter(function (d) { return d.rel.indexOf('AI文档/架构/' + g.dataset.goDoc + '-') === 0; })[0];
+    if (hit) openDoc(hit.rel); else toast('没找到 ' + g.dataset.goDoc + ' 号那一篇');
+    return;
+  }
   var a = ev.target.closest('[data-doclink]');
   if (a) {
     ev.preventDefault();

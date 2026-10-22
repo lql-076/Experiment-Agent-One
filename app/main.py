@@ -17,7 +17,7 @@ from . import (agent, checks, db, deepseek, docs, events, exam, feed, growth, hw
 from .models import M
 from .qq import BOT
 
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 PORT = 8765
 _bg = []
 
@@ -107,7 +107,8 @@ async def lifespan(app):
     feed.load()
     write_themes_js()
     with contextlib.suppress(Exception):
-        docs.generate(app, VERSION, theme_list())      # 说明 › 自动生成 › 当前结构：每次启动按代码重写
+        docs.tidy_old()
+        docs.generate(app, VERSION, theme_list())      # docs/AI文档/当前结构.md：每次启动按代码重写
     with contextlib.suppress(Exception):
         await asyncio.to_thread(setup.cleanup_orphans)
     memory.init()
@@ -432,18 +433,26 @@ async def run_checks():
 
 
 @app.post("/api/checks/{k}/run")
-async def run_one(k: str):
+async def run_one(k: str, quick: int = 0):
+    """重新检测一项。quick=1 时和整体自检一样快查（重新自检的窗口 14 项同时发，每项查完立刻显示）；
+    不带 quick 是卡片上单独点的，模型服务和本地模型环境会查得更深。"""
     if k not in checks.CHECKS:
         raise HTTPException(404, "没有这一项")
     fn = checks.CHECKS[k]
-    if k == "models":
-        r = await checks.c_models(deep=True)
-    elif k == "aienv":
-        r = await checks.c_aienv(force=True)
-    else:
-        r = await fn()
+    try:
+        if k == "models" and not quick:
+            r = await asyncio.wait_for(checks.c_models(deep=True), 40)
+        elif k == "aienv" and not quick:
+            r = await asyncio.wait_for(checks.c_aienv(force=True), 40)
+        else:
+            r = await asyncio.wait_for(fn(), 20)
+    except asyncio.TimeoutError:
+        r = checks.miss("检测超时")
+    except Exception as e:
+        r = checks.miss(f"检测出错：{str(e)[:120]}")
     last = db.kv_get("checks") or {"res": {}}
     last.setdefault("res", {})[k] = r
+    last["ts"] = time.time()
     db.kv_set("checks", last)
     return r
 

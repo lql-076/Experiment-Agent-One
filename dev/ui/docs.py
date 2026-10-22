@@ -1,3 +1,4 @@
+"""说明页的文字版：文档列表、总览里的实时架构图和表格、文档之间的链接、当前结构。树状图另见 tree.py。"""
 import sys
 from playwright.sync_api import sync_playwright
 from common import launch
@@ -11,12 +12,13 @@ with sync_playwright() as pw:
         p.evaluate(f"setTheme('{th}', 10, 10)"); p.wait_for_timeout(800)
         p.click('.nav[data-view="docs"]'); p.wait_for_timeout(1500)
         print(w, th, "nav items:", p.evaluate("document.querySelectorAll('#docNav [data-doc]').length"), "cur:", p.evaluate("DOCS.cur"))
-        p.click('#docNav [data-doc="架构/00-总览.md"]'); p.wait_for_timeout(1800)
+        p.evaluate("DOCS.mode = 'text'")      # 这里测文字版
+        p.click('#docNav [data-doc="AI文档/架构/00-总览.md"]'); p.wait_for_timeout(1800)
         print("  arch svg:", p.evaluate("!!document.querySelector('#liveArch svg')"), "tables:", p.evaluate("document.querySelectorAll('#docBody table').length"), "h2:", p.evaluate("document.querySelectorAll('#docBody h2').length"))
         p.screenshot(path=f"{OUT}/docs-{w}-{th}.png")
         p.click('#docBody a[data-doclink="01-决策脑与分流.md"]'); p.wait_for_timeout(1200)
         print("  after link:", p.evaluate("DOCS.cur"), p.evaluate("(document.querySelector('#docBody h1')||{}).textContent"))
-        p.evaluate("openDoc('自动生成/当前结构.md')"); p.wait_for_timeout(1200)
+        p.evaluate("openDoc('AI文档/当前结构.md')"); p.wait_for_timeout(1200)
         print("  gen tables:", p.evaluate("document.querySelectorAll('#docBody table').length"), "overflowX:", p.evaluate("document.documentElement.scrollWidth > innerWidth"))
         p.close()
     b.close()

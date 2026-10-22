@@ -22,7 +22,7 @@ var FX_ROOTS = '.view, .sbody, .detail, .evlist';
 var FX_CARDS = '.hc, .bcard, .tcard, .sus, .su, .setup, .field, .rem, .ev, .tl-step';
 var FX_RAILS = '.bgrid, .tpick';
 var FX_NUMS = '.big.num, .dc b.num, .rt-v, .bfoot b.num, .stat b.num';
-var FX_SKIP = '#view-monitor, .feed, .logbox, #ov, #resident, #cards';
+var FX_SKIP = '#view-monitor, .feed, .logbox, #ov, #resident, #cards, .tree-wrap';
 
 function fxLevel() { return S.set.motion === 'off' ? 0 : (S.set.motion === 'reduced' || root.dataset.perf === 'on') ? 1 : 2; }
 function fxOn(name, minLv) { return !!FX.has[name] && FX.lv >= (minLv || 0); }

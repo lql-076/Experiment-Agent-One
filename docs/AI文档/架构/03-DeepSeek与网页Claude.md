@@ -1,6 +1,42 @@
 # 架构 · DeepSeek 与网页 Claude
 
-> 最后核对：v1.4.0。
+> 最后核对：v1.5.0。
+
+## 结构图
+
+界面「说明」页会把下面这段画成可以点开、收起的树状图，GitHub 上也能直接看图。
+
+```mermaid
+mindmap
+  root((DeepSeek 与网页 Claude))
+    DeepSeek
+    :::svc-ds
+      接什么活
+        长对话、一般难题
+        本地用不了时的非隐私活
+        每日差事、补齐修法、写提示词
+      怎么接
+        OpenAI 兼容接口
+        思考模式：自动、关、开
+        模型从官方列表选
+      钱
+        余额官方查 · 10 分钟一次
+        低于 2 元提醒
+        花费本机估算 · 分闲时忙时
+      规矩
+        隐私内容在代码里拦住
+        Key 用 DPAPI 加密
+        日志先打码再发
+    网页 Claude
+      决策脑判定特别复杂
+      DeepSeek 写好提示词
+      你自己去 claude.ai 聊
+      带回总结 → memory/总结
+      只当参考 · 不进训练数据
+    文件
+      app/deepseek.py
+      training/README.md
+```
 
 ## DeepSeek：做什么
 

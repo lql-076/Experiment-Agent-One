@@ -1,15 +1,17 @@
-"""说明文档：docs 文件夹里的操作手册、架构说明，加上一份每次启动都按代码重新生成的「当前结构」。
+r"""说明文档：给人看的图，给 AI 看的文字，放在同一批文件里，改一处两边一起更新。
 
 docs\
-  README.md              目录：这里都有什么、怎么保持最新
-  操作手册.md            怎么装、怎么用、出问题看哪里
-  架构\00-总览.md        现在的整体架构 + 和「最终版架构」比做到哪了
-  架构\01-…13-*.md       每个功能自己的架构：做什么、怎么做的、涉及哪些文件、设置、限制
-  更新记录.md            每一版改了什么
-  自动生成\当前结构.md   后端每次启动按代码重写：模块、接口、后台任务、设置项、主题、端口、数据文件
-                         （手写的文档可能落后，这一份不会）
+  README.md                  目录
+  操作手册.md                给人看：怎么装、怎么用、出问题看哪里
+  更新记录.md                每一版改了什么
+  图\                        截图
+  AI文档\                    给 AI 看的文字版（DeepSeek、本地大脑小脑、接手开发的 Claude）
+    README.md                这个文件夹是什么
+    架构\00-总览.md…13-*.md  每个功能的架构：开头一段 mermaid 结构图 + 文字说明
+    当前结构.md              后端每次启动按代码重写：模块、接口、后台任务、设置项、主题、端口、数据文件
 
-界面侧栏「说明」读的就是这里；直接用记事本、Obsidian 打开也行，全是中文 Markdown。
+界面侧栏「说明」：架构那一组默认画成树状图（读每篇开头的 mermaid 段），也能切到文字版；
+操作手册、更新记录照常显示文字。全是中文 Markdown，用记事本、Obsidian 打开也行。
 """
 import ast
 import re
@@ -19,7 +21,8 @@ from pathlib import Path
 from . import paths, settings
 
 DOCS = paths.ROOT / "docs"
-GEN = DOCS / "自动生成" / "当前结构.md"
+AI = DOCS / "AI文档"
+GEN = AI / "当前结构.md"
 
 # 接口说明：加了新接口没在这里写说明，生成的文档里会标出来「还没写说明」，一眼就知道文档落后了
 ROUTES = {
@@ -52,7 +55,7 @@ ROUTES = {
     "/api/setup/stop": "停下一键补齐",
     "/api/checks": "上次整备自检的结果",
     "/api/checks/run": "重新自检全部",
-    "/api/checks/{k}/run": "重新自检某一项",
+    "/api/checks/{k}/run": "重新检测一项（带 quick=1 时和整体自检一样快查，自检窗口 14 项同时发；卡片上单独点的会查得更深）",
     "/api/actions/{name}": "整备和设置里的按钮动作（启动模型、绑定 QQ、发测试提醒、查余额、查模型列表、跑每日差事、问 DeepSeek 怎么修……）",
     "/api/reminders": "提醒列表 / 新建提醒",
     "/api/reminders/{rid}": "改 / 删一条提醒",
@@ -86,17 +89,40 @@ def _title(p: Path) -> str:
     return p.stem
 
 
+OLD = DOCS / "旧版说明（可以删）"
+
+
+def tidy_old():
+    """v1.5 把架构说明搬进了 docs/AI文档。旧版解压覆盖后，docs/架构、docs/自动生成 还留在原地，
+    说明页和文件夹里会出现两份：挪进「旧版说明（可以删）」，不删任何文件。"""
+    old = [p for p in (DOCS / "架构", DOCS / "自动生成") if p.is_dir()]
+    if not old or not (AI / "架构").is_dir():
+        return
+    try:
+        OLD.mkdir(exist_ok=True)
+        for p in old:
+            t = OLD / p.name
+            if t.exists():
+                t = OLD / f"{p.name}-{time.strftime('%Y%m%d%H%M%S')}"
+            p.rename(t)
+        print("旧版的说明文档挪进了", paths.show(OLD), "（可以删）")
+    except Exception as e:
+        print("旧版说明文档没挪成：", e)
+
+
 def listing():
-    """侧栏「说明」的目录。"""
+    """侧栏「说明」的目录：docs 根目录的几篇 + AI文档 里的。"""
     if not DOCS.exists():
         return []
-    order = {"README.md": 0, "操作手册.md": 1}
+    order = {"操作手册.md": 0, "更新记录.md": 1, "README.md": 2, "AI文档/README.md": 0, "AI文档/当前结构.md": 1}
     out = []
     for p in sorted(DOCS.rglob("*.md")):
         rel = p.relative_to(DOCS).as_posix()
-        group = "架构" if rel.startswith("架构/") else "自动生成" if rel.startswith("自动生成/") else "说明"
+        if "/" in rel and not rel.startswith("AI文档/"):
+            continue
+        group = "架构图" if rel.startswith("AI文档/架构/") else "AI 文档" if rel.startswith("AI文档/") else "说明"
         out.append({"rel": rel, "title": _title(p), "group": group, "mtime": p.stat().st_mtime,
-                    "o": (0 if group == "说明" else 1 if group == "架构" else 2, order.get(rel, 5), rel)})
+                    "o": (0 if group == "架构图" else 1 if group == "说明" else 2, order.get(rel, 5), rel)})
     out.sort(key=lambda d: d["o"])
     for d in out:
         d.pop("o")
@@ -132,7 +158,7 @@ def generate(app=None, version="", themes=None):
     """按代码重写「当前结构.md」。后端每次启动调用一次。"""
     L = ["# 当前结构（按代码自动生成）", "",
          f"> 版本 {version} · 生成于 {time.strftime('%Y-%m-%d %H:%M')} · 后端每次启动都会按代码重写这一份，所以它不会过时。",
-         "> 手写的架构说明在「架构」那一组；这里只列事实：有哪些程序、文件、接口、设置。", ""]
+         "> 手写的架构说明在同一个文件夹的「架构」里；这里只列事实：有哪些程序、文件、接口、设置。", ""]
     L += ["## 运行起来是哪几个程序", "", "| 端口 | 是什么 |", "| --- | --- |"]
     L += [f"| {p} | {d} |" for p, d in PORTS]
     L += ["", "都只监听本机 127.0.0.1，别的电脑访问不到。桌面窗口（app/window.py）由后端拉起，不占端口。", ""]
