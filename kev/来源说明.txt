@@ -1,0 +1,3 @@
+Kev 决策模型源码，来自 https://github.com/jaredpalmer/kev（提交 1f04cfa，2026-10-15）。
+作者 Jared Palmer，Apache-2.0 许可，许可全文见同目录 LICENSE。
+这里只保留了运行需要的部分（kev 包、pyproject.toml、LICENSE、README），没有改动代码。

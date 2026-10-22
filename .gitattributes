@@ -1,0 +1,4 @@
+# 批处理文件按原样存（CRLF），从 GitHub 直接下载 ZIP 也能在 Windows 上正常跑
+*.bat -text
+*.ico binary
+*.png binary

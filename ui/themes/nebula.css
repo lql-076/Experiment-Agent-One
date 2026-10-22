@@ -1,0 +1,66 @@
+/* @id nebula
+   @name 星云
+   @desc 靛紫底，紫青渐变发光。漂浮手感：滚轮带惯性，背景和标题有视差，卡片从模糊里浮上来、跟着鼠标微微倾斜。
+   @order 1
+   @fx reveal parallax tilt glide press
+   想加一个新主题：复制这个文件，改名（比如 forest.css），把文件里所有 "nebula" 换成新名字（只用英文小写），
+   改掉 @name、@desc 和颜色。保存后刷新界面，设置 › 外观 里就会出现，不用改任何代码。
+   @fx 是这套风格的交互手感（滚动方式、鼠标、点击），可选的名字和说明在 js/fx.js 开头，按需增减。
+*/
+[data-theme="nebula"]{
+  /* 常驻时钟环（刻度、断续的段数和长度）、日期写法（md / dot / cn）、常驻页标签语言（zh / en） */
+  --ring-segs:72;--ring-fill:.001;--ring-cap:round;--ring-ticks:60;--ring-tick-w:1.2;--ring-tick-sw:5;--ring-arc-w:10;--ring-sec-r:5;--date-style:md;--res-labels:zh;
+  --bg:#0c0b1d;--bg2:#13122b;--bg3:#1c1a3c;--bg4:#272552;
+  --line:rgba(150,140,255,.12);--line2:rgba(150,140,255,.26);
+  --text:#e6e3ff;--text2:#b0acd9;--text3:#8a85bf;
+  --accent:#9d86ff;--accent2:#3fd0ff;--grad:linear-gradient(120deg,#b39dff 0%,#6fb6ff 50%,#3fe0d8 100%);
+  --ring1:#b39dff;--ring2:#3fe0d8;
+  --c-local:#a48bff;--c-neu:#ffb547;--c-ds:#3fc6ff;--c-cl:#ff6fae;
+  --h1:#a48bff;--h2:#3fc6ff;--h3:#ff6fae;--h4:#ffb547;--h5:#5fe0b0;--ok:#5fe0b0;--bad:#ff7088;
+  --card:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.02));--cardb:rgba(150,140,255,.16);
+  --rail:rgba(20,19,45,.72);--railw:5.25rem;--r:1.25rem;--rs:.75rem;
+  --fc:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;--fcw:200;--fn:var(--sans);
+  --ease:cubic-bezier(.22,1,.36,1);--spring:cubic-bezier(.34,1.45,.64,1);--dur:.38s;--lt:none;--ls:.06em;
+}
+html[data-theme="nebula"] .rail{margin:.75rem 0 .75rem .75rem;border:1px solid var(--line);border-radius:1.5rem}
+html[data-theme="nebula"] .nav-ind::before{inset:0;border-radius:var(--rs);background:linear-gradient(135deg,rgba(164,139,255,.32),rgba(63,198,255,.2));box-shadow:0 0 1.5rem rgba(157,134,255,.28),inset 0 0 0 1px rgba(190,175,255,.25)}
+html[data-theme="nebula"] .clock-top .t{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+html[data-theme="nebula"]::view-transition-old(content){animation:none;opacity:0}
+html[data-theme="nebula"]::view-transition-new(content){animation:nebIn .22s cubic-bezier(.22,1,.36,1) both}
+@keyframes nebIn{from{transform:scale(1.008);filter:blur(2px)}to{transform:none;filter:none}}
+html[data-perf="on"][data-theme="nebula"]::view-transition-new(content){animation-name:vtIn}
+html[data-orient="portrait"][data-theme="nebula"] .rail{margin:0 .75rem .75rem;border-radius:1.25rem}
+html[data-theme="nebula"] button.hc:hover{box-shadow:0 1rem 2.5rem -1.5rem rgba(157,134,255,.55)}
+html[data-theme="nebula"] .ev[aria-pressed="true"]{background:linear-gradient(90deg,color-mix(in srgb,var(--c) 18%,transparent),rgba(255,255,255,.03));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 30%,transparent)}
+html[data-theme="nebula"] .bcard:hover{box-shadow:0 1rem 2.5rem -1.5rem var(--c)}
+html[data-theme="nebula"] .ov-panel{box-shadow:0 2rem 5rem -2rem rgba(157,134,255,.5)}
+html[data-theme="nebula"] .sitem[aria-current="true"]{background:linear-gradient(90deg,rgba(157,134,255,.22),rgba(63,198,255,.08))}
+html[data-theme="nebula"] #clockBig{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;padding:0 .04em}
+html[data-theme="nebula"] .rcard{box-shadow:0 1.5rem 3rem -1rem rgba(157,134,255,.55)}
+html[data-theme="nebula"] #ambient i{display:block}
+html[data-theme="nebula"] #ambient .b1{width:70vmax;height:70vmax;left:-25vmax;top:-30vmax;background:radial-gradient(circle,rgba(157,134,255,.24),transparent 62%);animation:drift1 46s ease-in-out infinite alternate}
+html[data-theme="nebula"] #ambient .b2{width:60vmax;height:60vmax;right:-25vmax;top:10vmax;background:radial-gradient(circle,rgba(63,208,255,.16),transparent 62%);animation:drift2 58s ease-in-out infinite alternate}
+html[data-theme="nebula"] #ambient .b3{width:55vmax;height:55vmax;left:20vmax;bottom:-35vmax;background:radial-gradient(circle,rgba(255,111,174,.13),transparent 62%);animation:drift3 64s ease-in-out infinite alternate}
+@keyframes drift1{to{transform:translate(12vmax,9vmax) scale(1.12)}}
+@keyframes drift2{to{transform:translate(-10vmax,8vmax) scale(.9)}}
+@keyframes drift3{to{transform:translate(-8vmax,-10vmax) scale(1.1)}}
+html[data-theme="nebula"] .rc-glow{display:inline}
+/* 设置 › 外观 里的小预览 */
+.tprev[data-theme="nebula"] .tp-bg{background:radial-gradient(circle at 0 0,rgba(157,134,255,.55),transparent 55%),radial-gradient(circle at 100% 100%,rgba(63,208,255,.4),transparent 55%)}
+.tprev[data-theme="nebula"] .tp-time{background:linear-gradient(120deg,#b39dff,#3fe0d8);-webkit-background-clip:text;background-clip:text;color:transparent}
+/* ===== 星云的手感：漂浮（交互引擎见 js/fx.js，用哪几种写在文件头 @fx） ===== */
+/* 滚动触发：从模糊里浮上来 */
+html[data-theme="nebula"] .fx-in{animation:nbRise .75s cubic-bezier(.22,1,.36,1) var(--fxd,0ms) both}
+@keyframes nbRise{from{opacity:0;transform:translateY(2rem) scale(.97);filter:blur(8px)}to{opacity:1;transform:none;filter:none}}
+/* 视差：三团光斑按不同速度往上走，页面标题比内容走得慢、慢慢变淡 */
+html[data-theme="nebula"][data-fxlv="2"] #ambient .b1{translate:0 calc(var(--psy,0) * -.08px)}
+html[data-theme="nebula"][data-fxlv="2"] #ambient .b2{translate:0 calc(var(--psy,0) * -.18px)}
+html[data-theme="nebula"][data-fxlv="2"] #ambient .b3{translate:0 calc(var(--psy,0) * -.3px)}
+html[data-theme="nebula"][data-fxlv="2"] .fx-scroll > .page > .ph,
+html[data-theme="nebula"][data-fxlv="2"] #view-settings .sbody.fx-scroll > :is(h2,.desc){translate:0 min(calc(var(--sy,0) * .4px),5rem);opacity:max(0,calc(1 - var(--sy,0) / 300))}
+/* 鼠标：卡片微微倾斜，一块光斑跟着鼠标走 */
+html[data-theme="nebula"] :is(.bcard,.tcard){position:relative}
+html[data-theme="nebula"] .fx-lit::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;mix-blend-mode:screen;background:radial-gradient(22rem circle at var(--mx,50%) var(--my,50%),rgba(190,170,255,.13),transparent 62%)}
+html[data-theme="nebula"][data-fxlv="2"] .fx-tilt{transform:perspective(55rem) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg)) translateY(-3px)!important;transition:transform .12s linear,border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)!important}
+/* 点击：一圈柔光 */
+html[data-theme="nebula"] .fx-pbox i{background:radial-gradient(circle,rgba(190,170,255,.42),rgba(63,198,255,.14) 45%,transparent 70%);animation:fxPress .75s cubic-bezier(.22,1,.36,1) forwards}

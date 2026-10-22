@@ -1,0 +1,4 @@
+一般用不到。
+如果「安装本地模型环境.bat」提示 PyTorch 装不上：
+去 https://mirrors.aliyun.com/pytorch-wheels/cu128/ 页面里搜 2.8.0+cu128-cp312，
+下载 torch-2.8.0+cu128-cp312-cp312-win_amd64.whl 放在这个文件夹，再运行一次「安装本地模型环境.bat」。

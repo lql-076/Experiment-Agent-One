@@ -1,0 +1,28 @@
+# ── 每个人自己的东西：永远不上传 ──
+# 设置、密钥（DPAPI 加密）、数据库、日志、窗口位置
+data/
+# 记忆、技能、提示词、人设、Claude 带回的总结
+memory/
+# 慢成长的样本（来自你的聊天）
+training/*
+!training/README.md
+
+# ── 下载的大文件、环境、缓存（一键补齐会自己装） ──
+.venv/
+ai-env/
+models/**
+!models/**/
+!models/**/*放这里.txt
+tools/git*/
+tools/cache/
+tools/tmp/
+tools/wheels/*
+!tools/wheels/*放这里.txt
+
+# ── 开发用 ──
+dist/
+dev/.run/
+__pycache__/
+*.pyc
+.ruff_cache/
+*.egg-info/

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="abyss" data-orient="landscape" data-mode="normal" data-motion="smooth">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent 主控台</title>
+<!-- 界面拆成了几块：css/core.css 是公共样式；themes/ 里一个 .css 就是一套主题；js/ 里按页面分文件。 -->
+<script>try{var _s=JSON.parse(localStorage.getItem('agentShell.v3'));if(_s&&_s.set&&_s.set.theme)document.documentElement.dataset.theme=_s.set.theme;}catch(e){}</script>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/core.css">
+<script src="themes/themes.js"></script>
+</head>
+<body>
+<div id="ambient" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
+
+<div id="shell">
+  <nav class="rail" aria-label="主导航">
+    <span class="nav-ind instant" id="navInd" aria-hidden="true"></span>
+    <div class="logo" aria-hidden="true"><span></span></div>
+    <button class="nav" data-view="home" aria-current="page"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7.5" height="9" rx="1.8"/><rect x="13" y="3.5" width="7.5" height="5" rx="1.8"/><rect x="13" y="10.5" width="7.5" height="10" rx="1.8"/><rect x="3.5" y="14.5" width="7.5" height="6" rx="1.8"/></svg>总览</button>
+    <button class="nav" data-view="events"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4v8l5.5 3"/></svg>事件</button>
+    <button class="nav" data-view="monitor"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12.5h4l2.5-6 4.5 12 2.5-6H21"/></svg>后台</button>
+    <button class="nav" data-view="brains"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="7" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="M8.3 9.2l2.4 5.6M15.7 9.2l-2.4 5.6M9.5 7h5"/></svg>大脑</button>
+    <button class="nav" data-view="reports"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V11M10 20V5M15 20v-7M20 20v-4"/></svg>报告<span class="badge num" id="repBadge" hidden></span></button>
+    <button class="nav" data-view="settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M18 7h2M4 17h3M12 17h8"/><circle cx="15.5" cy="7" r="2.3"/><circle cx="9.5" cy="17" r="2.3"/></svg>设置<span class="badge num" id="setBadge" hidden></span></button>
+    <button class="nav" data-view="docs"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 5.5c2.6-1 5.1-1 7.5.5 2.4-1.5 4.9-1.5 7.5-.5v13c-2.6-1-5.1-1-7.5.5-2.4-1.5-4.9-1.5-7.5-.5z"/><path d="M12 6v13"/></svg>说明</button>
+    <div class="spacer"></div>
+    <button class="nav" id="btnTheme" aria-label="切换风格"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 1.8-.9 1.4-1.9-.5-1.2.3-2.3 1.6-2.3h1.6a3.9 3.9 0 0 0 3.9-3.9C20.5 7.1 16.7 3.5 12 3.5z"/><circle cx="8" cy="10.5" r="1"/><circle cx="11.5" cy="7.5" r="1"/><circle cx="15.5" cy="9" r="1"/></svg>风格</button>
+    <button class="nav" id="btnOrient" aria-label="切换横竖屏"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" id="orientIcon"></svg><span id="orientLabel">自动</span></button>
+    <button class="nav" id="btnFull"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" id="fullIcon"></svg><span id="fullLabel">全屏</span></button>
+    <button class="nav" id="btnMin" hidden aria-label="把窗口收到任务栏"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16.5h14"/></svg>收起</button>
+    <button class="nav" id="btnClose" hidden aria-label="关闭窗口或退出 Agent" aria-haspopup="menu"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>关闭</button>
+    <button class="nav" id="btnResident"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="5" stroke-dasharray="2 2.2"/></svg>常驻</button>
+  </nav>
+
+  <header class="topbar">
+    <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">演示数据 · 后端未接入</span></div>
+    <div class="metrics">
+      <span>CPU<b class="num"><span data-hw="cpu.load">0</span>%</b></span>
+      <span>GPU<b class="num"><span data-hw="gpu.load">0</span>%</b></span>
+      <span>整机<b class="num">≈<span data-hw="sys.power">0</span> W</b></span>
+      <span id="mFps" hidden>FPS<b class="num" id="mFpsV">0</b></span>
+      <span>今日分流<b class="num" id="mToday">6</b></span>
+      <span>本地处理<b class="num" id="mLocal">50%</b></span>
+    </div>
+    <button class="clock-top" id="clockTop" aria-label="进入常驻模式"><span class="t num" id="tTop">--:--</span><span class="d" id="dTop"></span></button>
+  </header>
+
+  <main class="content" id="content">
+    <section class="view active" id="view-home" aria-label="总览"></section>
+    <section class="view" id="view-events" aria-label="事件"></section>
+    <section class="view" id="view-monitor" aria-label="后台"></section>
+    <section class="view" id="view-brains" aria-label="大脑"></section>
+    <section class="view" id="view-reports" aria-label="报告"></section>
+    <section class="view" id="view-settings" aria-label="设置"></section>
+    <section class="view" id="view-docs" aria-label="说明"></section>
+  </main>
+</div>
+
+<div id="ov" aria-hidden="true"><div class="ov-bg" data-close="1"></div><div class="ov-panel" id="ovPanel" role="dialog" aria-modal="true" aria-label="大脑详情"></div></div>
+
+<div id="resident" role="button" tabindex="-1" aria-label="常驻模式，点击返回">
+  <div id="rWrap"></div>
+  <div class="r-hint" id="rHint">点击任意处返回 · Esc</div>
+  <div class="r-src" id="rSrc"></div>
+</div>
+
+<div id="cards" aria-live="assertive"></div>
+
+<div id="boot" aria-live="polite">
+  <div class="boot-card">
+    <div class="boot-title"><span class="boot-logo"></span><div><b id="bootTitle">启动自检</b><span id="bootSub">正在检查整备清单</span></div></div>
+    <div class="boot-list" id="bootList"></div>
+    <div class="boot-bar"><i id="bootBar"></i></div>
+    <div class="boot-foot"><span id="bootSum">检测中</span><button class="btn" id="bootSkip">跳过</button></div>
+  </div>
+</div>
+
+<input type="file" id="sumFile" accept=".md,.markdown,.txt,text/markdown,text/plain" class="sr">
+<div id="warm"></div>
+<div id="dim"></div>
+<div id="toasts" aria-live="polite"></div>
+<div id="grip" hidden title="拖动改变窗口大小"></div>
+<script src="js/base.js"></script>
+<script src="js/data.js"></script>
+<script src="js/hw.js"></script>
+<script src="js/home.js"></script>
+<script src="js/events.js"></script>
+<script src="js/brains.js"></script>
+<script src="js/reports.js"></script>
+<script src="js/cards.js"></script>
+<script src="js/resident.js"></script>
+<script src="js/shell.js"></script>
+<script src="js/window.js"></script>
+<script src="js/setup.js"></script>
+<script src="js/monitor.js"></script>
+<script src="js/prep.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/docs.js"></script>
+<script src="js/fx.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+把魔搭 Qwen/Qwen3-Embedding-0.6B 的所有文件放在这个文件夹里（打开这个文件夹直接能看到 config.json）。
+双击「下载模型.bat」会自动下载到这里。
+下载页：https://www.modelscope.cn/models/Qwen/Qwen3-Embedding-0.6B/files

@@ -1,0 +1,75 @@
+/* @id ember
+   @name 绛焰
+   @desc 酒红底，金橙点缀，杂志式排版。卡片排成横条用滚轮翻，揭幕式出场，标题后的大字随滚动移动，数字滚动跳出，按钮会被鼠标吸过去。
+   @order 3
+   @fx hrail headline reveal count magnet press
+   想加一个新主题：复制这个文件，改名（比如 forest.css），把文件里所有 "ember" 换成新名字（只用英文小写），
+   改掉 @name、@desc 和颜色。保存后刷新界面，设置 › 外观 里就会出现，不用改任何代码。
+   @fx 是这套风格的交互手感（滚动方式、鼠标、点击），可选的名字和说明在 js/fx.js 开头，按需增减。
+*/
+[data-theme="ember"]{
+  /* 常驻时钟环（刻度、断续的段数和长度）、日期写法（md / dot / cn）、常驻页标签语言（zh / en） */
+  --ring-segs:24;--ring-fill:.84;--ring-cap:butt;--ring-ticks:12;--ring-tick-w:3;--ring-tick-sw:7;--ring-arc-w:3;--ring-sec-r:4;--date-style:cn;--res-labels:zh;
+  --bg:#150a10;--bg2:#1e0f17;--bg3:#29151f;--bg4:#361c29;
+  --line:#3a1e2c;--line2:#552a3e;
+  --text:#f7e8ec;--text2:#d5adb8;--text3:#a98089;
+  --accent:#ff6a4d;--accent2:#ffc145;--grad:linear-gradient(110deg,#ffc145,#ff6a4d 55%,#ff4d8d);
+  --ring1:#ffc145;--ring2:#ff4d8d;
+  --c-local:#ffc145;--c-neu:#c98bff;--c-ds:#5ec8ff;--c-cl:#ff6a4d;
+  --h1:#ffc145;--h2:#ff6a4d;--h3:#c98bff;--h4:#5ec8ff;--h5:#8fe3a5;--ok:#8fe3a5;--bad:#ff6a6a;
+  --card:rgba(30,15,23,.72);--cardb:#3f2131;
+  --rail:transparent;--railw:5rem;--r:.75rem;--rs:.375rem;
+  --fc:"Bahnschrift","DIN Alternate","Segoe UI",system-ui,sans-serif;--fcw:300;--fn:var(--sans);
+  --ease:cubic-bezier(.65,0,.35,1);--spring:cubic-bezier(.65,0,.35,1);--dur:.5s;--lt:none;--ls:.2em;
+}
+html[data-theme="ember"] #ambient{background:radial-gradient(ellipse 70% 55% at 12% -5%,rgba(255,106,77,.16),transparent 60%),radial-gradient(ellipse 60% 50% at 100% 105%,rgba(255,193,69,.09),transparent 60%)}
+html[data-theme="ember"] .rail{border-right:1px solid var(--line)}
+html[data-theme="ember"] .nav{font-size:.8125rem;gap:.35rem}
+html[data-theme="ember"] .nav svg{width:1.125rem;height:1.125rem}
+html[data-theme="ember"] .nav-ind::before{left:50%;bottom:.15rem;width:1.5rem;height:2px;margin-left:-.75rem;border-radius:1px;background:var(--grad)}
+html[data-theme="ember"] .topbar{border-bottom:1px solid var(--line)}
+html[data-theme="ember"]::view-transition-old(content){animation:none;opacity:0}
+html[data-theme="ember"]::view-transition-new(content){animation:emIn .26s cubic-bezier(.22,1,.36,1) both}
+@keyframes emIn{from{clip-path:inset(0 0 30% 0)}to{clip-path:inset(0 0 0 0)}}
+html[data-orient="portrait"][data-theme="ember"] .rail{border-right:0;border-top:1px solid var(--line)}
+html[data-theme="ember"] .hc{background:transparent;border:0;border-top:1px solid var(--line2);border-radius:0;padding:1.25rem .25rem}
+html[data-theme="ember"] .big{font-size:3.75rem}
+html[data-theme="ember"] .ph h1{font-size:2.25rem;font-weight:700}
+html[data-theme="ember"] .bento{gap:.5rem 2rem}
+html[data-theme="ember"] .ev[aria-pressed="true"] .ev-text{color:var(--c)}
+html[data-theme="ember"] .d-text{font-size:2.25rem;font-weight:700}
+html[data-theme="ember"] #clockBig{font-stretch:condensed;font-size:calc(var(--rsz) * .26)}
+html[data-theme="ember"] #dBig{font-weight:700;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+html[data-theme="ember"] .rt{background:transparent;border:0;border-top:1px solid var(--line2);border-radius:0;padding:1rem 0 .5rem}
+html[data-theme="ember"] .rt-v{font-size:2.75rem}
+html[data-theme="ember"] .rc-ticks{stroke:var(--accent2);opacity:.6}
+/* 设置 › 外观 里的小预览 */
+.tprev[data-theme="ember"] .tp-bg{background:radial-gradient(ellipse at 10% 0,rgba(255,106,77,.35),transparent 60%)}
+.tprev[data-theme="ember"] .tp-ring{border:1px solid #ffc145}
+.tprev[data-theme="ember"] .tp-time{font-size:2rem;top:1rem}
+.tprev[data-theme="ember"] .tp-bar{right:.75rem;bottom:1rem}
+/* ===== 绛焰的手感：杂志（交互引擎见 js/fx.js，用哪几种写在文件头 @fx） ===== */
+/* 滚动触发：像幕布一样从下往上揭开 */
+html[data-theme="ember"] .fx-in{animation:emRise .85s cubic-bezier(.65,0,.35,1) var(--fxd,0ms) both}
+@keyframes emRise{from{clip-path:inset(100% 0 0 0);transform:translateY(1.75rem)}to{clip-path:inset(0 0 0 0);transform:none}}
+/* 滚动联动：标题后面一行巨大的空心字，往下滚时往左平移、放大、变淡 */
+html[data-theme="ember"][data-fx~="headline"] .page{overflow-x:clip}
+html[data-theme="ember"][data-fx~="headline"] .sbody{overflow-x:hidden}
+html[data-theme="ember"] :is(.ph,.sbody > h2)[data-big]{position:relative;isolation:isolate}
+html[data-theme="ember"] :is(.ph,.sbody > h2)[data-big]::before{content:attr(data-big);position:absolute;left:-.06em;top:50%;z-index:-1;font-size:5.75rem;font-weight:800;line-height:1;white-space:nowrap;letter-spacing:.04em;
+  color:transparent;-webkit-text-stroke:1px color-mix(in srgb,var(--accent) 40%,transparent);pointer-events:none;transform-origin:left center;transform:translateY(-50%);opacity:.42}
+html[data-theme="ember"][data-fxlv="2"] :is(.ph,.sbody > h2)[data-big]::before{transform:translateY(-50%) translateX(calc(var(--sy,0) * -.45px)) scale(calc(1 + var(--sy,0) / 1500));opacity:max(0,calc(.42 - var(--sy,0) / 800))}
+html[data-orient="portrait"][data-theme="ember"] :is(.ph,.sbody > h2)[data-big]::before{font-size:4.5rem}
+/* 横向滚动：横条的滚动条用金橙色，卡片之间留出杂志的留白 */
+html[data-theme="ember"][data-fx~="hrail"] :is(.bgrid,.tpick){gap:2rem;scrollbar-color:var(--accent2) transparent}
+html[data-theme="ember"][data-fx~="hrail"] .bcard{border:0;border-top:1px solid var(--line2);border-radius:0;background:transparent}
+/* 悬停：顶上那条线从左往右扫一道渐变；链接下划线扫过去 */
+html[data-theme="ember"] :is(.bcard,.tcard){position:relative}
+html[data-theme="ember"] :is(button.hc,.bcard,.tcard)::after{content:"";position:absolute;left:0;right:0;top:-1px;height:2px;background:var(--grad);transform:scaleX(0);transform-origin:left;transition:transform .55s var(--ease);pointer-events:none}
+html[data-theme="ember"] :is(button.hc,.bcard,.tcard):hover::after{transform:scaleX(1)}
+html[data-theme="ember"] .linkbtn{text-decoration:none;background:linear-gradient(var(--accent2),var(--accent2)) left bottom/0 1px no-repeat;transition:background-size .45s var(--ease),color .3s}
+html[data-theme="ember"] .linkbtn:hover{background-size:100% 1px;color:var(--text)}
+/* 磁吸：按钮被鼠标吸过去，松开时弹回 */
+html[data-theme="ember"][data-fx~="magnet"] :is(.btn,.chip,.linkbtn){transition:translate .35s cubic-bezier(.2,.8,.2,1),background-color var(--dur) var(--ease),background-size .45s var(--ease),border-color var(--dur) var(--ease),color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
+/* 点击：一团暖色墨晕 */
+html[data-theme="ember"] .fx-pbox i{background:radial-gradient(circle,rgba(255,193,69,.4),rgba(255,106,77,.18) 40%,transparent 68%);animation:fxPress .7s cubic-bezier(.65,0,.35,1) forwards}

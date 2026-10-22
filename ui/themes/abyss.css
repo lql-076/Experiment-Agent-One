@@ -1,0 +1,72 @@
+/* @id abyss
+   @name 深海
+   @desc 墨青底，仪表盘式的精确感。标题吸顶并收窄，顶部滚动进度线和"第几块"，滚动停下对齐到卡片，悬停出现瞄准框。
+   @order 2
+   @fx sticky progress snap reveal press
+   想加一个新主题：复制这个文件，改名（比如 forest.css），把文件里所有 "abyss" 换成新名字（只用英文小写），
+   改掉 @name、@desc 和颜色。保存后刷新界面，设置 › 外观 里就会出现，不用改任何代码。
+   @fx 是这套风格的交互手感（滚动方式、鼠标、点击），可选的名字和说明在 js/fx.js 开头，按需增减。
+*/
+[data-theme="abyss"]{
+  /* 常驻时钟环（刻度、断续的段数和长度）、日期写法（md / dot / cn）、常驻页标签语言（zh / en） */
+  --ring-segs:60;--ring-fill:.7;--ring-cap:butt;--ring-ticks:60;--ring-tick-w:1.6;--ring-tick-sw:5;--ring-arc-w:5;--ring-sec-r:5;--date-style:dot;--res-labels:en;
+  --bg:#05131a;--bg2:#091c25;--bg3:#0e2630;--bg4:#14323f;
+  --line:#11303b;--line2:#1b4757;
+  --text:#d9f4f8;--text2:#96c4ce;--text3:#6b9ca8;
+  --accent:#1fd6f0;--accent2:#ff9a3c;--grad:linear-gradient(90deg,#1fd6f0,#2ef0b8);
+  --ring1:#1fd6f0;--ring2:#2ef0b8;
+  --c-local:#2ef0b8;--c-neu:#ffb020;--c-ds:#4ea2ff;--c-cl:#ff7a45;
+  --h1:#1fd6f0;--h2:#2ef0b8;--h3:#ffb020;--h4:#ff7a45;--h5:#c38bff;--ok:#2ef0b8;--bad:#ff6b6b;
+  --card:rgba(9,28,37,.82);--cardb:#163f4d;
+  --rail:#061820;--railw:4.5rem;--r:.375rem;--rs:.25rem;
+  --fc:var(--mono);--fcw:300;--fn:var(--mono);
+  --ease:cubic-bezier(.16,1,.3,1);--spring:cubic-bezier(.16,1,.3,1);--dur:.24s;--lt:uppercase;--ls:.14em;
+}
+html[data-theme="abyss"] #ambient{background:radial-gradient(ellipse 80% 50% at 50% -10%,rgba(31,214,240,.12),transparent 60%),linear-gradient(rgba(31,214,240,.035) 1px,transparent 1px) 0 0/48px 48px,linear-gradient(90deg,rgba(31,214,240,.035) 1px,transparent 1px) 0 0/48px 48px}
+html[data-theme="abyss"] .rail{border-right:1px solid var(--line)}
+html[data-theme="abyss"] .nav-ind::before{left:-.5rem;top:22%;bottom:22%;width:3px;border-radius:2px;background:var(--accent);box-shadow:0 0 .75rem var(--accent)}
+html[data-theme="abyss"] .nav-ind::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(31,214,240,.12),transparent);border-radius:var(--rs)}
+html[data-theme="abyss"] .nav{letter-spacing:.06em}
+html[data-theme="abyss"] .topbar{border-bottom:1px solid var(--line)}
+html[data-theme="abyss"]::view-transition-old(content){animation:none;opacity:0}
+html[data-theme="abyss"]::view-transition-new(content){animation:abIn .26s cubic-bezier(.16,1,.3,1) both}
+@keyframes abIn{from{transform:translateX(1rem)}to{transform:none}}
+html[data-orient="portrait"][data-theme="abyss"] .rail{border-right:0;border-top:1px solid var(--line)}
+html[data-orient="portrait"][data-theme="abyss"] .nav-ind::before{left:22%;right:22%;top:-.5rem;bottom:auto;width:auto;height:3px}
+html[data-theme="abyss"] .label{font-family:var(--mono);font-size:.6875rem}
+html[data-theme="abyss"] .chip{border-radius:var(--rs)}
+html[data-theme="abyss"] .wcol i{border-radius:0}
+html[data-theme="abyss"] .ev[aria-pressed="true"]::before{content:"";position:absolute;left:0;top:.5rem;bottom:.5rem;width:2px;background:var(--c);box-shadow:0 0 .5rem var(--c)}
+html[data-theme="abyss"] #clockBig{text-shadow:0 0 2.5rem rgba(31,214,240,.25);letter-spacing:-.03em}
+html[data-theme="abyss"] #dBig{font-family:var(--mono);color:var(--accent);letter-spacing:.2em}
+html[data-theme="abyss"] .rt{background:rgba(9,28,37,.7);border-color:var(--line2)}
+html[data-theme="abyss"] .rt::before{content:"";position:absolute;left:0;top:0;width:2rem;height:2px;background:var(--tc)}
+html[data-theme="abyss"] .rt-h{font-family:var(--mono);font-size:.6875rem;text-transform:uppercase}
+html[data-theme="abyss"] .rc-ticks{stroke:var(--accent);opacity:.55}
+html[data-theme="abyss"] .rc-cross{display:inline}
+/* 设置 › 外观 里的小预览 */
+.tprev[data-theme="abyss"] .tp-bg{background:linear-gradient(rgba(31,214,240,.08) 1px,transparent 1px) 0 0/12px 12px}
+.tprev[data-theme="abyss"] .tp-ring{border:2px dashed #1fd6f0}
+.tprev[data-theme="abyss"] .tp-time{text-shadow:0 0 12px rgba(31,214,240,.6)}
+.tprev[data-theme="abyss"] .tp-bar{background:none;height:1rem;border-bottom:2px solid #2ef0b8}
+/* ===== 深海的手感：精确（交互引擎见 js/fx.js，用哪几种写在文件头 @fx） ===== */
+/* 滚动触发：从左往右扫出来，快、不拖泥带水 */
+html[data-theme="abyss"] .fx-in{animation:abScan .32s linear var(--fxd,0ms) both}
+@keyframes abScan{0%{opacity:0;clip-path:inset(0 100% 0 0)}25%{opacity:1}100%{opacity:1;clip-path:inset(0 0 0 0)}}
+/* 吸顶：收窄后标题变成等宽大写的仪表读数 */
+html[data-theme="abyss"] .fx-stuck > .page > .ph h1{font-family:var(--mono);letter-spacing:.14em;font-size:1rem}
+html[data-theme="abyss"] .fx-stuck > .page > .ph{border-bottom:1px solid var(--line2)}
+html[data-theme="abyss"] #fxBar{background:var(--accent);box-shadow:0 0 .75rem var(--accent)}
+/* 悬停：四个角出现瞄准框，不带缓动 */
+html[data-theme="abyss"] :is(.bcard,.tcard){position:relative}
+html[data-theme="abyss"] :is(button.hc,.bcard,.tcard)::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .08s linear,inset .14s steps(3);
+  background:linear-gradient(var(--accent),var(--accent)) left top/.75rem 1.5px,linear-gradient(var(--accent),var(--accent)) left top/1.5px .75rem,
+    linear-gradient(var(--accent),var(--accent)) right top/.75rem 1.5px,linear-gradient(var(--accent),var(--accent)) right top/1.5px .75rem,
+    linear-gradient(var(--accent),var(--accent)) left bottom/.75rem 1.5px,linear-gradient(var(--accent),var(--accent)) left bottom/1.5px .75rem,
+    linear-gradient(var(--accent),var(--accent)) right bottom/.75rem 1.5px,linear-gradient(var(--accent),var(--accent)) right bottom/1.5px .75rem;background-repeat:no-repeat}
+html[data-theme="abyss"] :is(button.hc,.bcard,.tcard):hover::after{opacity:1;inset:-5px}
+/* 点击：一个方框从按下的地方扩开，边框闪一下 */
+html[data-theme="abyss"] .fx-pbox{animation:abFlash .26s linear forwards}
+@keyframes abFlash{from{box-shadow:inset 0 0 0 1px var(--accent)}to{box-shadow:inset 0 0 0 1px transparent}}
+html[data-theme="abyss"] .fx-pbox i{border-radius:0;background:transparent;border:1px solid var(--accent);animation:abPing .3s linear forwards}
+@keyframes abPing{from{transform:scale(.04);opacity:1}to{transform:scale(.45);opacity:0}}
