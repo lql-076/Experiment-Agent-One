@@ -45,7 +45,7 @@ ROUTES = {
     "/api/events/{eid}/fix": "你纠正分流：立刻变成新判例",
     "/api/chat": "界面上直接发消息（和 QQ 走同一条路）；带 async 马上返回 token，处理进度另外查",
     "/api/chat/{token}": "查一条消息处理到哪一步了（对话页显示「正在联网搜索……」这些）",
-    "/api/agent": "Agent 状态：决策脑两票、底座和每个小脑、新类别、DeepSeek、联网搜索、QQ、提醒、后台程序、记忆，每项一个状态灯",
+    "/api/agent": "Agent 状态：决策脑两票、底座和每个小脑、新类别、DeepSeek、联网搜索、QQ、提醒、后台程序、记忆，每项一个状态；有数的项带进度（m），顶层带一排大数字（kpi）",
     "/api/osd": "游戏内显示的小框每秒来拿一次：设置 + 硬件读数",
     "/api/changes/{cid}/undo": "撤销一条先斩后奏的改动（git revert）",
     "/api/asks/{aid}": "同意或拒绝一件「等你决定」的事",

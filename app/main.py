@@ -17,7 +17,7 @@ from . import (agent, agentstate, checks, db, deepseek, docs, events, exam, feed
 from .models import M
 from .qq import BOT
 
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 PORT = 8765
 _bg = []
 

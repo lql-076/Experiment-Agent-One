@@ -1,4 +1,5 @@
-"""对话页：发消息 → 打字中显示处理到哪一步 → 回复按 Markdown 显示 → 点小字看"这条怎么处理的"；右边 Agent 状态；
+"""对话页：发消息 → 打字中显示处理到哪一步 → 回复按 Markdown 显示 → 点小字看"这条怎么处理的"；
+右边 Agent 状态仪表盘（健康环、链路图连线、大数字、图标卡片）；聊天窄栏、状态大块；竖屏能收起；
 总览的 Agent 状态卡片；设置 › 游戏内显示的预览。
 用法：python dev/ui/chat.py 截图文件夹（要先 dev/serve.sh start）"""
 import sys
@@ -52,15 +53,39 @@ with sync_playwright() as pw:
         check(p.evaluate("document.querySelectorAll('.es-links a').length") >= 1, "右边列出了查过的网页")
         p.screenshot(path=f"{OUT}/chat-event-{w}.png")
         p.click('[data-ctab="status"]')
-        p.wait_for_timeout(300)
-        st = p.evaluate("document.querySelectorAll('#sideBody .ag-row').length")
-        check(st >= 10, f"Agent 状态列出了 {st} 项")
+        p.wait_for_timeout(500)
+        st = p.evaluate("document.querySelectorAll('#sideBody .at').length")
+        check(st >= 10, f"Agent 状态列出了 {st} 张卡片")
+        ic = p.evaluate("document.querySelectorAll('#sideBody .at .ab-i').length")
+        check(ic == st, f"每张卡片都有图标（{ic}/{st}）")
+        kp = p.evaluate("document.querySelectorAll('#sideBody .kp').length")
+        check(kp >= 4, f"顶上一排大数字 {kp} 个")
+        wires = p.evaluate("document.querySelectorAll('#sideBody .fl-svg path:not(.hd)').length")
+        check(wires == 5, f"链路图连线画出来了（{wires} 条）")
+        ring = p.evaluate("document.querySelectorAll('#sideBody .hring .hr-a').length")
+        check(ring >= 1, f"健康环有 {ring} 段")
+        if w > h:
+            cw = p.evaluate("document.querySelector('.chat-main').getBoundingClientRect().width")
+            dw = p.evaluate("document.querySelector('.chat-side').getBoundingClientRect().width")
+            check(cw < dw * .7, f"聊天是窄栏（聊天 {cw:.0f}px，状态 {dw:.0f}px）")
+        else:
+            h0 = p.evaluate("document.querySelector('.chat-side').getBoundingClientRect().height")
+            p.click('#sideToggle')
+            p.wait_for_timeout(600)
+            h1 = p.evaluate("document.querySelector('.chat-side').getBoundingClientRect().height")
+            sm = p.evaluate("getComputedStyle(document.getElementById('dashSum')).display")
+            check(h1 < h0 / 3 and sm != "none", f"竖屏能收起状态（{h0:.0f}→{h1:.0f}px），收起后标题栏还留着各状态个数")
+            p.click('#sideToggle')
+            p.wait_for_timeout(600)
         over = p.evaluate("document.documentElement.scrollWidth - innerWidth")
         check(over <= 1, f"没有横向溢出（{over}px）")
         # 总览的 Agent 状态卡片
         p.evaluate("goView('home')")
         p.wait_for_timeout(900)
-        check(p.evaluate("!!document.querySelector('.agcard .ag-row')"), "总览上有 Agent 状态卡片")
+        n = p.evaluate("document.querySelectorAll('.agcard .agm').length")
+        check(n >= 10, f"总览上有 Agent 状态卡片，一格一个图标（{n} 格）")
+        cut = p.evaluate("(function(){var l=document.querySelector('.agcard .ag-list');return l.scrollHeight-l.clientHeight})()")
+        check(cut <= 4 or w < h, f"总览的 Agent 卡片不用滚就看得全（多出 {cut}px）")
         hov = p.evaluate("(function(){var c=document.querySelector('.hc.lift');return getComputedStyle(c).transitionProperty})()")
         check("transform" in hov, "今日分流这些卡片也能浮起来")
         p.screenshot(path=f"{OUT}/home-agent-{w}.png")

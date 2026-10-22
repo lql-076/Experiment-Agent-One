@@ -6,6 +6,8 @@
 
 每一项：st = ok（正常）/ idle（正常，闲着，用到才启动）/ warn（进行中、要注意）/ bad（缺了或出错）/ off（没开，可选）
 act = 点了去哪：{"label": "去补齐", "sec": "prep"}、{"label": "去填 Key", "sec": "cloud"}……
+m = 有数的项给界面画进度环：{"p": 0~1 或没有, "txt": "64/200"}
+顶层的 kpi = 界面顶上那一排大数字：余额、今天联网、下一个提醒、整备、记忆
 """
 import time
 
@@ -19,13 +21,23 @@ def _kev_weights() -> bool:
     return snap.is_dir() and any(snap.iterdir())
 
 
-def _row(k, name, st, detail, act=None, sub=None):
+def _row(k, name, st, detail, act=None, sub=None, m=None):
     r = {"k": k, "name": name, "st": st, "detail": detail}
     if act:
         r["act"] = act
     if sub:
         r["sub"] = sub
+    if m:
+        r["m"] = m
     return r
+
+
+def _m(v, mx=None, txt=None):
+    """进度：v / mx（mx 没有就只给文字）"""
+    out = {"txt": txt if txt is not None else (f"{v} / {mx}" if mx else str(v))}
+    if mx:
+        out["p"] = round(max(0.0, min(1.0, float(v) / float(mx))), 3)
+    return out
 
 
 PREP = {"label": "去补齐", "sec": "prep"}
@@ -81,37 +93,54 @@ async def view():
     cats = db.q("SELECT * FROM categories ORDER BY count DESC LIMIT 6")
     sub = []
     for c in cats:
+        cm = _m(min(c["count"], need), need, f"{c['count']} / {need}")
         if c["status"] == "approved":
-            sub.append(_row("cat:" + c["name"], c["name"], "warn", f"你同意训练了（{c['count']} 条）· 训练这一步还没接"))
+            sub.append(_row("cat:" + c["name"], c["name"], "warn", f"你同意训练了（{c['count']} 条）· 训练这一步还没接", m=cm))
         elif c["status"] == "ready":
-            sub.append(_row("cat:" + c["name"], c["name"], "warn", f"样本够了（{c['count']} 条）· 等你点头"))
+            sub.append(_row("cat:" + c["name"], c["name"], "warn", f"样本够了（{c['count']} 条）· 等你点头", m=cm))
         else:
-            sub.append(_row("cat:" + c["name"], c["name"], "idle", f"攒样本中 {c['count']} / {need}"))
+            sub.append(_row("cat:" + c["name"], c["name"], "idle", f"攒样本中 {c['count']} / {need}", m=cm))
+    top = max((c["count"] for c in cats), default=0)
     if not loras:
-        brain.append(_row("loras", "训练出来的小脑", "off", "还没有 · 某类事攒够样本、你同意后才训练" + (f" · 正在攒 {len(cats)} 类" if cats else ""), sub=sub or None))
+        brain.append(_row("loras", "训练出来的小脑", "off", "还没有 · 某类事攒够样本、你同意后才训练" + (f" · 正在攒 {len(cats)} 类" if cats else ""), sub=sub or None,
+                          m=_m(min(top, need), need, f"最多 {top} / {need}") if cats else None))
     elif sub:
-        brain.append(_row("cats", "正在攒样本的新类别", "idle", f"{len(cats)} 类", sub=sub))
+        brain.append(_row("cats", "正在攒样本的新类别", "idle", f"{len(cats)} 类", sub=sub, m=_m(min(top, need), need, f"最多 {top} / {need}")))
 
     # ---------- 云端 ----------
     cloud = []
+    kpi = {}
+    mc = deepseek.month_cost_cny()
     if not settings.get_secret("dsKey"):
         cloud.append(_row("ds", "DeepSeek", "bad", "还没填 Key：难题、联网搜索、每日差事都用不了", {"label": "去填 Key", "sec": "cloud"}))
+        kpi["bal"] = {"st": "bad", "v": "没填 Key", "sub": "设置 › 云端"}
     else:
         b = deepseek.balance_cached() or {}
         if b.get("err"):
             cloud.append(_row("ds", "DeepSeek", "bad", "Key 有问题：" + str(b["err"])[:60], {"label": "去看看", "sec": "cloud"}))
+            kpi["bal"] = {"st": "bad", "v": "Key 有问题", "sub": str(b["err"])[:40]}
         else:
             low = b.get("total") is not None and b["total"] < float(S.get("dsLow", 2))
+            tot = b.get("total")
+            bm = {"txt": deepseek.money(tot, b.get("currency", "CNY"))}
+            if tot is not None and tot + mc > 0:
+                bm["p"] = round(max(0.0, min(1.0, tot / (tot + mc))), 3)
             cloud.append(_row("ds", "DeepSeek", "warn" if low else "ok",
-                              f"Key 正常 · 余额 {deepseek.money(b.get('total'), b.get('currency', 'CNY'))}" + (" · 快用完了" if low else "") + f" · 模型 {S.get('dsModel')}"))
+                              f"Key 正常 · 余额 {deepseek.money(b.get('total'), b.get('currency', 'CNY'))}" + (" · 快用完了" if low else "") + f" · 模型 {S.get('dsModel')}", m=bm))
+            kpi["bal"] = {"st": "warn" if low else "ok", "v": bm["txt"], "p": bm.get("p"), "sub": f"本月花了 ¥{mc:.2f}" + (" · 快用完了" if low else "")}
     st = websearch.stats()
     if not st["on"]:
         cloud.append(_row("search", "联网搜索", "off", "关着", {"label": "去打开", "sec": "cloud"}))
+        kpi["search"] = {"st": "off", "v": "关着", "sub": "设置 › 云端 打开"}
     elif not settings.get_secret("dsKey"):
         cloud.append(_row("search", "联网搜索", "bad", "要先填 DeepSeek Key", {"label": "去填 Key", "sec": "cloud"}))
+        kpi["search"] = {"st": "bad", "v": "用不了", "sub": "要先填 DeepSeek Key"}
     else:
-        cloud.append(_row("search", "联网搜索", "warn" if st["today"]["n"] >= st["limit"] else "ok",
-                          f"开着 · 今天 {st['today']['n']} / {st['limit']} 次" + (" · 今天的次数用完了" if st["today"]["n"] >= st["limit"] else "")))
+        full = st["today"]["n"] >= st["limit"]
+        cloud.append(_row("search", "联网搜索", "warn" if full else "ok",
+                          f"开着 · 今天 {st['today']['n']} / {st['limit']} 次" + (" · 今天的次数用完了" if full else ""), m=_m(min(st["today"]["n"], st["limit"]), st["limit"], f"{st['today']['n']} / {st['limit']}")))
+        kpi["search"] = {"st": "warn" if full else "ok", "v": str(st["today"]["n"]), "unit": f"/ {st['limit']} 次", "p": round(min(1, st["today"]["n"] / max(1, st["limit"])), 3),
+                         "sub": f"本月 {st['month']['n']} 次 · ¥{st['month']['cny']:.2f}"}
     cloud.append(_row("claude", "网页 Claude", "ok", "特别复杂的事写好提示词，你自己去问（不自动登录）"))
 
     # ---------- 通道 ----------
@@ -131,13 +160,25 @@ async def view():
     nxt = next((r for r in rems if r["next_ts"]), None)
     chan.append(_row("remind", "提醒", "ok" if rems else "off",
                      (f"开着 {len(rems)} 条 · 下一个 {time.strftime('%m-%d %H:%M', time.localtime(nxt['next_ts']))} {nxt['title']}" if nxt else f"开着 {len(rems)} 条") if rems
-                     else "一条都没开（提醒不靠任何模型，显卡被占满也准时）", None if rems else {"label": "去设", "sec": "remind"}))
+                     else "一条都没开（提醒不靠任何模型，显卡被占满也准时）", None if rems else {"label": "去设", "sec": "remind"},
+                     m={"txt": time.strftime("%H:%M", time.localtime(nxt["next_ts"]))} if nxt else None))
+    if not nxt:
+        kpi["remind"] = {"st": "off", "v": "--:--", "sub": "一条都没开" if not rems else f"开着 {len(rems)} 条"}
+    else:
+        kpi["remind"] = {"st": "ok", "v": time.strftime("%H:%M", time.localtime(nxt["next_ts"])), "ts": nxt["next_ts"],
+                         "sub": f"{nxt['title']} · 共开着 {len(rems)} 条"}
 
     # ---------- 后台 ----------
     back = [_row("backend", "后端", "ok", "127.0.0.1:8765 · 界面和所有接口")]
     m = svc.get("model", {})
+    vm = None
+    al = (h.get("vram") or {}).get("alloc_gb")
+    if al is not None:
+        from . import hw as hwmod
+        vt = ((hwmod._cache.get("data") or {}).get("gpu") or {}).get("vramTotal")
+        vm = _m(al, vt, f"{al} GB") if vt else {"txt": f"{al} GB"}
     back.append(_row("model", "本地模型服务", {"ok": "ok", "warn": "warn", "bad": "bad"}.get(m.get("st"), "bad" if not env_ok else "off"),
-                     m.get("detail") or "没在运行", None if env_ok else PREP))
+                     m.get("detail") or "没在运行", None if env_ok else PREP, m=vm))
     hwv = svc.get("hw", {})
     back.append(_row("hw", "硬件监控助手", "ok" if hwv.get("st") == "ok" else "off", hwv.get("detail") or "没在运行"))
     nl = svc.get("nightly", {})
@@ -155,9 +196,11 @@ async def view():
     back.append(_row("queue", "排队的事", qu.get("st", "ok"), qu.get("detail", "没有")))
     n_mem = db.one("SELECT COUNT(*) n FROM chunks WHERE file NOT LIKE ?", (memory.DOC_TAG + "%",))["n"]
     n_doc = db.one("SELECT COUNT(*) n FROM chunks WHERE file LIKE ?", (memory.DOC_TAG + "%",))["n"]
-    mc = ck("memory")
-    back.append(_row("memory", "记忆和说明书", "ok" if mc == "ok" else ("warn" if mc == "wait" else "bad" if mc else "idle"),
-                     f"记忆 {n_mem} 段 · 说明书 {n_doc} 段已建索引" + ("" if n_mem + n_doc else "（嵌入模型在线后自动建）")))
+    mck = ck("memory")
+    mst = "ok" if mck == "ok" else ("warn" if mck == "wait" else "bad" if mck else "idle")
+    back.append(_row("memory", "记忆和说明书", mst,
+                     f"记忆 {n_mem} 段 · 说明书 {n_doc} 段已建索引" + ("" if n_mem + n_doc else "（嵌入模型在线后自动建）"), m={"txt": f"{n_mem} · {n_doc}"}))
+    kpi["mem"] = {"st": mst, "v": str(n_mem), "unit": "段", "sub": f"说明书 {n_doc} 段已建索引"}
 
     groups = [{"name": "大脑", "items": brain}, {"name": "云端", "items": cloud}, {"name": "通道", "items": chan}, {"name": "后台", "items": back}]
     cnt = {"ok": 0, "idle": 0, "warn": 0, "bad": 0, "off": 0}
@@ -166,5 +209,8 @@ async def view():
             cnt[it["st"]] = cnt.get(it["st"], 0) + 1
     bad = [it["name"] for g in groups for it in g["items"] if it["st"] == "bad"]
     head = "全部正常" if not bad and not cnt["warn"] else ("缺：" + "、".join(n.split("（")[0] for n in bad[:4]) + ("……" if len(bad) > 4 else "")) if bad else f"{cnt['warn']} 项要注意"
-    return {"ts": time.time(), "count": cnt, "head": head, "groups": groups,
-            "prep": {"ready": sum(1 for v in chk.values() if v.get("st") == "ok"), "total": len(chk) or 14}}
+    ready, total = sum(1 for v in chk.values() if v.get("st") == "ok"), len(chk) or 14
+    kpi["prep"] = {"st": "ok" if ready >= total else "warn", "v": str(ready), "unit": f"/ {total} 项", "p": round(ready / total, 3),
+                   "sub": "全部就绪" if ready >= total else f"缺 {total - ready} 项 · 去补齐"}
+    return {"ts": time.time(), "count": cnt, "head": head, "groups": groups, "kpi": kpi,
+            "prep": {"ready": ready, "total": total}}
