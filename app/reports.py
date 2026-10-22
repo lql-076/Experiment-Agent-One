@@ -31,6 +31,15 @@ def week():
     return out
 
 
+async def _agent():
+    """Agent 状态跟着 /api/state 一起给界面（每 5 秒一次），总览和对话页右边都用它。"""
+    try:
+        from . import agentstate
+        return await agentstate.view()
+    except Exception as e:
+        return {"err": str(e)[:120], "groups": [], "count": {}, "head": "读不到状态"}
+
+
 def brains_view():
     ex = db.kv_get("exam") or {}
     today = split(day_start())
@@ -144,7 +153,7 @@ async def state():
     ready = sum(1 for k in live if (res.get(k) or {}).get("st") == "ok")
     ms = await M.status()
     return {"ts": time.time(), "today": sp, "today_total": tot, "local_pct": round(sp["local"] / tot * 100) if tot else 0,
-            "cost_month": round(deepseek.month_cost_cny(), 2), "balance": _bal(), "search": websearch.stats(), "setup": setup.brief(),
+            "cost_month": round(deepseek.month_cost_cny(), 2), "balance": _bal(), "search": websearch.stats(), "agent": await _agent(), "setup": setup.brief(),
             "asks_pending": db.one("SELECT COUNT(*) n FROM asks WHERE status='pending'")["n"],
             "next": reminders.next_info(), "cards": notify.cards(), "train_ask": growth.pending(),
             "prep": {"ready": ready, "total": len(live), "miss": sum(1 for k in live if (res.get(k) or {}).get("st") == "miss"), "ts": ck.get("ts")},

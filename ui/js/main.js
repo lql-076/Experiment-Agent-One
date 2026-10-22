@@ -11,7 +11,8 @@ function poll() {
     if (S.set.demo) { syncStatus(); return; }
     var sig = st.events.map(function (e) { return e.id + e.status + (e.fix || ''); }).join(',');
     if (sig !== D.sig.ev) { D.sig.ev = sig; D.events = st.events; if (S.view === 'events') refreshEventList(); }
-    var hs = JSON.stringify([st.today, st.next && st.next.id, st.next && st.next.ts, st.asks_pending, st.prep.ready, st.cost_month, st.balance, st.setup, sig.slice(0, 60)]);
+    if (S.view === 'chat') chatRefresh();
+    var hs = JSON.stringify([st.today, st.next && st.next.id, st.next && st.next.ts, st.asks_pending, st.prep.ready, st.cost_month, st.balance, st.setup, sig.slice(0, 60), st.agent && st.agent.count, st.agent && st.agent.head]);
     if (hs !== D.sig.home) { D.sig.home = hs; if (S.view === 'home') renderHome(true); else D.homeDirty = true; }
     renderCards(st.cards); syncStatus(); syncBadges(); fillResidentText();
     var cand = st.qq.candidate; if (cand && S.check.qqbind && S.check.qqbind.st === 'miss') { S.check.qqbind = { st: 'wait', d: '收到一条消息「' + cand.text.slice(0, 16) + '」，是你发的就点「是我」', action: 'qq_bind', extra: { openid: cand.openid } }; updatePrepUI('qqbind'); }
@@ -27,7 +28,7 @@ function loadServer() {
   });
 }
 
-function renderAll() { renderHome(); renderEvents(); renderBrains(); renderReports(); renderSettings(); renderResident(); syncBadges(); }
+function renderAll() { renderChat(); renderHome(); renderEvents(); renderBrains(); renderReports(); renderSettings(); renderResident(); syncBadges(); }
 
 /* ================= 启动 ================= */
 function start() {

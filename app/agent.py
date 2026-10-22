@@ -3,6 +3,7 @@
 交给 DeepSeek 的，带上联网搜索工具（app/websearch.py），要不要搜由它自己定；问到 agent 自己怎么用的，
 先从说明书（docs/操作手册.md、docs/AI文档）里找相关段落一起给模型。"""
 import asyncio
+import contextlib
 import json
 import re
 import time
@@ -28,9 +29,22 @@ def _history(user, allow_private):
     return out
 
 
-def _build(text, user, snips, allow_private, docs=None):
+QQ_PLAIN = "\n这条回复会发到 QQ 私聊，QQ 不显示格式：不要用 **、#、- 列表、表格、代码块这些符号，用纯文字和换行；链接直接写网址。"
+
+
+def plain(t: str) -> str:
+    """发到 QQ 前去掉 Markdown 符号（模型偶尔还是会写），QQ 里看到的是干净的文字。"""
+    t = re.sub(r"\*\*(.+?)\*\*", r"\1", t or "")
+    t = re.sub(r"(?m)^#{1,6}\s*", "", t)
+    t = re.sub(r"(?m)^(\s*)[-*]\s+", r"\1· ", t)
+    t = re.sub(r"`([^`]+)`", r"\1", t)
+    t = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r"\1 \2", t)
+    return t.replace("```", "")
+
+
+def _build(text, user, snips, allow_private, docs=None, src="ui"):
     d = time.localtime()
-    sys = memory.persona() + f"\n现在是 {d.tm_year} 年 {d.tm_mon} 月 {d.tm_mday} 日 {d.tm_hour:02d}:{d.tm_min:02d}（星期{'一二三四五六日'[d.tm_wday]}）。"
+    sys = memory.persona() + f"\n现在是 {d.tm_year} 年 {d.tm_mon} 月 {d.tm_mday} 日 {d.tm_hour:02d}:{d.tm_min:02d}（星期{'一二三四五六日'[d.tm_wday]}）。" + (QQ_PLAIN if src == "qq" else "")
     if snips:
         sys += "\n\n下面是他的记忆文件里和这条消息相关的内容，用得上就用，用不上别提：\n" + "\n".join(f"- {m['text']}" for m in snips)
     if docs:
@@ -61,7 +75,15 @@ def _save_sample(e_text, reply, label, eid, private, claude_ctx=False, web=False
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
-async def handle(text: str, src="qq", user="me"):
+def _quick(job, *a, **k):
+    eid = _quick(job, *a, **k)
+    if job is not None:
+        job["eid"] = eid
+    return eid
+
+
+async def handle(text: str, src="qq", user="me", job=None):
+    """job：界面上异步发消息时传进来，记下事件编号，界面拿它查处理到哪一步了。"""
     text = (text or "").strip()
     t0 = time.time()
     is_priv_kw = privacy.check(text)[0]
@@ -69,21 +91,21 @@ async def handle(text: str, src="qq", user="me"):
     # 1. 在回提醒？
     r = reminders.try_reply(text)
     if r:
-        eid = _quick_event(text, src, "回应提醒", "这是在回应刚才的提醒，直接打卡或顺延，不经过模型。", r, is_priv_kw)
+        eid = _quick(job, text, src, "回应提醒", "这是在回应刚才的提醒，直接打卡或顺延，不经过模型。", r, is_priv_kw)
         HIST[user].extend([("user", text, is_priv_kw, t0), ("assistant", r, is_priv_kw, time.time())])
         return events.get(eid)
 
     # 1.5 在回"要不要训练"？
     g = growth.try_reply(text)
     if g:
-        eid = _quick_event(text, src, "回应提醒", "这是在回答「要不要训练新小脑」，直接记下，不经过模型。", g, is_priv_kw)
+        eid = _quick(job, text, src, "回应提醒", "这是在回答「要不要训练新小脑」，直接记下，不经过模型。", g, is_priv_kw)
         HIST[user].extend([("user", text, is_priv_kw, t0), ("assistant", g, is_priv_kw, time.time())])
         return events.get(eid)
 
     # 2. 设提醒？
     if reminders.parse_command(text):
         reply = await reminders.create_from_text(text)
-        eid = _quick_event(text, src, "设提醒", "认出了时间和事情，由程序直接建提醒，不经过模型（先斩后奏，写进报告）。", reply, is_priv_kw,
+        eid = _quick(job, text, src, "设提醒", "认出了时间和事情，由程序直接建提醒，不经过模型（先斩后奏，写进报告）。", reply, is_priv_kw,
                            [["收到", SRC_LABEL.get(src, src)], ["认出提醒", "时间 + 事情"], ["新建提醒", "先斩后奏"], ["回复", "已回复"]])
         return events.get(eid)
 
@@ -92,7 +114,7 @@ async def handle(text: str, src="qq", user="me"):
     if m and len(m.group(4).strip()) >= 2:
         done, _ = await memory.remember(m.group(4))
         reply = "记下了。" if done else "要写记忆文件，已放进「等你决定」。"
-        eid = _quick_event(text, src, "记住", "你明确说了记住，直接写进记忆收件箱（本地文件，先斩后奏，可撤销）。", reply, is_priv_kw,
+        eid = _quick(job, text, src, "记住", "你明确说了记住，直接写进记忆收件箱（本地文件，先斩后奏，可撤销）。", reply, is_priv_kw,
                            [["收到", SRC_LABEL.get(src, src)], ["认出「记住」", "不经过模型"], ["写记忆", "记忆/收件箱.md"], ["回复", "已回复"]])
         return events.get(eid)
 
@@ -107,7 +129,15 @@ async def handle(text: str, src="qq", user="me"):
     eid = db.insert("events", {"ts": t0, "src": src, "user": user, "text": text, "private": int(dec["private"]), "route": dec["route"],
                                "ui_to": dec["ui_to"], "label": dec["brain_name"] or "", "conf": dec["conf"], "scores": dec["scores"],
                                "votes": {k: v for k, v in dec["votes"].items()}, "thresholds": dec["thresholds"],
-                               "why": dec["why"] + " " + dec["vote_line"] + "。", "steps": steps, "status": "running"})
+                               "why": dec["why"] + " " + dec["vote_line"] + "。", "steps": steps, "status": "running",
+                               "result": f"决策脑打完分，交给 {to_name}……"})
+    if job is not None:
+        job["eid"] = eid
+
+    def prog(msg):
+        """处理到哪一步，随时写进事件，界面（对话页）每半秒来看一次。"""
+        with contextlib.suppress(Exception):
+            db.update("events", eid, {"steps": steps, "result": msg})
     route, why_extra, reply, cost = dec["route"], "", "", 0.0
     qvec = None
     try:
@@ -121,6 +151,7 @@ async def handle(text: str, src="qq", user="me"):
         docs = await memory.search_docs(qvec, text)
         if docs:
             steps.append(["查了说明书", f"{len(docs)} 段 · " + "、".join(sorted({d['file'].replace('@说明/', '').split('/')[-1].replace('.md', '') for d in docs}))[:40]])
+            prog("查了说明书，正在回答……")
 
     is_local = dec["brain"] is not None
     if is_local and not dec["private"] and settings.S.get("searchOn", True) and websearch.wants_fresh(text) and not docs:
@@ -138,7 +169,8 @@ async def handle(text: str, src="qq", user="me"):
             return events.get(eid)
         try:
             snips = await memory.search(qvec, allow_private=True)
-            out = await M.chat(_build(text, user, snips, True, docs), lora=dec["lora"], max_new_tokens=400)
+            prog(f"{dec['brain_name']}正在回答……")
+            out = await M.chat(_build(text, user, snips, True, docs, src), lora=dec["lora"], max_new_tokens=400)
             reply = out["text"]
             steps.append(["本地处理", f"{dec['brain_name']} · {out['tokens']} 个 token · {out['tok_per_s']}/秒"])
             if snips:
@@ -158,11 +190,13 @@ async def handle(text: str, src="qq", user="me"):
             mode = settings.S["dsThinking"]
             thinking = mode == "on" or (mode == "auto" and (dec["p"].get("cl", 0) > 0.25 or len(text) > 150))
             snips = await memory.search(qvec, allow_private=False)
-            msgs = _build(text, user, snips, False, docs)
+            msgs = _build(text, user, snips, False, docs, src)
+            prog("交给 DeepSeek，正在想……")
             purpose = "neu" if dec["neu"] else "chat"
             web = None
             if settings.S.get("searchOn", True) and not dec["private"]:
-                web = await websearch.answer_with_tools(msgs, thinking=thinking, event_id=eid, purpose=purpose, user_text=text, steps=steps)
+                web = await websearch.answer_with_tools(msgs, thinking=thinking, event_id=eid, purpose=purpose, user_text=text, steps=steps,
+                                                        progress=prog)
                 out = {"text": web["text"], "cny": web["cny"]}
             else:
                 out = await deepseek.chat(msgs, thinking=thinking, private=dec["private"], event_id=eid, purpose=purpose)
@@ -231,12 +265,12 @@ async def process_queue():
             continue
         try:
             snips = []
-            out = await M.chat(_build(e["text"], e["user"] or "me", snips, True), lora=None, max_new_tokens=400)
+            out = await M.chat(_build(e["text"], e["user"] or "me", snips, True, None, e["src"]), lora=None, max_new_tokens=400)
             reply = out["text"]
             steps = db.jl(e["steps"], []) + [["本地处理", "排队后处理"], ["回复", "已通过 QQ 发给你"]]
             db.update("events", eid, {"status": "done", "reply": reply, "result": reply, "steps": steps})
             if e["src"] == "qq":
-                await notify.say(f"（刚才排队的事）{e['text'][:20]}…\n{reply}")
+                await notify.say(plain(f"（刚才排队的事）{e['text'][:20]}…\n{reply}"))
         except Exception:
             rest.append(eid)
     db.kv_set("queue", rest)
@@ -245,7 +279,7 @@ async def process_queue():
 async def on_qq(text, openid, msg_id):
     ev = await handle(text, "qq", openid)
     if ev and ev.get("reply"):
-        ok, info = await BOT.reply(openid, ev["reply"], msg_id)
+        ok, info = await BOT.reply(openid, plain(ev["reply"]), msg_id)
         if not ok:
             db.update("events", ev["id"], {"result": (ev.get("result") or "") + f"\n（QQ 回复失败：{info}）"})
 

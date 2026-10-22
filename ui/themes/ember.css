@@ -65,8 +65,8 @@ html[data-theme="ember"][data-fx~="hrail"] :is(.bgrid,.tpick){gap:2rem;scrollbar
 html[data-theme="ember"][data-fx~="hrail"] .bcard{border:0;border-top:1px solid var(--line2);border-radius:0;background:transparent}
 /* 悬停：顶上那条线从左往右扫一道渐变；链接下划线扫过去 */
 html[data-theme="ember"] :is(.bcard,.tcard){position:relative}
-html[data-theme="ember"] :is(button.hc,.bcard,.tcard)::after{content:"";position:absolute;left:0;right:0;top:-1px;height:2px;background:var(--grad);transform:scaleX(0);transform-origin:left;transition:transform .55s var(--ease);pointer-events:none}
-html[data-theme="ember"] :is(button.hc,.bcard,.tcard):hover::after{transform:scaleX(1)}
+html[data-theme="ember"] :is(button.hc,.hc.lift,.bcard,.tcard)::after{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:var(--grad);transform:scaleX(0);transform-origin:left;transition:transform .55s var(--ease);pointer-events:none}
+html[data-theme="ember"] :is(button.hc,.hc.lift,.bcard,.tcard):hover::after{transform:scaleX(1)}
 html[data-theme="ember"] .linkbtn{text-decoration:none;background:linear-gradient(var(--accent2),var(--accent2)) left bottom/0 1px no-repeat;transition:background-size .45s var(--ease),color .3s}
 html[data-theme="ember"] .linkbtn:hover{background-size:100% 1px;color:var(--text)}
 /* 磁吸：按钮被鼠标吸过去，松开时弹回 */

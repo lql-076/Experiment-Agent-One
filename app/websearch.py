@@ -157,8 +157,10 @@ def system_hint() -> str:
             "回答用中文、简短直接；用到了网上的信息，在最后列出来源（标题 + 链接，最多 3 条）。")
 
 
-async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text, steps):
-    """让 DeepSeek 带着搜索工具回答。返回 {"text","cny","searched","fetched","sources"}；steps 里追加每一步。"""
+async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text, steps, progress=None):
+    """让 DeepSeek 带着搜索工具回答。返回 {"text","cny","searched","fetched","sources"}；steps 里追加每一步。
+    progress(文字)：处理到哪一步了（对话页实时显示）。"""
+    say = progress or (lambda _m: None)
     s = settings.S
     rounds = max(1, int(s.get("searchRounds", 4)))
     msgs = list(messages)
@@ -166,6 +168,7 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
     total, searched, fetched, sources, n_res = 0.0, 0, 0, [], 1
     for rnd in range(rounds + 1):
         give = rnd < rounds and today_count() < int(s.get("searchDaily", 200))
+        say("DeepSeek 正在想……" if rnd == 0 else "DeepSeek 正在看查到的内容……")
         out = await deepseek.chat(msgs, thinking=thinking, event_id=event_id, purpose=purpose, tools=TOOLS if give else None,
                                   max_tokens=1600)
         total += out["cny"]
@@ -189,6 +192,7 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
             t0 = time.time()
             try:
                 if name == "web_search":
+                    say(f"正在联网搜索「{str(args.get('query', ''))[:40]}」……")
                     res = await search(args.get("query", ""), args.get("count") or 8, ori=user_text, event_id=event_id, purpose=purpose)
                     searched += 1
                     content = _fmt_results(res, n_res)
@@ -197,6 +201,7 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
                         n_res += 1
                     steps.append(["联网搜索", f"「{args.get('query', '')[:40]}」· {len(res)} 条 · {time.time() - t0:.1f} 秒"])
                 elif name == "web_fetch":
+                    say(f"正在读网页 {_site(args.get('url', ''))}……")
                     page = await fetch(args.get("url", ""), event_id=event_id, purpose=purpose)
                     if page:
                         fetched += 1

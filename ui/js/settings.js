@@ -73,6 +73,7 @@ function sectionBody(sec) {
     }).join('') + '</div><p class="help" style="margin:-1rem 0 1.75rem">主题都在 ' + esc(P('root')) + '\\ui\\themes 里，一个 .css 文件就是一套。想加新的：复制一个改名、改颜色，刷新界面就会出现在这里。</p>';
   }
   if (sec.custom === 'cloud') h += balanceHTML() + searchHTML();
+  if (sec.custom === 'osd') h += osdHTML();
   if (sec.custom === 'growth') h += '<div class="btnrow" style="margin-bottom:1.5rem"><button class="btn" id="nightNow"' + (useLive() ? '' : ' disabled') + '>现在跑一次每日差事</button></div>';
   return h + '<div class="fields">' + sec.fields.map(fieldHTML).join('') + '</div>';
 }
@@ -83,6 +84,40 @@ function balanceHTML() {
     '<div class="help">' + sub + '<br>本月估计花了 ¥' + (+b.cost).toFixed(2) + '（本机按 token 算的，和官方账单可能差一点）</div></div>' +
     '<div class="btnrow"><button class="btn" id="balRefresh"' + (useLive() && b.key ? '' : ' disabled') + '>刷新</button><a class="btn" style="display:inline-flex;align-items:center;text-decoration:none;color:var(--text)" href="https://platform.deepseek.com/top_up" target="_blank" rel="noopener noreferrer">去充值</a></div></div>';
 }
+/* 游戏内显示：选显示哪几项 + 预览（和游戏里那个小框同一套规则，见 app/osd.py 的 lines） */
+var OSD_ITEMS = [['fps', '帧数'], ['low1', '1% 低帧'], ['cpu', 'CPU'], ['gpu', '显卡'], ['vram', '显存'], ['ram', '内存'], ['power', '整机功耗'], ['time', '时间']];
+var OSD_COL = { fps: '#5fe0b0', low1: '#ffd166', cpu: '#3fc6ff', gpu: '#b49bff', vram: '#ff8fc0', ram: '#8fe3a5', power: '#ffb547', time: '#e8eaf0', hot: '#ff5d5d' };
+function osdItems() { return String(S.set.osdItems || DEFAULTS.osdItems).split(',').filter(Boolean); }
+function osdLines() {
+  var n = function (x, d) { return x == null || isNaN(x) ? null : (+x).toFixed(d || 0); };
+  var fps = HW.fps || null, out = [];
+  osdItems().forEach(function (k) {
+    if (k === 'fps') out.push(['FPS', (fps && n(fps.fps)) || '—', OSD_COL.fps]);
+    else if (k === 'low1') out.push(['1% 低', (fps && n(fps.low1)) || '—', OSD_COL.low1]);
+    else if (k === 'cpu') out.push(['CPU', [(n(HW.cpu.load) || '—') + '%', n(HW.cpu.temp) && n(HW.cpu.temp) + '°C', n(HW.cpu.power) && n(HW.cpu.power) + 'W'].filter(Boolean).join('  '), (HW.cpu.temp || 0) >= 85 ? OSD_COL.hot : OSD_COL.cpu]);
+    else if (k === 'gpu') out.push(['GPU', [(n(HW.gpu.load) || '—') + '%', n(HW.gpu.temp) && n(HW.gpu.temp) + '°C', n(HW.gpu.power) && n(HW.gpu.power) + 'W'].filter(Boolean).join('  '), (HW.gpu.temp || 0) >= 83 ? OSD_COL.hot : OSD_COL.gpu]);
+    else if (k === 'vram') out.push(['显存', (n(HW.gpu.vram, 1) || '—') + ' / ' + (n(HW.gpu.vramTotal) || '—') + ' G', OSD_COL.vram]);
+    else if (k === 'ram') out.push(['内存', (n(HW.ram && HW.ram.used, 1) || '—') + ' / ' + (n(HW.ram && HW.ram.total) || '—') + ' G', OSD_COL.ram]);
+    else if (k === 'power') out.push(['整机', n(HW.sys && HW.sys.power) ? '≈' + n(HW.sys.power) + ' W' : '—', OSD_COL.power]);
+    else if (k === 'time') { var d = new Date(); out.push(['时间', pad(d.getHours()) + ':' + pad(d.getMinutes()), OSD_COL.time]); }
+  });
+  return out;
+}
+function osdBoxHTML() {
+  var size = { s: .62, m: .72, l: .88 }[S.set.osdSize] || .72;
+  return '<div class="osd-box pos-' + (S.set.osdPos || 'tl') + '" style="--m:' + Math.round((+S.set.osdMargin || 16) / 4) + 'px;--a:' + ((+S.set.osdOpacity || 80) / 100) + ';font-size:' + size + 'rem">' +
+    osdLines().map(function (l) { return '<span class="ol">' + esc(l[0]) + '</span><b style="color:' + l[2] + '">' + esc(l[1]) + '</b>'; }).join('') + '</div>';
+}
+function osdHTML() {
+  var on = osdItems();
+  return '<div class="osd-top"><div class="osd-prev" id="osdPrev" aria-label="预览：游戏画面一角的样子"><span class="osd-game">游戏画面（预览）</span>' + osdBoxHTML() + '</div>' +
+    '<div class="osd-pick"><div class="label">显示哪几项（点一下开关）</div><div class="osd-chips">' + OSD_ITEMS.map(function (it) {
+      return '<button class="chip" data-osd-item="' + it[0] + '" aria-pressed="' + (on.indexOf(it[0]) >= 0) + '">' + it[1] + '</button>';
+    }).join('') + '</div><p class="help">预览里的数字是现在的真实读数' + (liveHW() ? '' : '（演示）') + '。帧数要在玩游戏、并且「硬件监控助手」开着时才有。</p></div></div>';
+}
+function osdPreview() { var p = $('#osdPrev'); if (!p) return; var b = p.querySelector('.osd-box'); if (b) b.outerHTML = osdBoxHTML(); }
+setInterval(function () { if (S.view === 'settings' && S.sec === 'osd') osdPreview(); }, 1000);
+
 /* 联网搜索：今天搜了几次 / 上限、这个月多少次花了多少；能现场测一次 */
 function searchStats() {
   if (!useLive()) return { on: true, limit: 200, today: { n: 7, cny: 0.04 }, month: { n: 86, cny: 0.46 } };
@@ -137,6 +172,7 @@ function setVal(k, val) {
   if (k === 'hwSource' || k === 'hwInterval' || k === 'demo') startHW();
   if (k === 'sysOther' || k === 'psuEff') { if (!liveHW()) { calcSys(); renderHW(); } }
   if (k === 'dsLow') renderHome(true);
+  if (k.indexOf('osd') === 0) osdPreview();
   if (k === 'autoScale') requestAnimationFrame(function () { placeInd(true); });
   if (k === 'uiShell') toast('下次启动 Agent 时生效');
   if (k === 'demo') { cardSig = ''; renderAll(); runChecks(false); if (!val) { fetchReport(); fetchBrains(); poll(); } }
@@ -220,6 +256,13 @@ sv.addEventListener('click', function (ev) {
   else if (t.id === 'setupGo') setupStart(t);
   else if (t.id === 'setupStop') setupStop();
   else if (t.id === 'recheck') checkPanel(true);
+  else if (t.dataset.osdItem) {
+    var cur = osdItems(), k = t.dataset.osdItem, i = cur.indexOf(k);
+    if (i >= 0) cur.splice(i, 1); else cur.push(k);
+    var order = OSD_ITEMS.map(function (x) { return x[0]; });
+    cur.sort(function (a, b) { return order.indexOf(a) - order.indexOf(b); });
+    setVal('osdItems', cur.join(',')); t.setAttribute('aria-pressed', i < 0); osdPreview();
+  }
   else if (t.id === 'searchTest') {
     t.disabled = true; t.textContent = '在搜…';
     api('POST', '/api/actions/search_test', {}, 40000).then(function (j) {

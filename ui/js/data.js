@@ -13,17 +13,22 @@ var EVENTS = [
     steps: [['收到', '定时任务触发'], ['本地处理', '提醒不经过任何模型'], ['送达', 'QQ、界面卡片']] },
   { id: 1041, t: '21:47', src: 'QQ', text: '帮我看看帕鲁最近更新了啥', to: 'ds', label: '', s: { local: 21, neu: 9, ds: 66, cl: 4 },
     why: '本地的把握只有 21%，低于接手线 60%，交给 DeepSeek。 语义路由 → DeepSeek 71%；Kev → DeepSeek 62%。', result: 'DeepSeek 整理了 3 条要点发给你。这次记录会成为以后的训练样本。',
-    steps: [['收到', 'QQ 私聊'], ['决策脑打分', 'DeepSeek 66%'], ['交给 DeepSeek', '快速模式 · ¥0.0011'], ['回复', '已回复']] },
+    reply: '帕鲁这次更新主要三件事：\n\n1. **新地图区域**：北边加了一块雪原，有新的帕鲁可以抓。\n2. **据点**：据点上限多了一个，搬运效率也提高了。\n3. **修了不少 bug**，掉线的问题少了。\n\n来源：\n1. 官方更新公告 https://example.com/palworld/patch',
+    cost: 0.0062, latency: 6.4,
+    steps: [['收到', 'QQ 私聊'], ['决策脑打分', 'DeepSeek 66%'], ['联网搜索', '「幻兽帕鲁 最新更新」· 8 条 · 1.2 秒'], ['读网页', '官方更新公告 · example.com'], ['交给 DeepSeek', '快速模式 · 联网 1 搜 1 读 · ¥0.0062'], ['回复', '已回复']] },
   { id: 1040, t: '21:30', src: 'QQ', text: '记住灵感：基地放在河边', to: 'local', label: '记住', s: { local: 100, neu: 0, ds: 0, cl: 0 },
     why: '你明确说了记住，直接写进记忆收件箱（本地文件，先斩后奏，可撤销）。', result: '记下了。',
-    steps: [['收到', 'QQ 私聊'], ['认出「记住」', '不经过模型'], ['写记忆', '记忆/收件箱.md'], ['回复', '已回复']] },
+    reply: '记下了。', steps: [['收到', 'QQ 私聊'], ['认出「记住」', '不经过模型'], ['写记忆', '记忆/收件箱.md'], ['回复', '已回复']] },
   { id: 1039, t: '20:12', src: 'QQ', text: '我想改成多个 agent 协作，可行吗', to: 'cl', label: '', s: { local: 6, neu: 5, ds: 31, cl: 58 },
     why: '「找 Claude」得分 58%，超过 50%，属于很复杂的难题，建议你亲自去和 Claude 深聊。 语义路由 → 网页 Claude 64%；Kev → 网页 Claude 52%。', result: 'DeepSeek 已写好提示词，等你带去。聊完把总结 .md 带回来，会存进记忆。',
+    reply: '这件事比较复杂，建议你带着下面的提示词去问网页 Claude。聊完让它出一份 Markdown 总结，带回来在 大脑 › 网页 Claude › 导入总结。\n\n> 我在搭一个自己的本地 agent，现在想把它改成多个 agent 协作……', cost: 0.0008, latency: 3.1,
     steps: [['收到', 'QQ 私聊'], ['决策脑打分', '网页 Claude 58%'], ['写提示词', 'DeepSeek 附上背景'], ['回复', '已回复']] },
   { id: 1038, t: '19:05', src: 'QQ', text: '猫粮还能吃几天？', to: 'neu', label: '', s: { local: 22, neu: 48, ds: 26, cl: 4 },
     why: '所有本地小脑都低于新类别线 40%（最高 22%），像是一类新事情：先交给 DeepSeek，同时记为样本。 语义路由 → 新类别 55%；Kev → DeepSeek 40%。', result: '先由 DeepSeek 回答；每日差事会给这一类起名，攒够了训练新小脑。',
+    reply: '要看你家猫一天吃多少。一般成年猫一天 50~70 克干粮，一袋 2 公斤大概能吃 **一个月左右**。你告诉我袋子还剩多少，我帮你算。', cost: 0.0009, latency: 2.2,
     steps: [['收到', 'QQ 私聊'], ['决策脑打分', '新类别 48%'], ['交给 DeepSeek', '快速模式 · ¥0.0009'], ['记为样本', '新类别']] },
-  { id: 1037, t: '18:30', src: 'QQ', text: '最近老是睡不着', to: 'local', label: '本地通用', s: { local: 88, neu: 3, ds: 7, cl: 2 },
+  { id: 1037, t: '18:30', src: 'QQ', text: '最近老是睡不着', to: 'local', label: '本地通用', private: true, s: { local: 88, neu: 3, ds: 7, cl: 2 },
+    reply: '睡不着的话可以试试：\n\n- 睡前一小时不看手机\n- 固定时间起床，周末也一样\n- 下午以后少喝咖啡和茶\n\n要是持续好几周，最好去看看医生。', latency: 4.8,
     why: '包含隐私关键词「睡不着」。按规则只在本地处理，不发给任何云端。', result: '本地小脑回复了几条睡前建议。',
     steps: [['收到', 'QQ 私聊'], ['决策脑打分', '本地通用 88%'], ['本地处理', '本地通用 · 96 个 token'], ['回复', '已回复']] }
 ];
@@ -191,6 +196,17 @@ var SECTIONS = [
     { k: 'psuEff', l: '电源转换效率', t: 'range', min: 80, max: 95, step: 1, u: '%', d: 89, h: '金牌电源在常见负载下大约 87% 到 90%' },
     { note: '整机功耗是估算值：CPU 和显卡功耗读传感器，加上其他部件的估计，再按电源效率折算到插座端。普通电源没法用软件读出真实整机功耗；要准确数字，需要能联机的智能电源，或者插座上的电量计。' }
   ] },
+  { id: 'osd', name: '游戏内显示', desc: '像游戏加加那样，在游戏画面一角浮一个小框，显示帧数、1% 低帧、CPU、显卡、显存、整机功耗。不往游戏里注入任何东西，不会被反作弊当外挂。', custom: 'osd', fields: [
+    { k: 'osdOn', l: '在游戏里显示', t: 'toggle', d: false, h: '打开后会单独开一个小窗：永远在最上层、鼠标点得穿、不抢游戏的焦点、不进任务栏' },
+    { k: 'osdWhen', l: '什么时候显示', t: 'select', d: 'game', o: [['game', '只在玩游戏时（读到帧数才显示）'], ['always', '一直显示']], h: '读帧数要「硬件监控助手」开着（硬件监控.bat）；没开的话选「一直显示」也能看占用和温度' },
+    { k: 'osdPos', l: '位置', t: 'select', d: 'tl', o: [['tl', '左上角'], ['tr', '右上角'], ['bl', '左下角'], ['br', '右下角']] },
+    { k: 'osdScreen', l: '显示在哪块屏幕', t: 'select', d: '0', o: [['0', '主屏幕'], ['1', '第 2 块屏幕'], ['2', '第 3 块屏幕']] },
+    { k: 'osdMargin', l: '离屏幕边多远', t: 'range', min: 0, max: 120, step: 4, u: ' 像素', d: 16 },
+    { k: 'osdSize', l: '字号', t: 'select', d: 'm', o: [['s', '小'], ['m', '中'], ['l', '大']] },
+    { k: 'osdOpacity', l: '不透明度', t: 'range', min: 30, max: 100, step: 5, u: '%', d: 80 },
+    { k: 'osdHotkey', l: '显示 / 隐藏的快捷键', t: 'select', d: 'ctrl+alt+f10', o: [['ctrl+alt+f10', 'Ctrl + Alt + F10'], ['ctrl+shift+f10', 'Ctrl + Shift + F10'], ['alt+f12', 'Alt + F12'], ['off', '不用快捷键']], h: '游戏里按一下藏起来，再按一下出来' },
+    { note: '只对「窗口化」和「无边框全屏」的游戏有效。「独占全屏」的游戏会盖住所有别的窗口，看不到这个小框——在游戏的显示设置里改成「无边框」就行（帕鲁和现在大多数游戏都有这个选项，画面和帧数基本没差别）。帧数只支持 DirectX 10/11/12 的游戏。' }
+  ] },
   { id: 'look', name: '外观', desc: '所有改动立即生效。', custom: 'look', fields: [
     { k: 'bright', l: '整体亮度', t: 'range', min: 50, max: 100, step: 5, u: '%', d: 100, h: '默认 100% 就是不调暗' },
     { k: 'warmth', l: '暖色护眼', t: 'range', min: 0, max: 30, step: 2, u: '%', d: 4, h: '减少蓝光，晚上可以调高' },
@@ -217,7 +233,7 @@ var SECTIONS = [
   ] },
   { id: 'data', name: '数据', desc: '设置、记录、记忆都只在这台电脑上。', custom: 'data' }
 ];
-var DEFAULTS = { theme: 'abyss', demo: true };
+var DEFAULTS = { theme: 'abyss', demo: true, osdItems: 'fps,low1,cpu,gpu,vram,power' };
 SECTIONS.forEach(function (sec) { (sec.fields || []).forEach(function (f) { if (f.k && f.t !== 'secret') DEFAULTS[f.k] = f.d === undefined ? '' : f.d; }); });
 
 /* ================= 状态 ================= */
@@ -228,7 +244,7 @@ var S = {
   set: Object.assign({}, DEFAULTS, stored.set || {}),
   manual: stored.manual || {}, safety: stored.safety || {}, secret: {},
   check: {}, lastCheck: null, checking: false,
-  view: 'home', sec: 'prep', selId: null, filter: 'all', fix: {}, bsel: -1, done: {}, resetArm: false
+  view: 'chat', sec: 'prep', selId: null, filter: 'all', fix: {}, bsel: -1, done: {}, resetArm: false
 };
 var LIVE = false, SECRETS = {};
 var D = { state: null, events: [], brains: null, report: null, reminders: [], sig: {} };

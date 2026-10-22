@@ -12,12 +12,12 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import (agent, checks, db, deepseek, docs, events, exam, feed, growth, hw, memory, monitor, nightly, paths, reminders, reports,
-               router, safety, settings, setup, websearch)
+from . import (agent, agentstate, checks, db, deepseek, docs, events, exam, feed, growth, hw, memory, monitor, nightly, osd, paths,
+               reminders, reports, router, safety, settings, setup, websearch)
 from .models import M
 from .qq import BOT
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 PORT = 8765
 _bg = []
 
@@ -93,6 +93,8 @@ async def housekeeping():
                 await deepseek.balance_tick(n)
             if n % 60 == 30:
                 await growth.tick()
+            if n % 2 == 1:
+                osd.ctl().tick()                      # 游戏内显示：设置里开了就拉起小框，关了就停
         except Exception as e:
             print("后台照看出错：", e)
         n += 1
@@ -132,6 +134,8 @@ async def lifespan(app):
         t.cancel()
     await BOT.stop()
     M.stop_all()
+    with contextlib.suppress(Exception):
+        osd.ctl().stop()
 
 
 app = FastAPI(title="Agent", lifespan=lifespan)
@@ -266,6 +270,16 @@ async def state():
     return await reports.state()
 
 
+@app.get("/api/osd")
+def osd_state():
+    return osd.state()
+
+
+@app.get("/api/agent")
+async def agent_state():
+    return await agentstate.view()
+
+
 @app.get("/api/hw")
 async def get_hw():
     return await hw.sample()
@@ -326,12 +340,40 @@ async def fix_event(eid: int, body: dict = Body(...)):
     return events.get(eid)
 
 
+CHAT_JOBS = {}
+
+
 @app.post("/api/chat")
 async def chat(body: dict = Body(...)):
+    """界面上发消息。带 async=true 时马上返回一个 token，界面拿它每半秒来问一次进度（/api/chat/{token}），
+    处理到哪一步（决策脑、查说明书、联网搜索、读网页……）就能实时显示；不带就等处理完再返回（旧用法）。"""
     text = (body.get("text") or "").strip()
     if not text:
         raise HTTPException(400, "空消息")
-    return await agent.handle(text, "ui", "me")
+    if not body.get("async"):
+        return await agent.handle(text, "ui", "me")
+    for k in [k for k, j in CHAT_JOBS.items() if time.time() - j["ts"] > 900]:
+        CHAT_JOBS.pop(k, None)
+    token = os.urandom(6).hex()
+    job = CHAT_JOBS[token] = {"ts": time.time(), "eid": None, "done": False, "event": None, "err": None}
+
+    async def run():
+        try:
+            job["event"] = await agent.handle(text, "ui", "me", job=job)
+        except Exception as e:
+            job["err"] = str(e)[:200]
+        job["done"] = True
+    asyncio.get_event_loop().create_task(run())
+    return {"token": token}
+
+
+@app.get("/api/chat/{token}")
+def chat_progress(token: str):
+    job = CHAT_JOBS.get(token)
+    if not job:
+        raise HTTPException(404, "没有这次对话（过期了）")
+    ev = job["event"] or (events.get(job["eid"]) if job["eid"] else None)
+    return {"done": job["done"], "event": ev, "err": job["err"]}
 
 
 # ---------------- 报告里的按钮 ----------------
@@ -373,6 +415,8 @@ async def quit_all():
             await asyncio.wait_for(BOT.stop(), 3)
         with contextlib.suppress(Exception):
             M.stop_all()
+        with contextlib.suppress(Exception):
+            osd.ctl().stop()
         os._exit(11)                      # 11：启动.bat 看到这个就直接关掉黑窗口
     asyncio.get_event_loop().create_task(bye())
     return {"ok": True}

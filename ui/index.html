@@ -17,7 +17,8 @@
   <nav class="rail" aria-label="主导航">
     <span class="nav-ind instant" id="navInd" aria-hidden="true"></span>
     <div class="logo" aria-hidden="true"><span></span></div>
-    <button class="nav" data-view="home" aria-current="page"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7.5" height="9" rx="1.8"/><rect x="13" y="3.5" width="7.5" height="5" rx="1.8"/><rect x="13" y="10.5" width="7.5" height="10" rx="1.8"/><rect x="3.5" y="14.5" width="7.5" height="6" rx="1.8"/></svg>总览</button>
+    <button class="nav" data-view="chat" aria-current="page"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H11l-4.5 3.5V16.5h0a2 2 0 0 1-2-2z"/><path d="M8.5 9.5h7M8.5 12.5h4.5"/></svg>对话</button>
+    <button class="nav" data-view="home"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7.5" height="9" rx="1.8"/><rect x="13" y="3.5" width="7.5" height="5" rx="1.8"/><rect x="13" y="10.5" width="7.5" height="10" rx="1.8"/><rect x="3.5" y="14.5" width="7.5" height="6" rx="1.8"/></svg>总览</button>
     <button class="nav" data-view="events"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4v8l5.5 3"/></svg>事件</button>
     <button class="nav" data-view="monitor"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12.5h4l2.5-6 4.5 12 2.5-6H21"/></svg>后台</button>
     <button class="nav" data-view="brains"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="7" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="M8.3 9.2l2.4 5.6M15.7 9.2l-2.4 5.6M9.5 7h5"/></svg>大脑</button>
@@ -47,7 +48,8 @@
   </header>
 
   <main class="content" id="content">
-    <section class="view active" id="view-home" aria-label="总览"></section>
+    <section class="view active" id="view-chat" aria-label="对话"></section>
+    <section class="view" id="view-home" aria-label="总览"></section>
     <section class="view" id="view-events" aria-label="事件"></section>
     <section class="view" id="view-monitor" aria-label="后台"></section>
     <section class="view" id="view-brains" aria-label="大脑"></section>
@@ -98,6 +100,7 @@
 <script src="js/settings.js"></script>
 <script src="js/tree.js"></script>
 <script src="js/docs.js"></script>
+<script src="js/chat.js"></script>
 <script src="js/fx.js"></script>
 <script src="js/main.js"></script>
 </body>

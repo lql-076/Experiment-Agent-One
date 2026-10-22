@@ -59,12 +59,12 @@ html[data-theme="abyss"] .fx-stuck > .page > .ph{border-bottom:1px solid var(--l
 html[data-theme="abyss"] #fxBar{background:var(--accent);box-shadow:0 0 .75rem var(--accent)}
 /* 悬停：四个角出现瞄准框，不带缓动 */
 html[data-theme="abyss"] :is(.bcard,.tcard){position:relative}
-html[data-theme="abyss"] :is(button.hc,.bcard,.tcard)::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .08s linear,inset .14s steps(3);
+html[data-theme="abyss"] :is(button.hc,.hc.lift,.bcard,.tcard)::after{content:"";position:absolute;inset:9px;pointer-events:none;opacity:0;transition:opacity .08s linear,inset .14s steps(3);
   background:linear-gradient(var(--accent),var(--accent)) left top/.75rem 1.5px,linear-gradient(var(--accent),var(--accent)) left top/1.5px .75rem,
     linear-gradient(var(--accent),var(--accent)) right top/.75rem 1.5px,linear-gradient(var(--accent),var(--accent)) right top/1.5px .75rem,
     linear-gradient(var(--accent),var(--accent)) left bottom/.75rem 1.5px,linear-gradient(var(--accent),var(--accent)) left bottom/1.5px .75rem,
     linear-gradient(var(--accent),var(--accent)) right bottom/.75rem 1.5px,linear-gradient(var(--accent),var(--accent)) right bottom/1.5px .75rem;background-repeat:no-repeat}
-html[data-theme="abyss"] :is(button.hc,.bcard,.tcard):hover::after{opacity:1;inset:-5px}
+html[data-theme="abyss"] :is(button.hc,.hc.lift,.bcard,.tcard):hover::after{opacity:1;inset:3px}
 /* 点击：一个方框从按下的地方扩开，边框闪一下 */
 html[data-theme="abyss"] .fx-pbox{animation:abFlash .26s linear forwards}
 @keyframes abFlash{from{box-shadow:inset 0 0 0 1px var(--accent)}to{box-shadow:inset 0 0 0 1px transparent}}

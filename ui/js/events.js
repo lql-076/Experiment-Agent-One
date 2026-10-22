@@ -10,10 +10,10 @@ function renderEvents() {
   var v = $('#view-events'), list = evs();
   if (S.selId == null || !findEv(S.selId)) S.selId = list.length ? list[0].id : null;
   var filters = [['all', '全部']].concat(ORDER.map(function (k) { return [k, ROUTES[k].name]; }));
-  var chat = '<form class="chatbar" id="chatForm"><input class="inp" id="chatIn" autocomplete="off" placeholder="' + (useLive() ? '在这里也能直接发消息给它' : '演示模式：接上后端后可以在这里发消息') + '"' + (useLive() ? '' : ' disabled') + '><button class="btn primary" type="submit"' + (useLive() ? '' : ' disabled') + '>发送</button></form>';
+  var chat = '<div class="chatbar"><span class="cap" style="flex:1">这里是每件事的完整记录。和它聊天在「对话」页。</span><button class="btn" data-go-chat="1">去对话 →</button></div>';
   v.innerHTML = '<div class="events"><div class="evpane"><div class="pane-head"><span class="label">事件流</span>' + chat + '<div class="filters">' +
       filters.map(function (f) { return '<button class="chip" data-filter="' + f[0] + '" aria-pressed="' + (S.filter === f[0]) + '">' + f[1] + '</button>'; }).join('') +
-    '</div></div><div class="evlist" id="evlist">' + (list.length ? list.map(evRow).join('') : '<div class="evempty">还没有事件。<br>在上面输入框发一句话，或者用 QQ 给机器人发消息。</div>') + '</div></div>' +
+    '</div></div><div class="evlist" id="evlist">' + (list.length ? list.map(evRow).join('') : '<div class="evempty">还没有事件。<br>去「对话」发一句话，或者用 QQ 给机器人发消息。</div>') + '</div></div>' +
     (list.length ? '<div class="detail" id="detail">' +
       '<div class="swap"><span class="label num" id="dMeta"></span><div class="d-text" id="dText"></div></div>' +
       '<div class="dec"><div class="dwrap" style="width:100%">' + donutHTML(80, 14, 4) + '<div class="dc"><b class="num"><span id="dConf">0</span><small>%</small></b><span id="dRoute"></span></div></div>' +
@@ -23,7 +23,7 @@ function renderEvents() {
         '<div class="stepper"><span>接手线</span><button class="sbtn" id="thDown" aria-label="降低接手线">−</button><b class="num" id="thVal" style="min-width:2.75rem;text-align:center;color:var(--text)"></b><button class="sbtn" id="thUp" aria-label="提高接手线">+</button><span>本地把握低于它，就交给 DeepSeek</span></div>' +
       '</div></div>' +
       '<div><div class="label" style="margin-bottom:.75rem">处理过程</div><div class="tl" id="dTl"></div></div>' +
-      '<div class="cards2 swap"><div class="card"><div class="label">为什么这么判</div><p id="dWhy"></p></div><div class="card"><div class="label">回复和结果</div><p id="dResult" style="white-space:pre-wrap"></p><p class="cap" id="dLog"></p></div></div>' +
+      '<div class="cards2 swap"><div class="card"><div class="label">为什么这么判</div><p id="dWhy"></p></div><div class="card"><div class="label">回复和结果</div><div id="dResult" class="bubble md res-md"></div><p class="cap" id="dLog"></p></div></div>' +
       '<div class="fixrow"><span style="color:var(--text2)">判错了？应该交给：</span>' +
         ORDER.map(function (k) { return '<button class="chip" data-fix="' + k + '" aria-pressed="false">' + ROUTES[k].name + '</button>'; }).join('') +
         '<span class="fixed-note" id="fixNote"></span></div>' +
@@ -53,7 +53,7 @@ function showEvent(id, first) {
   var fill = function () {
     $('#dMeta').textContent = (e.date ? e.date + ' ' : '') + e.t + ' · ' + e.src + ' · 事件 #' + e.id;
     $('#dText').textContent = e.text;
-    $('#dWhy').textContent = e.why; $('#dResult').textContent = e.reply || e.result || '（还没有结果）';
+    $('#dWhy').textContent = e.why; $('#dResult').innerHTML = e.reply ? mdHTML(e.reply) : '<p>' + esc(e.result || '（还没有结果）') + '</p>';
     $('#dLog').textContent = (e.cost ? 'DeepSeek 花费 ¥' + e.cost.toFixed(4) + ' · ' : '') + (e.latency ? '用时 ' + e.latency.toFixed(1) + ' 秒' : '') + (e.teacher ? ' · 老师标签：' + ROUTES[e.teacher].name : '');
   };
   var swaps = $$('#detail .swap');
@@ -81,6 +81,7 @@ function syncFix() {
 }
 $('#view-events').addEventListener('click', function (ev) {
   var t = ev.target.closest('button'); if (!t) return;
+  if (t.dataset.goChat) { goView('chat'); return; }
   if (t.classList.contains('ev')) showEvent(+t.dataset.id);
   else if (t.dataset.filter) { S.filter = t.dataset.filter; applyFilter(); }
   else if (t.dataset.fix) {
@@ -92,15 +93,4 @@ $('#view-events').addEventListener('click', function (ev) {
   }
   else if (t.id === 'thDown') setVal('take', Math.max(5, S.set.take - 5));
   else if (t.id === 'thUp') setVal('take', Math.min(95, S.set.take + 5));
-});
-$('#view-events').addEventListener('submit', function (ev) {
-  ev.preventDefault();
-  var inp = $('#chatIn'), text = inp.value.trim(); if (!text || !useLive()) return;
-  inp.value = ''; inp.disabled = true;
-  var btn = $('#chatForm button'); btn.disabled = true; btn.textContent = '处理中…';
-  api('POST', '/api/chat', { text: text }, 300000).then(function (e) {
-    D.events = [e].concat(D.events.filter(function (x) { return x.id !== e.id; }));
-    S.selId = e.id; S.filter = 'all'; refreshEventList(); poll();
-  }).catch(function (er) { toast('没发出去：' + er.message); inp.value = text; })
-    .then(function () { inp.disabled = false; btn.disabled = false; btn.textContent = '发送'; inp.focus(); });
 });

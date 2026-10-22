@@ -115,6 +115,7 @@ function goView(v) {
     if (v === 'events') renderEvents();
     if (v === 'monitor') startMonitor();
     if (v === 'docs') renderDocs();
+    if (v === 'chat') { fillChatLog(true); fillSide(); setTimeout(function () { var i = $('#cIn'); if (i && !i.disabled) i.focus(); }, 60); }
     placeInd(usingVT);
   });
   if (!t) replay($('#view-' + v));

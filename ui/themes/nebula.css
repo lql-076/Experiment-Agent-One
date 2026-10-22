@@ -30,7 +30,7 @@ html[data-theme="nebula"]::view-transition-new(content){animation:nebIn .22s cub
 @keyframes nebIn{from{transform:scale(1.008);filter:blur(2px)}to{transform:none;filter:none}}
 html[data-perf="on"][data-theme="nebula"]::view-transition-new(content){animation-name:vtIn}
 html[data-orient="portrait"][data-theme="nebula"] .rail{margin:0 .75rem .75rem;border-radius:1.25rem}
-html[data-theme="nebula"] button.hc:hover{box-shadow:0 1rem 2.5rem -1.5rem rgba(157,134,255,.55)}
+html[data-theme="nebula"] :is(button.hc,.hc.lift):hover{box-shadow:0 1rem 2.5rem -1.5rem rgba(157,134,255,.55)}
 html[data-theme="nebula"] .ev[aria-pressed="true"]{background:linear-gradient(90deg,color-mix(in srgb,var(--c) 18%,transparent),rgba(255,255,255,.03));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 30%,transparent)}
 html[data-theme="nebula"] .bcard:hover{box-shadow:0 1rem 2.5rem -1.5rem var(--c)}
 html[data-theme="nebula"] .ov-panel{box-shadow:0 2rem 5rem -2rem rgba(157,134,255,.5)}
