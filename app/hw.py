@@ -1,9 +1,11 @@
 """硬件数据：占用、频率、温度、功耗。
 
 来源按顺序拼起来：
-1. 硬件监控助手（硬件监控.bat，管理员运行）或 LibreHardwareMonitor 自带的网页服务 → CPU 温度/频率/功耗、硬盘温度等
+1. 硬件监控助手（设置 › 硬件监控 打开，管理员权限，见 hwctl.py）或 LibreHardwareMonitor 自带的网页服务 → CPU 温度/频率/功耗、硬盘温度等
 2. NVIDIA 驱动自带的 NVML → 显卡占用、频率、温度、功耗、显存（不需要管理员）
 3. psutil → CPU 占用、内存
+4. Windows 自带的性能计数器（PDH）→ CPU 实时频率（和任务管理器的"速度"一个算法，不用驱动、不用管理员）
+没装 PawnIO 驱动时，LibreHardwareMonitor 读 CPU 温度、功耗、频率全是 0：0 当成"读不到"，界面显示"—"，不显示 0。
 整机功耗读不到真实值（普通电源没有数据接口），按 (CPU + 显卡 + 其他部件估计) ÷ 电源效率 估算。
 """
 import re
@@ -79,6 +81,51 @@ def _ram_info():
         print("读不到内存信息：", e)
 
 
+class _CpuPerf:
+    """CPU 实时频率 = 基础频率 × "% Processor Performance"（可以超过 100，睿频时就是这样）。只在 Windows 上有。"""
+
+    def __init__(self):
+        self.q = self.c = None
+        self.ok = sys.platform.startswith("win")
+
+    def mhz(self):
+        if not self.ok:
+            return None
+        try:
+            import ctypes
+            pdh = ctypes.WinDLL("pdh")
+            if self.q is None:
+                q, c = ctypes.c_void_p(), ctypes.c_void_p()
+                if pdh.PdhOpenQueryW(None, None, ctypes.byref(q)) != 0:
+                    raise OSError("PdhOpenQuery")
+                if pdh.PdhAddEnglishCounterW(q, r"\Processor Information(_Total)\% Processor Performance", None, ctypes.byref(c)) != 0:
+                    raise OSError("PdhAddEnglishCounter")
+                pdh.PdhCollectQueryData(q)
+                self.q, self.c = q, c
+                return None                        # 第一次只是起个头，下一次才有值
+
+            class V(ctypes.Structure):
+                _fields_ = [("CStatus", ctypes.c_ulong), ("doubleValue", ctypes.c_double)]
+            v = V()
+            pdh.PdhCollectQueryData(self.q)
+            if pdh.PdhGetFormattedCounterValue(self.c, 0x200, None, ctypes.byref(v)) != 0:     # 0x200 = PDH_FMT_DOUBLE
+                return None
+            f = psutil.cpu_freq()
+            base = (f.max or f.current) if f else 0
+            return base * v.doubleValue / 100 if base and v.doubleValue > 0 else None
+        except Exception:
+            self.ok = False                        # 读不了就别再试了，退回 psutil
+            return None
+
+
+PERF = _CpuPerf()
+
+
+def _pos(v):
+    """没装驱动时 LibreHardwareMonitor 给的是 0：0 和负数都当成读不到"""
+    return v if v is not None and v > 0 else None
+
+
 def _num(v):
     if v is None:
         return None
@@ -118,13 +165,13 @@ def parse_lhm(j):
     out = {}
     cpu, gpu, ram = first("cpu"), first("gpu"), first("ram")
     if cpu:
-        cl = every(cpu, "Clocks", r"core #")
-        t = pick(cpu, "Temperatures", r"tctl|tdie|package")
+        cl = [c for c in every(cpu, "Clocks", r"core #") if c > 0]
+        t = _pos(pick(cpu, "Temperatures", r"tctl|tdie|package"))
         if t is None:
-            ts = every(cpu, "Temperatures", r".")
+            ts = [x for x in every(cpu, "Temperatures", r".") if x > 0]
             t = ts[0] if ts else None
         out["cpu"] = {"name": cpu["name"], "load": pick(cpu, "Load", r"total"), "temp": t,
-                      "clock": (sum(cl) / len(cl) / 1000) if cl else None, "power": pick(cpu, "Powers", r"package")}
+                      "clock": (sum(cl) / len(cl) / 1000) if cl else None, "power": _pos(pick(cpu, "Powers", r"package"))}
     if gpu:
         used = pick(gpu, "SmallData", r"memory used") or pick(gpu, "Data", r"memory used")
         tot = pick(gpu, "SmallData", r"memory total") or pick(gpu, "Data", r"memory total")
@@ -159,6 +206,24 @@ def nvml():
     return g
 
 
+def pick_fps(f):
+    """硬件监控助手报上来几个正在出画面的程序（cands，前台的排第一）。去掉你在设置里说过"不是游戏"的，剩下第一个就是游戏。
+    seen：这些候选都给界面看，设置 › 游戏内显示 里能点「这不是游戏」。"""
+    if not isinstance(f, dict) or not f.get("ok"):
+        return f, []
+    skip = {x.strip().lower() for x in str(settings.S.get("fpsSkip", "")).split(",") if x.strip()}
+    cands = f.get("cands")
+    if cands is None:                      # 老版本的助手：只有它自己挑的那一个
+        cands = [{k: f.get(k) for k in ("proc", "pid", "fps", "low1")} | {"fg": True}] if f.get("fps") else []
+    seen = [dict(c, skipped=(str(c.get("proc") or "").lower() in skip)) for c in cands]
+    ok = [c for c in seen if not c["skipped"]]
+    if not ok:
+        return {"ok": True, "fps": None}, seen
+    best = ok[0]
+    return {"ok": True, "fps": best.get("fps"), "low1": best.get("low1"), "proc": best.get("proc"), "pid": best.get("pid"),
+            "fg": best.get("fg", True)}, seen
+
+
 async def sample():
     if time.time() - _cache["ts"] < 0.8 and _cache["data"]:
         return _cache["data"]
@@ -174,13 +239,18 @@ async def sample():
             lhm = parse_lhm(j)
             fps = j.get("AgentFps") if isinstance(j, dict) else None
             src["lhm"] = True
+            src["helper"] = isinstance(fps, dict)        # 是我们自己的助手（不是 LibreHardwareMonitor 程序自带的网页服务）
     except Exception:
         src["lhm"] = False
+    fps, seen = pick_fps(fps)
     vm = psutil.virtual_memory()
     cpu = {"name": cpu_name(), "load": psutil.cpu_percent(None), "clock": None, "temp": None, "power": None}
     f = psutil.cpu_freq()
     if f and f.current:
         cpu["clock"] = f.current / 1000
+    mhz = PERF.mhz()
+    if mhz:
+        cpu["clock"] = mhz / 1000
     cpu.update({k: v for k, v in (lhm.get("cpu") or {}).items() if v is not None})
     gpu = {"name": "显卡", "load": None, "clock": None, "temp": None, "power": None, "vram": None, "vramTotal": None}
     gpu.update({k: v for k, v in (lhm.get("gpu") or {}).items() if v is not None})
@@ -194,8 +264,9 @@ async def sample():
     sysp = ((cp or 0) + (gp or 0) + float(s["sysOther"])) / (float(s["psuEff"]) / 100) if (cp is not None or gp is not None) else None
     data = {"src": "lhm" if src["lhm"] else "basic", "ok": True, "cpu": cpu, "gpu": gpu, "ram": ram, "disks": disks,
             "sys": {"power": sysp, "estimated": True, "parts": {"cpu": cp is not None, "gpu": gp is not None}},
-            "sources": {"sensors": src["lhm"], "nvml": NV is not None, "fps": bool(fps and fps.get("ok"))},
-            "fps": fps if fps and fps.get("fps") else None}
+            "sources": {"sensors": src["lhm"], "nvml": NV is not None, "fps": bool(fps and fps.get("ok")),
+                        "cpuTemp": bool((lhm.get("cpu") or {}).get("temp")), "cpuPower": cp is not None},
+            "fps": fps if fps and fps.get("fps") else None, "fpsSeen": seen}
     _cache.update(ts=time.time(), data=data)
     for k, v in (("cpu", cpu.get("load")), ("gpu", gpu.get("load")), ("ram", ram["load"]), ("vram", gpu.get("vramPct")), ("pw", sysp),
                  ("fps", (fps or {}).get("fps"))):

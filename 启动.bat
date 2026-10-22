@@ -28,6 +28,15 @@ copy /y requirements.txt ".venv\requirements.done" >nul
 
 :run
 set "AGENT_OPEN_UI=1"
+if /i "%~1"=="log" goto console
+if "%~1"=="看日志" goto console
+if not exist ".venv\Scripts\pythonw.exe" goto console
+rem 平时：用 pythonw 在后台跑，不留黑窗口。起不来会弹框说原因；说的话都在 data\logs\backend.log（界面「后台」页也能看）
+start "" ".venv\Scripts\pythonw.exe" -m app.launch
+exit
+
+:console
+rem 排查问题用：在这个黑窗口里跑，直接看输出。在 Agent 文件夹打开命令行，运行「启动.bat 看日志」就进这里
 ".venv\Scripts\python.exe" -m app.main
 rem 10 = 已经在运行（刚帮你把界面拿出来了）；11 = 你在界面上点了「退出 Agent」：这两种都直接关掉这个黑窗口
 if errorlevel 10 exit

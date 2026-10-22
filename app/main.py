@@ -1,4 +1,6 @@
-"""主后端：界面 + 所有接口 + 后台任务。由 启动.bat 运行：python -m app.main
+"""主后端：界面 + 所有接口 + 后台任务。
+启动.bat 用 pythonw 跑 app/launch.py（没有黑窗口，起不来会弹框），它再调这里的 run()；
+排查问题时 `启动.bat 看日志` 或 python -m app.main 还是在黑窗口里跑。
 只监听本机 127.0.0.1:8765，别的电脑访问不到。"""
 import asyncio
 import contextlib
@@ -12,12 +14,12 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import (agent, agentstate, checks, db, deepseek, docs, events, exam, feed, growth, hw, memory, monitor, nightly, osd, paths,
-               reminders, reports, router, safety, settings, setup, websearch)
+from . import (agent, agentstate, checks, db, deepseek, docs, events, exam, feed, growth, hw, hwctl, memory, monitor, nightly, osd,
+               paths, reminders, reports, router, safety, settings, setup, websearch)
 from .models import M
 from .qq import BOT
 
-VERSION = "1.7.1"
+VERSION = "1.8.0"
 PORT = 8765
 _bg = []
 
@@ -95,6 +97,7 @@ async def housekeeping():
                 await growth.tick()
             if n % 2 == 1:
                 osd.ctl().tick()                      # 游戏内显示：设置里开了就拉起小框，关了就停
+            hwctl.tick(n)                             # 硬件监控助手：开关开着、没在跑就拉起来（不弹管理员确认）
         except Exception as e:
             print("后台照看出错：", e)
         n += 1
@@ -128,7 +131,7 @@ async def lifespan(app):
         _bg.append(asyncio.get_event_loop().create_task(fn()))
     if os.environ.get("AGENT_OPEN_UI") == "1":
         _bg.append(asyncio.get_event_loop().create_task(_open_later()))
-    print(f"\n  Agent 已启动：http://127.0.0.1:{PORT}\n  文件夹：{paths.show(paths.ROOT)}\n  关掉这个窗口就会停止。\n")
+    print(f"\n  Agent 已启动：http://127.0.0.1:{PORT}\n  文件夹：{paths.show(paths.ROOT)}\n")
     yield
     for t in _bg:
         t.cancel()
@@ -333,14 +336,55 @@ async def fix_event(eid: int, body: dict = Body(...)):
         return events.get(eid)
     if to not in ("local", "neu", "ds", "cl"):
         raise HTTPException(400, "去向不对")
-    db.update("events", eid, {"fix": to})
-    vec = await M.embed([e["text"]])
-    router.add_example(e["text"], to, "fix", bool(e["private"]), eid, vec[0] if vec else None)
-    safety.log("route.fix", {"event": eid, "to": to}, "user")
+    await _apply_fix(e, to)
     return events.get(eid)
 
 
+async def _apply_fix(e, to):
+    """记一次纠正：这条应该交给 to。纠正立刻变成新判例，下次决策脑就参考它。"""
+    db.update("events", e["id"], {"fix": to})
+    vec = await M.embed([e["text"]])
+    router.add_example(e["text"], to, "fix", bool(e["private"]), e["id"], vec[0] if vec else None)
+    safety.log("route.fix", {"event": e["id"], "to": to}, "user")
+
+
+@app.post("/api/events/{eid}/redo")
+async def redo_event(eid: int, body: dict = Body(...)):
+    """换它重做：觉得决策脑判得不对，同一句话按你指定的去向再处理一遍（也记一次纠正）。
+    隐私的事改派到云端：不带 allow_private 就回 409，界面先问你，确认了再发。返回 token，和异步发消息一样查进度。"""
+    to = body.get("to")
+    if to not in ("local", "neu", "ds", "cl"):
+        raise HTTPException(400, "去向不对")
+    e = db.one("SELECT * FROM events WHERE id=?", (eid,))
+    if not e:
+        raise HTTPException(404, "没有这条事件")
+    allow = bool(body.get("allow_private"))
+    if e["private"] and to != "local" and not allow:
+        raise HTTPException(409, "这件事标了隐私，交给云端会发出本机，要你确认")
+    await _apply_fix(e, to)
+    return _start_job(e["text"], force=to, allow_private=allow, redo_of=eid)
+
+
 CHAT_JOBS = {}
+
+
+def _start_job(text, **kw):
+    for k in [k for k, j in CHAT_JOBS.items() if time.time() - j["ts"] > 900]:
+        CHAT_JOBS.pop(k, None)
+    token = os.urandom(6).hex()
+    job = CHAT_JOBS[token] = {"ts": time.time(), "eid": None, "done": False, "event": None, "err": None}
+
+    async def run():
+        try:
+            job["event"] = await agent.handle(text, "ui", "me", job=job, **kw)
+        except router.NeedConfirm as e:
+            job["err"] = str(e)
+            job["confirm"] = True
+        except Exception as e:
+            job["err"] = str(e)[:200]
+        job["done"] = True
+    asyncio.get_event_loop().create_task(run())
+    return {"token": token}
 
 
 @app.post("/api/chat")
@@ -350,21 +394,14 @@ async def chat(body: dict = Body(...)):
     text = (body.get("text") or "").strip()
     if not text:
         raise HTTPException(400, "空消息")
+    force = body.get("force") if body.get("force") in ("local", "neu", "ds", "cl") else None   # 你指定交给谁（留的口子）
+    kw = {"force": force, "allow_private": bool(body.get("allow_private"))}
     if not body.get("async"):
-        return await agent.handle(text, "ui", "me")
-    for k in [k for k, j in CHAT_JOBS.items() if time.time() - j["ts"] > 900]:
-        CHAT_JOBS.pop(k, None)
-    token = os.urandom(6).hex()
-    job = CHAT_JOBS[token] = {"ts": time.time(), "eid": None, "done": False, "event": None, "err": None}
-
-    async def run():
         try:
-            job["event"] = await agent.handle(text, "ui", "me", job=job)
-        except Exception as e:
-            job["err"] = str(e)[:200]
-        job["done"] = True
-    asyncio.get_event_loop().create_task(run())
-    return {"token": token}
+            return await agent.handle(text, "ui", "me", **kw)
+        except router.NeedConfirm as e:
+            raise HTTPException(409, str(e)) from None
+    return _start_job(text, **kw)
 
 
 @app.get("/api/chat/{token}")
@@ -373,7 +410,7 @@ def chat_progress(token: str):
     if not job:
         raise HTTPException(404, "没有这次对话（过期了）")
     ev = job["event"] or (events.get(job["eid"]) if job["eid"] else None)
-    return {"done": job["done"], "event": ev, "err": job["err"]}
+    return {"done": job["done"], "event": ev, "err": job["err"], "confirm": job.get("confirm", False)}
 
 
 # ---------------- 报告里的按钮 ----------------
@@ -401,6 +438,24 @@ def docs_read(rel: str):
         raise HTTPException(404, "没有这篇文档") from None
 
 
+# ---------------- 硬件监控助手（设置 › 硬件监控 的开关） ----------------
+@app.get("/api/hw/helper")
+async def hw_helper_state():
+    return dict(hwctl.state(), running=await hwctl.running())
+
+
+@app.post("/api/hw/helper")
+async def hw_helper_switch(body: dict = Body(...)):
+    on = bool(body.get("on"))
+    if on:
+        ok, msg = await hwctl.start(allow_prompt=True)
+        settings.update({"hwOn": ok or bool(settings.S.get("hwOn"))})
+    else:
+        settings.update({"hwOn": False})
+        ok, msg = await hwctl.stop()
+    return dict(hwctl.state(), ok=ok, msg=msg, running=await hwctl.running())
+
+
 @app.post("/api/quit")
 async def quit_all():
     """界面上的「退出 Agent」：停掉自己开的子进程（模型服务、Kev、正在跑的安装），然后退出；启动.bat 的黑窗口也会跟着关。"""
@@ -417,7 +472,10 @@ async def quit_all():
             M.stop_all()
         with contextlib.suppress(Exception):
             osd.ctl().stop()
-        os._exit(11)                      # 11：启动.bat 看到这个就直接关掉黑窗口
+        if settings.S.get("hwOn"):        # 硬件监控助手是跟着 Agent 起的，也一起关
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(hwctl.stop(), 6)
+        os._exit(11)                      # 11：界面上点了退出（启动.bat 看日志模式下，黑窗口也跟着关）
     asyncio.get_event_loop().create_task(bye())
     return {"ok": True}
 
@@ -641,7 +699,7 @@ def snooze(did: int, body: dict = Body(default={})):
     return {"ok": reminders.snooze(did, int(body.get("minutes", 30)))}
 
 
-# ---------------- 网页 Claude 的总结 ----------------
+# ---------------- 从更强的模型带回的总结（接口名沿用 claude，判例和老数据不用改） ----------------
 @app.post("/api/claude/import")
 async def import_summary(body: dict = Body(...)):
     content = body.get("content") or ""
@@ -651,7 +709,7 @@ async def import_summary(body: dict = Body(...)):
         raise HTTPException(400, "文件太大（超过 300KB）")
     name = re.sub(r"[^\w一-鿿\-]+", "_", (body.get("name") or "总结").rsplit(".", 1)[0])[:40]
     rel = f"总结/{datetime.now():%Y-%m-%d}-{name}.md"
-    await memory.write(rel, content, "你从网页 Claude 带回的总结")
+    await memory.write(rel, content, "你从更强的模型带回的总结")
     lst = db.kv_get("summaries", []) or []
     lst.append({"rel": rel, "ts": time.time()})
     db.kv_set("summaries", lst[-100:])
@@ -700,7 +758,8 @@ def open_ui():
             pyw = exe.with_name("pythonw.exe")
             env = dict(os.environ, AGENT_NATIVE_FRAME="0" if shell == "desk-basic" else "1")
             try:
-                p = subprocess.Popen([str(pyw if pyw.exists() else exe), "-m", "app.window"], cwd=str(paths.ROOT), env=env)
+                p = subprocess.Popen([str(pyw if pyw.exists() else exe), "-m", "app.window"], cwd=str(paths.ROOT), env=env,
+                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 for _ in range(16):          # 8 秒内退出了（退出码 3 = pywebview 用不了）就改用 Edge
                     time.sleep(0.5)
                     if p.poll() is not None:
@@ -721,10 +780,11 @@ async def _open_later():
     await asyncio.to_thread(open_ui)
 
 
-if __name__ == "__main__":
-    import os
+def run():
+    """起后端。返回退出码：0 正常停了；10 已经在运行（刚帮你把界面拿出来了）。"""
     import socket
     import uvicorn
+    monitor.tee_console()                 # 从一开始就写进 data\logs\backend.log（pythonw 没有黑窗口，出错原因全靠它）
     with socket.socket() as sk:
         sk.settimeout(0.5)
         if sk.connect_ex(("127.0.0.1", PORT)) == 0:
@@ -732,5 +792,10 @@ if __name__ == "__main__":
             if os.environ.get("AGENT_OPEN_UI") == "1":
                 settings.load()
                 open_ui()
-            raise SystemExit(10)          # 10：启动.bat 看到这个就直接关掉这个多余的黑窗口
-    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")
+            return 10
+    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning", use_colors=False)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(run())

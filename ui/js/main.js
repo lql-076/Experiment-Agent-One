@@ -31,7 +31,11 @@ function loadServer() {
 function renderAll() { renderChat(); renderHome(); renderEvents(); renderBrains(); renderReports(); renderSettings(); renderResident(); syncBadges(); }
 
 /* ================= 启动 ================= */
+/* 第三条路的名字由设置决定（默认「更强的模型」，你可以改成「网页 Claude」之类） */
+function syncRouteNames() { ROUTES.cl.name = String(S.set.strongName || '').trim() || '更强的模型'; }
+function strongOn() { return S.set.strongOn !== false; }
 function start() {
+  syncRouteNames();
   if (!hasTheme(S.set.theme)) S.set.theme = THEMES[0].id;
   root.dataset.theme = S.set.theme;
   applyLook();

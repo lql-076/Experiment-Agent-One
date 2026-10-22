@@ -29,6 +29,9 @@ DEFAULTS = {
     # 游戏内显示（app/osd.py）
     "osdOn": False, "osdWhen": "game", "osdItems": "fps,low1,cpu,gpu,vram,power", "osdPos": "tl", "osdMargin": 16,
     "osdScreen": 0, "osdSize": "m", "osdOpacity": 80, "osdHotkey": "ctrl+alt+f10",
+    # 第三条路「更强的模型」：特别难的事写好提示词，你自己带去问你能用的最强的 AI（网页 Claude、ChatGPT、Kimi……都行）。
+    # strongOn=False：不用这条路，这类事也交给 DeepSeek。strongMode 现在只有 manual（你去问）；api（自动调接口）以后加
+    "strongOn": True, "strongName": "更强的模型", "strongMode": "manual",
     "claudeTpl": "我在搭一个自己的本地 agent。下面是遇到的问题和相关背景，请帮我分析。聊完请输出一份简短的 Markdown 总结，方便我带回给 agent 学习。",
     # QQ
     "qqEnabled": True, "qqAppId": "", "qqUser": "", "qqSandbox": True,
@@ -45,6 +48,8 @@ DEFAULTS = {
     # 硬件
     "hwSource": "auto", "hwUrl": "http://127.0.0.1:8085/data.json", "hwInterval": "2",
     "sysOther": 45, "psuEff": 89,
+    "hwOn": False,          # 硬件监控助手：开着就跟着 Agent 一起启动（app/hwctl.py）
+    "fpsSkip": "",          # 你说过"不是游戏"的程序（逗号分隔，比如 GamePP.exe），读帧数时跳过
 }
 SECRET_KEYS = ("dsKey", "qqSecret")
 LOCKED = {"gpuOnly": True, "privLocal": True}   # 这两条界面上改不了

@@ -35,7 +35,7 @@ function push(k, v) { if (v == null || isNaN(v)) return; HIST[k].push(v); if (HI
 function sampleHW() {
   var p;
   if (liveHW()) p = api('GET', '/api/hw', null, 3000).then(function (j) {
-    HW.cpu = j.cpu; HW.gpu = j.gpu; HW.ram = j.ram; HW.sys = j.sys; HW.ok = true; HW.src = j.src; HW.sources = j.sources; HW.fps = j.fps || null;
+    HW.cpu = j.cpu; HW.gpu = j.gpu; HW.ram = j.ram; HW.sys = j.sys; HW.ok = true; HW.src = j.src; HW.sources = j.sources; HW.fps = j.fps || null; HW.fpsSeen = j.fpsSeen || [];
     HW.disks = j.disks && j.disks.length ? j.disks : [];
     var sig = HW.cpu.name + '|' + HW.gpu.name + '|' + (HW.ram.desc || '') + '|' + HW.disks.map(function (d) { return d.n; }).join(',');
     if (sig !== hwSig) { hwSig = sig; if (root.dataset.mode === 'resident') updateResidentNames(); else renderResident(); }
@@ -71,12 +71,13 @@ function renderHW() {
   });
   var src = $('#rSrc');
   if (src) src.textContent = !liveHW() ? '硬件数据：演示 · 整机功耗为估算' : !HW.ok ? '硬件数据：连不上后端' :
-    (HW.sources && HW.sources.sensors ? '硬件数据：传感器 + 显卡驱动 · 整机功耗为估算' : '硬件数据：显卡驱动 + 系统（CPU 温度要运行 硬件监控.bat）· 整机功耗为估算');
+    (HW.sources && HW.sources.sensors ? '硬件数据：传感器 + 显卡驱动' + (HW.sources.cpuTemp === false ? ' · CPU 温度、功耗读不到（要装 PawnIO 驱动，装完重启）' : '') + ' · 整机功耗为估算'
+      : '硬件数据：显卡驱动 + 系统（CPU 温度要开硬件监控助手：设置 › 硬件监控）· 整机功耗为估算');
 }
 var hwTimer = null, hwSig = '';
 function diskTileBody() {
   return HW.disks.length ? HW.disks.map(function (d, i) { return '<div class="drow"><span>' + esc(d.n) + '</span><b>' + hw('disks.' + i + '.temp', 'temp') + '</b><div class="bar1"><i data-hwbar="disks.' + i + '.temp" data-max="70" style="transform:scaleX(0)"></i></div></div>'; }).join('')
-    : '<div class="cap">读不到：运行 硬件监控.bat 后显示</div>';
+    : '<div class="cap">读不到：设置 › 硬件监控 打开助手后显示</div>';
 }
 function updateResidentNames() { var rd = $('#ramDesc'); if (rd && HW.ram.desc) rd.textContent = HW.ram.desc; var b = $('#diskBody'); if (b) b.innerHTML = diskTileBody(); var c = $('#diskCount'); if (c) c.textContent = HW.disks.length + ' 块'; renderHW(); }
 function startHW() {

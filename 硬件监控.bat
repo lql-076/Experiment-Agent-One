@@ -1,17 +1,10 @@
 @echo off
 chcp 65001 >nul
-net session >nul 2>&1
-if errorlevel 1 goto elevate
 cd /d "%~dp0"
-title 硬件监控助手（管理员）
-if not exist ".venv\Scripts\python.exe" goto first
-set "PYTHONUTF8=1"
-".venv\Scripts\python.exe" app\hw_helper.py
-pause
-exit /b
-
-:elevate
-powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+rem 平时不用双击这个：在 Agent 的 设置 › 硬件监控 打开就行（不弹黑窗口，第一次确认一次管理员，之后跟着 Agent 自己起）。
+rem 这个文件留着手动启动用：用管理员身份在后台起硬件监控助手（pythonw，没有黑窗口），说的话写在 data\logs\hw_helper.log。
+if not exist ".venv\Scripts\pythonw.exe" goto first
+powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath '%~dp0.venv\Scripts\pythonw.exe' -ArgumentList '%~dp0app\hw_helper.py' -WorkingDirectory '%~dp0' -Verb RunAs"
 exit /b
 
 :first

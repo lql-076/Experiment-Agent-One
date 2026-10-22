@@ -103,9 +103,9 @@ def brains_view():
                 "acts": [{"label": "刷新余额", "act": "ds_balance"}, {"label": "去充值", "act": "topup"}]})
     cps = db.kv_get("claude_prompts", []) or []
     sums = len(db.kv_get("summaries", []) or [])
-    out.append({"kind": "云端", "name": "网页 Claude", "sub": "你本人带提示词去聊", "c": "var(--c-cl)",
+    out.append({"kind": "云端", "name": router.strong_name(), "sub": "你本人带提示词去聊" if router.strong_on() else "没开：难的事也交给 DeepSeek", "c": "var(--c-cl)",
                 "st": "有提示词等你" if any(not c.get("done") for c in cps) else "等你",
-                "note": "非常复杂的难题；聊完把总结 .md 带回来，只当参考资料读，不发给 DeepSeek 加工，不进训练集。",
+                "note": "非常复杂的难题，带提示词去问你能用的最强的 AI（网页 Claude、ChatGPT……）；聊完把总结 .md 带回来，只当参考资料读，不发给 DeepSeek 加工，不进训练集。",
                 "ring": [min(100, sums / max(1, len(cps)) * 100) if cps else 0, str(sums), f"/{len(cps)}", "总结已带回"],
                 "trend": [0] * 7, "tmax": 2, "tl": "每日求助",
                 "stats": [["待处理提示词", str(sum(1 for c in cps if not c.get("done"))), "份"], ["已带回总结", str(sums), "份"]],

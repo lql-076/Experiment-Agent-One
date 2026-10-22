@@ -18,10 +18,23 @@ from .seeds import SEEDS
 ROUTE_DESC = {
     "local": "local: everyday small things, reminders, notes, casual chat, anything about health, mood or private info (日常小事、提醒、记笔记、闲聊、健康和隐私)",
     "ds": "deepseek: needs web search, knowledge questions, writing, translation, code, ordinary hard questions (联网查资料、知识问答、写作翻译、写代码、一般难题)",
-    "cl": "claude: very complex problems that need long careful discussion, like whole-system architecture, long-term planning, deep research (非常复杂、需要深入讨论的难题，如整体架构、长期规划、深度研究)",
+    "cl": "strong: very complex problems that need long careful discussion with the strongest AI available, like whole-system architecture, long-term planning, deep research (非常复杂、需要深入讨论的难题，交给更强的模型：整体架构、长期规划、深度研究)",
     "neu": "new: a new kind of task that none of the above fits well (以上都不太合适的新类型的事)",
 }
 UI_KEYS = ("local", "neu", "ds", "cl")
+
+
+class NeedConfirm(Exception):
+    """你指定把隐私的事交给云端：按安全线（隐私内容发出本机）要先问你，确认了再发。"""
+
+
+def strong_on() -> bool:
+    """第三条路「更强的模型」开着没有。关着时，判给它的分数并进 DeepSeek。"""
+    return bool(settings.S.get("strongOn", True))
+
+
+def strong_name() -> str:
+    return str(settings.S.get("strongName") or "").strip() or "更强的模型"
 
 
 class Memory:
@@ -150,7 +163,9 @@ def weights():
     return max(0.0, min(1.0, w)), max(0.0, min(1.0, 1 - w))
 
 
-async def decide(text: str, vec=None):
+async def decide(text: str, vec=None, force=None, allow_private=False):
+    """force：你指定交给谁（local / neu / ds / cl），分数照样算出来给你看，但按你说的走。
+    隐私的事指定给云端，要 allow_private=True（界面上你点了确认）才行，不然抛 NeedConfirm。"""
     s = settings.S
     bl = brains()
     keys = [b["key"] for b in bl] + ["ds", "cl", "neu"]
@@ -180,6 +195,10 @@ async def decide(text: str, vec=None):
         # 两票都没有：模型还没装好。隐私走本地，其他交 DeepSeek
         p.update({"local": 0.7 if kw_priv else 0.2, "ds": 0.3 if kw_priv else 0.7, "cl": 0.0, "neu": 0.1})
         mode = "rules"
+    hard = p.get("cl", 0.0)           # "很难"的程度：不用更强的模型时，DeepSeek 靠它决定开不开思考模式
+    if not strong_on():               # 你选了不用更强的模型：它那份并进 DeepSeek
+        p["ds"] = p.get("ds", 0.0) + p.get("cl", 0.0)
+        p["cl"] = 0.0
 
     priv_reasons = []
     if kw_priv:
@@ -203,10 +222,10 @@ async def decide(text: str, vec=None):
         route = best_local
         why = f"{name[best_local]}的把握 {pl:.0%}，高于接手线 {take:.0%}，交给本地。"
     else:
-        cloud = "cl" if (p["cl"] >= cl_line and p["cl"] > p["ds"]) else "ds"
+        cloud = "cl" if (strong_on() and p["cl"] >= cl_line and p["cl"] > p["ds"]) else "ds"
         route = cloud
         if cloud == "cl":
-            why = f"「找 Claude」得分 {p['cl']:.0%}，超过 {cl_line:.0%}，属于很复杂的难题，建议你亲自去和 Claude 深聊。"
+            why = f"「{strong_name()}」得分 {p['cl']:.0%}，超过 {cl_line:.0%}，属于很复杂的难题，建议你带着提示词亲自去和{strong_name()}深聊。"
         else:
             neu = pl < fresh and p["neu"] >= max(p["ds"], p["cl"])
             if neu:
@@ -227,17 +246,34 @@ async def decide(text: str, vec=None):
     tot = sum(ui.values()) or 1.0
     ui = {k: int(round(v / tot * 100)) for k, v in ui.items()}
     conf = ui[ui_to]
+    forced = None
+    if force in UI_KEYS and force != ui_to:
+        # 你说了算：决策脑原本的判断写进"为什么"，按你指定的去向走
+        if force != "local" and private and not allow_private:
+            raise NeedConfirm("这件事涉及隐私（" + "，".join(priv_reasons) + "），交给云端要你先确认")
+        forced = {"to": force, "natural": ui_to, "natural_conf": conf}
+        nat = name.get(route, label_of(ui_to, name)) if ui_to == "local" else label_of(ui_to, name)
+        if force == "local":
+            route = best_local
+        else:
+            route = "cl" if force == "cl" else "ds"
+        neu = force == "neu"
+        why = f"你指定交给「{label_of(force, name) if force != 'local' else name[best_local]}」。决策脑原本判给「{nat}」（{conf}%）：{why}"
+        ui_to = force
+        conf = ui[ui_to]
+        if force != "local" and private:
+            why += " 这件事涉及隐私，你确认了发给云端。"
     return {"route": route, "ui_to": ui_to, "brain": route if route in local_keys else None,
             "brain_name": name.get(route), "lora": next((b["lora"] for b in bl if b["key"] == route), None),
-            "private": private, "neu": neu, "conf": conf, "scores": ui, "p": {k: round(v, 4) for k, v in p.items()},
+            "private": private, "neu": neu, "conf": conf, "scores": ui, "p": {k: round(v, 4) for k, v in p.items()}, "hard": round(hard, 4),
             "votes": {"mode": mode, "weights": [round(we, 2), round(wk, 2)],
-                      "embed": ev, "kev": kv},
+                      "embed": ev, "kev": kv, "forced": forced},
             "thresholds": {"take": s["take"], "fresh": s["fresh"], "clLine": s["clLine"]},
             "why": why, "vote_line": "；".join(vote_line), "vec": vec, "ms": int((time.time() - t0) * 1000)}
 
 
 def label_of(k, name):
-    return {"ds": "DeepSeek", "cl": "网页 Claude", "neu": "新类别"}.get(k) or name.get(k, k)
+    return {"ds": "DeepSeek", "cl": strong_name(), "neu": "新类别"}.get(k) or name.get(k, k)
 
 
 def dumps(d):

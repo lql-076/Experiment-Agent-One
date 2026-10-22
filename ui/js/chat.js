@@ -21,7 +21,7 @@ function stepCount(e, name) { return (e.steps || []).filter(function (s) { retur
 function routeName(e) { return e.to === 'local' ? (e.label && e.label.indexOf('提醒') < 0 ? e.label : '本地小脑') : ROUTES[e.to].name; }
 function chipHTML(e) {
   var bits = [routeName(e)];
-  if (e.private) bits.push('隐私 · 只在本地'); else bits.push(confWord(e));
+  if (e.private) bits.push(e.to === 'local' ? '隐私 · 只在本地' : '隐私 · 你确认了发出本机'); else bits.push(confWord(e));
   var s = stepCount(e, '联网搜索'), r = stepCount(e, '读网页');
   if (s || r) bits.push('联网 ' + s + ' 搜' + (r ? ' ' + r + ' 读' : ''));
   if (stepCount(e, '查了说明书')) bits.push('查了说明书');
@@ -106,14 +106,14 @@ var AGI = {
 };
 var AG_ICON = { embed: 'route', kev: 'vote', base: 'chip', lora: 'brain', loras: 'sprout', cats: 'sprout', ds: 'cloud', search: 'web', claude: 'prompt', qq: 'msg', remind: 'bell',
   backend: 'server', model: 'gpu', hw: 'pulse', nightly: 'moon', osd: 'pad', queue: 'hourglass', memory: 'book' };
-var AG_SHORT = { embed: '语义路由', kev: 'Kev', base: '底座', loras: '小脑', cats: '新类别', ds: 'DeepSeek', search: '联网搜索', claude: '网页 Claude', qq: 'QQ', remind: '提醒',
+var AG_SHORT = { embed: '语义路由', kev: 'Kev', base: '底座', loras: '小脑', cats: '新类别', ds: 'DeepSeek', search: '联网搜索', claude: '更强的模型', qq: 'QQ', remind: '提醒',
   backend: '后端', model: '模型服务', hw: '硬件监控', nightly: '每日差事', osd: '游戏内显示', queue: '排队', memory: '记忆' };
 var AG_GROUP_ICON = { '大脑': 'brain', '云端': 'cloud', '通道': 'antenna', '后台': 'layers' };
 var ST_ORDER = ['ok', 'idle', 'warn', 'bad', 'off'];
 var ST_GLYPH = { ok: '<path d="M7 12.5l3.2 3.2L17 9"/>', idle: '<path d="M9.5 8v8M14.5 8v8"/>', warn: '<path d="M12 7v6.5M12 17v.2"/>', bad: '<path d="M8 8l8 8M16 8l-8 8"/>', off: '<path d="M8 12h8"/>' };
 function agi(name, cls) { return '<svg class="i ' + (cls || '') + '" viewBox="0 0 24 24" aria-hidden="true">' + (AGI[name] || AGI.layers) + '</svg>'; }
 function agKey(it) { var k = it.k || ''; return k.indexOf('lora:') === 0 ? 'lora' : k.indexOf('cat:') === 0 ? 'cat' : k; }
-function agShort(it) { var k = agKey(it); return k === 'lora' ? it.name.replace(/^小脑\s*·\s*/, '') : AG_SHORT[k] || it.name.split('（')[0]; }
+function agShort(it) { var k = agKey(it); return k === 'lora' ? it.name.replace(/^小脑\s*·\s*/, '') : k === 'claude' ? it.name : AG_SHORT[k] || it.name.split('（')[0]; }
 function agSplit(name) { var m = /^(.*?)（(.*)）$/.exec(name || ''); return m ? [m[1], m[2]] : [name || '', '']; }
 /* 图标外面那一圈：r=20，周长 125.66 */
 function agBadge(it, sz) {
@@ -133,10 +133,10 @@ var AGENT_DEMO = { head: '缺：Kev、底座', count: { ok: 9, idle: 1, warn: 1,
     { k: 'loras', name: '训练出来的小脑', st: 'off', detail: '还没有 · 某类事攒够样本、你同意后才训练 · 正在攒 2 类', m: { p: .43, txt: '最多 86 / 200' },
       sub: [{ k: 'cat:宠物', name: '宠物', st: 'idle', detail: '攒样本中 86 / 200', m: { p: .43, txt: '86 / 200' } }, { k: 'cat:做饭', name: '做饭', st: 'idle', detail: '攒样本中 37 / 200', m: { p: .185, txt: '37 / 200' } }] }] },
   { name: '云端', items: [{ k: 'ds', name: 'DeepSeek', st: 'ok', detail: 'Key 正常 · 余额 ¥8.59 · 模型 deepseek-flash', m: { p: .95, txt: '¥8.59' } },
-    { k: 'search', name: '联网搜索', st: 'ok', detail: '开着 · 今天 7 / 200 次', m: { p: .035, txt: '7 / 200' } }, { k: 'claude', name: '网页 Claude', st: 'ok', detail: '特别复杂的事写好提示词，你自己去问' }] },
+    { k: 'search', name: '联网搜索', st: 'ok', detail: '开着 · 今天 7 / 200 次', m: { p: .035, txt: '7 / 200' } }, { k: 'claude', name: '更强的模型', st: 'ok', detail: '特别复杂的事写好提示词，你自己去问（网页 Claude、ChatGPT……）' }] },
   { name: '通道', items: [{ k: 'qq', name: 'QQ', st: 'warn', detail: '在线 · 还没绑定你的 QQ', act: { label: '去补齐', sec: 'prep' } }, { k: 'remind', name: '提醒', st: 'ok', detail: '开着 3 条 · 下一个 22:00 吃药', m: { txt: '22:00' } }] },
   { name: '后台', items: [{ k: 'backend', name: '后端', st: 'ok', detail: '127.0.0.1:8765 · 界面和所有接口' }, { k: 'model', name: '本地模型服务', st: 'ok', detail: '嵌入模型已加载 · 底座闲置 · 占显存 1.2 GB', m: { p: .15, txt: '1.2 GB' } },
-    { k: 'hw', name: '硬件监控助手', st: 'off', detail: '没在运行：双击 硬件监控.bat' }, { k: 'nightly', name: '每日差事', st: 'idle', detail: '上次 5 小时前' },
+    { k: 'hw', name: '硬件监控助手', st: 'off', detail: '没在运行：设置 › 硬件监控 打开' }, { k: 'nightly', name: '每日差事', st: 'idle', detail: '上次 5 小时前' },
     { k: 'osd', name: '游戏内显示', st: 'off', detail: '没开（设置 › 游戏内显示）', act: { label: '去打开', sec: 'osd' } },
     { k: 'queue', name: '排队的事', st: 'ok', detail: '没有' }, { k: 'memory', name: '记忆和说明书', st: 'ok', detail: '记忆 12 段 · 说明书 240 段已建索引', m: { txt: '12 · 240' } }] }] };
 function agentData() { return useLive() ? (D.state && D.state.agent) || null : AGENT_DEMO; }
@@ -194,7 +194,7 @@ function agFlow(a) {
       '<div class="fn-r st-' + em + '">' + agi('route') + '<span>语义路由</span><i class="fn-d"></i></div><div class="fn-r st-' + kv + '">' + agi('vote') + '<span>Kev</span><i class="fn-d"></i></div></div></div><div class="fl-w"></div>' +
     '<div class="fl-col n3">' + node('local', base, 'chip', '本地小脑', baseTxt, 'var(--c-local)') +
       node('ds', ds, 'cloud', 'DeepSeek', agUsable(ds) ? (agUsable(se) ? '可以联网搜索' : '联网搜索' + (se === 'off' ? '关着' : '用不了')) : '用不了', 'var(--c-ds)') +
-      node('cl', cl, 'prompt', '网页 Claude', '写好提示词你去问', 'var(--c-cl)') + '</div>' +
+      node('cl', cl, 'prompt', esc(ROUTES.cl.name), cl === 'off' ? '你选了不用 · 难事也交 DeepSeek' : '写好提示词你去问', 'var(--c-cl)') + '</div>' +
   '</div><div class="fl-lane">' + node('rm', rm, 'bell', '提醒', '不经过任何模型') + '<span class="fl-arrow ' + (agUsable(rm) ? 'on' : 'off') + '"></span>' +
     '<div class="fl-dests"><span class="fd st-' + qq + '">' + agi('msg') + 'QQ</span><span class="fd-or">发不出就</span><span class="fd st-ok">' + agi('screen') + '电脑通知</span><span class="fd-or">同时</span><span class="fd st-ok">' + agi('layers') + '界面卡片</span></div></div></div>';
 }
@@ -220,25 +220,53 @@ function drawFlows(scope) {
   $$('.fl-grid', scope).forEach(function (g) { drawFlow(g); if (FLOW_RO) FLOW_RO.observe(g); });
 }
 var AG_TILE_NAME = { loras: ['小脑', '训练出来的 LoRA'], cats: ['新类别', '正在攒样本'] };
+/* 一项一行：图标 + 状态环 | 名字 · 副名 ……… 状态（缺了的换成按钮） | 一句话 | 有数的再加一条进度 */
 function agTile(it) {
   var nm = agSplit(it.name), k = agKey(it);
   if (k === 'lora') nm = [agShort(it), 'LoRA 小脑'];
   else if (AG_TILE_NAME[k]) nm = AG_TILE_NAME[k];
-  return '<div class="at st-' + it.st + '" data-k="' + esc(it.k || '') + '">' + agBadge(it) +
-    '<div class="at-b"><b class="at-n" title="' + esc(it.name) + '">' + esc(nm[0]) + '</b>' +
-    '<div class="at-s2"><em>' + esc(nm[1] || '') + '</em><span class="at-tag">' + (ST_TXT[it.st] || '') + '</span></div>' +
-    '<p class="at-d" title="' + esc(it.detail) + '">' + esc(it.detail) + '</p>' +
+  return '<div class="at st-' + it.st + '" data-k="' + esc(it.k || '') + '" title="' + esc(it.name + '：' + (ST_TXT[it.st] || '') + ' · ' + it.detail) + '">' + agBadge(it) +
+    '<div class="at-b"><div class="at-h"><b class="at-n">' + esc(nm[0]) + '</b>' + (nm[1] ? '<em>' + esc(nm[1]) + '</em>' : '') +
+    (it.act ? '<button class="at-act" data-go-sec="' + it.act.sec + '">' + esc(it.act.label) + ' →</button>' : '<span class="at-tag">' + (ST_TXT[it.st] || '') + '</span>') + '</div>' +
+    '<p class="at-d">' + esc(it.detail) + '</p>' +
     (it.m && it.m.p != null && !it.sub ? '<div class="at-m"><i><b style="transform:scaleX(' + it.m.p + ')"></b></i><span class="num">' + esc(it.m.txt) + '</span></div>' : '') +
     (it.sub ? '<ul class="at-sub">' + it.sub.map(function (s) {
       return '<li class="st-' + s.st + '"><span>' + esc(s.name) + '</span><i><b style="transform:scaleX(' + ((s.m && s.m.p) || 0) + ')"></b></i><em class="num">' + esc((s.m && s.m.txt) || ST_TXT[s.st]) + '</em></li>';
-    }).join('') + '</ul>' : '') +
-    (it.act ? '<button class="at-act" data-go-sec="' + it.act.sec + '">' + esc(it.act.label) + ' →</button>' : '') + '</div></div>';
+    }).join('') + '</ul>' : '') + '</div></div>';
 }
-function agGroup(g) {
+function agGroup(g, span) {
   var sts = g.items.map(function (it) { return it.st; }), ok = sts.filter(agUsable).length;
-  return '<section class="ag-grp st-' + agWorst(sts) + '" style="--n:' + Math.min(g.items.length, 6) + '"><header>' + agi(AG_GROUP_ICON[g.name] || 'layers', 'gi') + '<b>' + esc(g.name) + '</b>' +
+  return '<section class="ag-grp st-' + agWorst(sts) + '" style="--span:' + span + '"><header>' + agi(AG_GROUP_ICON[g.name] || 'layers', 'gi') + '<b>' + esc(g.name) + '</b>' +
     '<span class="gseg">' + g.items.map(function (it) { return '<i class="st-' + it.st + '" title="' + esc(agShort(it) + '：' + ST_TXT[it.st]) + '"></i>'; }).join('') + '</span>' +
     '<span class="cap num">' + ok + ' / ' + g.items.length + ' 能用</span></header><div class="ag-tiles">' + g.items.map(agTile).join('') + '</div></section>';
+}
+/* 按组排成几列，一屏放下：把几组按顺序分进 C 列——几组上下叠在一列，或者一组占两三列（里面再分两三列），
+   挑最高那一列最矮的分法（组不多，全试一遍也很快） */
+function agWeight(g) { return g.items.reduce(function (n, it) { return n + 1 + (it.m && it.m.p != null && !it.sub ? 0.25 : 0) + (it.sub ? 0.4 * it.sub.length : 0); }, 0); }
+function agColumns(groups, C) {
+  var H = function (g, span) { return Math.ceil(agWeight(g) / span) + 0.7; }, best = null;
+  (function go(i, cols, used) {
+    if (used > C) return;
+    if (i === groups.length) {
+      var mx = Math.max.apply(null, cols.map(function (c) { return c.h; })), score = mx + cols.length * 0.001;
+      if (!best || score < best.score) best = { score: score, cols: cols, used: used };
+      return;
+    }
+    for (var j = i, h = 0; j < groups.length; j++) { h += H(groups[j], 1); go(j + 1, cols.concat([{ groups: groups.slice(i, j + 1), span: 1, h: h }]), used + 1); }
+    for (var sp = 2; sp <= C - used; sp++) go(i + 1, cols.concat([{ groups: [groups[i]], span: sp, h: H(groups[i], sp) }]), used + sp);
+  })(0, [], 0);
+  return best || { cols: [{ groups: groups, span: 1 }], used: 1 };
+}
+function agGroupsHTML(groups, C) {
+  var L = agColumns(groups, C);
+  return '<div class="ag-cols" data-c="' + C + '" style="--C:' + L.used + '">' + L.cols.map(function (c) {
+    return '<div class="ag-col" style="grid-column:span ' + c.span + '">' + c.groups.map(function (g) { return agGroup(g, c.span); }).join('') + '</div>';
+  }).join('') + '</div>';
+}
+function agCols() {                                   // 右边有多宽就分几列（每列至少 15rem）
+  var b = $('#sideBody'), rem = parseFloat(getComputedStyle(root).fontSize) || 16;
+  var w = b && b.clientWidth ? b.clientWidth - 2 * rem : 0;
+  return w ? Math.max(1, Math.min(5, Math.floor(w / (15 * rem)))) : 4;
 }
 function agentHTML() {
   var a = agentData();
@@ -247,8 +275,19 @@ function agentHTML() {
   return '<div class="ag-dash"><div class="ag-top"><div class="ag-health st-' + worst + '">' + agRing(c) +
     '<div class="ag-sum"><b class="ag-hl">' + esc(a.head || '') + '</b>' + agLegend(c) +
     '<div class="ag-btns">' + (c.bad ? '<button class="btn mini primary" data-go-sec="prep">去补齐</button>' : '') + '<button class="btn mini" data-recheck="1">重新自检</button></div></div></div>' +
-    agFlow(a) + '</div>' + agKpis(a) + '<div class="ag-groups">' + (a.groups || []).map(agGroup).join('') + '</div></div>';
+    agFlow(a) + '</div>' + agKpis(a) + agGroupsHTML(a.groups || [], agCols()) + '</div>';
 }
+/* 一屏放不下就收紧：先藏每项的那句话（停在上面还能看到），再缩健康环、链路图和大数字的小字 */
+function agFit() {
+  var b = $('#sideBody'), d = b && b.querySelector('.ag-dash'); if (!d || !b.clientHeight) return;
+  d.classList.remove('dense', 'dense2');
+  if (b.scrollHeight > b.clientHeight + 2) d.classList.add('dense');
+  if (b.scrollHeight > b.clientHeight + 2) d.classList.add('dense2');
+}
+var SIDE_RO = window.ResizeObserver ? new ResizeObserver(function () {
+  if (CHAT.tab !== 'status') return;
+  var d = $('#sideBody .ag-cols'); if (d && +d.dataset.c !== agCols()) { CHAT.sig = ''; fillSide(); } else agFit();
+}) : null;
 /* 总览上的小卡片：健康环 + 一格一个图标 */
 function agentMiniHTML() {
   var a = agentData();
@@ -271,7 +310,7 @@ function eventSideHTML(e) {
   var fix = useLive() ? e.fix : S.fix[e.id];
   return '<div class="ev-side"><div class="es-col"><div class="cap num">' + esc((e.date ? e.date + ' ' : '') + e.t + ' · ' + e.src + ' · 事件 #' + e.id) + '</div>' +
     '<div class="es-q">' + esc(e.text) + '</div>' +
-    '<div class="es-to" style="--c:' + ROUTES[e.to].color + '"><b>交给 ' + esc(routeName(e)) + '</b><span>' + (e.private ? '隐私 · 只在本地' : confWord(e) + ' · ' + e.s[e.to] + '%') + '</span></div>' +
+    '<div class="es-to" style="--c:' + ROUTES[e.to].color + '"><b>交给 ' + esc(routeName(e)) + '</b><span>' + (e.private ? (e.to === 'local' ? '隐私 · 只在本地' : '隐私 · 你确认了发出本机') : confWord(e) + ' · ' + e.s[e.to] + '%') + '</span></div>' +
     '<div class="es-bars">' + ORDER.map(function (k) { return '<div class="es-bar' + (k === e.to ? ' win' : '') + '" style="--c:' + ROUTES[k].color + '"><span>' + ROUTES[k].name + '</span><i><b style="transform:scaleX(' + (e.s[k] / 100) + ')"></b></i><em class="num">' + e.s[k] + '%</em></div>'; }).join('') + '</div>' +
     '<div class="label">为什么这么判</div><p class="es-why">' + esc(e.why || '—') + '</p>' +
     '<div class="es-cost cap">' + (e.cost ? '花了 ¥' + (+e.cost).toFixed(4) + ' · ' : '') + (e.latency ? '用时 ' + (+e.latency).toFixed(1) + ' 秒' : '') + '</div></div>' +
@@ -280,7 +319,9 @@ function eventSideHTML(e) {
       return '<li class="' + (cur ? 'cur' : 'done') + '"><b>' + esc(s[0]) + '</b><span>' + esc(s[1]) + '</span></li>';
     }).join('') + (e.status === 'running' ? '<li class="cur"><b>进行中</b><span>' + esc(e.result || '') + '</span></li>' : '') + '</ol>' +
     (links.length ? '<div class="label">查过的网页</div><ul class="es-links">' + links.slice(0, 6).map(function (u) { return '<li><a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(u.replace(/^https?:\/\//, '').slice(0, 60)) + '</a></li>'; }).join('') + '</ul>' : '') +
-    '<div class="label">判错了？应该交给</div><div class="es-fix">' + ORDER.map(function (k) { return '<button class="chip" data-cfix="' + k + '" aria-pressed="' + (fix === k) + '">' + ROUTES[k].name + '</button>'; }).join('') + '</div>' +
+    '<div class="label">判错了？记一下应该交给（以后照这个判）</div><div class="es-fix">' + ORDER.map(function (k) { return '<button class="chip" data-cfix="' + k + '" aria-pressed="' + (fix === k) + '">' + ROUTES[k].name + '</button>'; }).join('') + '</div>' +
+    (e.src === '定时任务' || e.src === '系统' ? '' : '<div class="label">换它重做（现在就按你选的再处理一遍，也会记下）</div><div class="es-fix">' + ['local', 'ds', 'cl'].filter(function (k) { return k !== e.to && (k !== 'cl' || strongOn()); }).map(function (k) {
+      return '<button class="btn mini" data-redo="' + k + '">交给' + (k === 'local' ? '本地小脑' : ROUTES[k].name) + '重做</button>'; }).join('') + '</div>') +
     '<button class="linkbtn" data-open-events="' + e.id + '">在「事件」页看完整记录 →</button></div></div>';
 }
 function fillSide() {
@@ -291,7 +332,8 @@ function fillSide() {
   var html = CHAT.tab === 'event' ? eventSideHTML(findChatEv(CHAT.sel)) : agentHTML();
   if (html === CHAT.sig) return;                     // 没变就不重画（链路图的流动线、闪烁不会每 5 秒跳一下）
   CHAT.sig = html; b.innerHTML = html;
-  drawFlows(b);
+  drawFlows(b); agFit();
+  if (SIDE_RO && !b.dataset.ro) { b.dataset.ro = 1; SIDE_RO.observe(b); }
 }
 function findChatEv(id) { return chatList().filter(function (e) { return e.id === id; })[0]; }
 /* ---------- 发消息 ---------- */
@@ -312,12 +354,29 @@ function chatPoll() {
     if (j.done) {
       CHAT.pending = null;
       if (j.event) { D.events = [j.event].concat((D.events || []).filter(function (e) { return e.id !== j.event.id; })); if (CHAT.tab === 'event') CHAT.sel = j.event.id; }
-      if (j.err) toast('这条没处理完：' + j.err, 6000);
+      if (j.err) toast(j.confirm ? j.err + '（在「这条怎么处理的」里点「换它重做」可以确认后再发）' : '这条没处理完：' + j.err, 6000);
       fillChatLog(true); fillSide();
       return;
     }
     setTimeout(chatPoll, 500);
   }).catch(function () { setTimeout(chatPoll, 1200); });
+}
+/* 换它重做：同一句话按你选的去向再处理一遍（后端也记一次纠正）。隐私的事交给云端，要再点一次确认 */
+function chatRedo(t) {
+  var e = findChatEv(CHAT.sel), to = t.dataset.redo; if (!e) return;
+  if (!useLive()) { toast('演示模式不能重做'); return; }
+  if (CHAT.pending) { toast('上一条还在处理，等它好了再试'); return; }
+  var allow = !!t.dataset.arm, name = to === 'local' ? '本地小脑' : ROUTES[to].name;
+  t.disabled = true;
+  api('POST', '/api/events/' + e.id + '/redo', { to: to, allow_private: allow }, 15000).then(function (j) {
+    var d = new Date();
+    CHAT.pending = { text: e.text, t: pad(d.getHours()) + ':' + pad(d.getMinutes()), step: '换「' + name + '」重做……', token: j.token };
+    e.fix = to; fillChatLog(true); fillSide(); setTimeout(chatPoll, 400);
+  }).catch(function (er) {
+    t.disabled = false;
+    if (er.status === 409) { t.dataset.arm = 1; t.textContent = '涉及隐私，再点一次确认发出本机'; t.classList.add('danger'); toast(er.message, 5000); }
+    else toast('没重做成：' + er.message, 5000);
+  });
 }
 function autoGrow(t) { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 200) + 'px'; }
 /* 后台每 5 秒拉一次状态：对话和右边跟着更新（不打断正在输入的） */
@@ -346,6 +405,7 @@ $('#view-chat').addEventListener('click', function (ev) {
   else if (t.dataset.recheck) { S.sec = 'prep'; renderSettings(); goView('settings'); setTimeout(function () { checkPanel(true); }, 450); }
   else if (t.dataset.openEvents) { S.selId = +t.dataset.openEvents; renderEvents(); goView('events'); }
   else if (t.id === 'chatMore') { t.disabled = true; api('GET', '/api/events?limit=300').then(function (l) { CHAT.more = l; var log = $('#chatLog'), h = log.scrollHeight; fillChatLog(false); log.scrollTop = log.scrollHeight - h; }).catch(function (e) { toast(e.message); }); }
+  else if (t.dataset.redo) chatRedo(t);
   else if (t.dataset.cfix) {
     var e = findChatEv(CHAT.sel), k = t.dataset.cfix; if (!e) return;
     var to = (useLive() ? e.fix : S.fix[e.id]) === k ? null : k;

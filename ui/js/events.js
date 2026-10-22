@@ -52,7 +52,7 @@ function showEvent(id, first) {
   $$('#evlist .ev').forEach(function (b) { b.setAttribute('aria-pressed', +b.dataset.id === id); });
   var fill = function () {
     $('#dMeta').textContent = (e.date ? e.date + ' ' : '') + e.t + ' · ' + e.src + ' · 事件 #' + e.id;
-    $('#dText').textContent = e.text;
+    $('#dText').textContent = e.text; $('#dText').title = e.text;
     $('#dWhy').textContent = e.why; $('#dResult').innerHTML = e.reply ? mdHTML(e.reply) : '<p>' + esc(e.result || '（还没有结果）') + '</p>';
     $('#dLog').textContent = (e.cost ? 'DeepSeek 花费 ¥' + e.cost.toFixed(4) + ' · ' : '') + (e.latency ? '用时 ' + e.latency.toFixed(1) + ' 秒' : '') + (e.teacher ? ' · 老师标签：' + ROUTES[e.teacher].name : '');
   };

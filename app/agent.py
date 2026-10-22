@@ -1,5 +1,6 @@
 """处理一条消息的全过程：先看是不是在回提醒、设提醒、让我记东西（这些不用模型）；
-其余的过决策脑两票，交给本地小脑 / DeepSeek / 建议找网页 Claude；每一步都写进事件日志。
+其余的过决策脑两票，交给本地小脑 / DeepSeek / 建议你带提示词去问更强的模型；每一步都写进事件日志。
+你也可以推翻决策脑：force 指定去向（界面上「换它重做」），redo_of 记下是哪一条重做的。
 交给 DeepSeek 的，带上联网搜索工具（app/websearch.py），要不要搜由它自己定；问到 agent 自己怎么用的，
 先从说明书（docs/操作手册.md、docs/AI文档）里找相关段落一起给模型。"""
 import asyncio
@@ -9,7 +10,7 @@ import re
 import time
 from collections import defaultdict, deque
 
-from . import db, deepseek, events, growth, memory, notify, paths, privacy, reminders, router, settings, websearch
+from . import db, deepseek, events, growth, memory, notify, paths, privacy, reminders, router, safety, settings, websearch
 from .models import M
 from .qq import BOT
 
@@ -82,35 +83,37 @@ def _quick(job, *a, **k):
     return eid
 
 
-async def handle(text: str, src="qq", user="me", job=None):
-    """job：界面上异步发消息时传进来，记下事件编号，界面拿它查处理到哪一步了。"""
+async def handle(text: str, src="qq", user="me", job=None, force=None, allow_private=False, redo_of=None):
+    """job：界面上异步发消息时传进来，记下事件编号，界面拿它查处理到哪一步了。
+    force：你指定交给谁（local / neu / ds / cl），跳过提醒、记住这些快捷处理，直接按你说的走（决策脑的分数照样算给你看）。
+    隐私的事指定给云端要 allow_private（你确认过），不然抛 router.NeedConfirm。"""
     text = (text or "").strip()
     t0 = time.time()
     is_priv_kw = privacy.check(text)[0]
 
-    # 1. 在回提醒？
-    r = reminders.try_reply(text)
+    # 1. 在回提醒？（你指定了去向就不走这些快捷处理）
+    r = None if force else reminders.try_reply(text)
     if r:
         eid = _quick(job, text, src, "回应提醒", "这是在回应刚才的提醒，直接打卡或顺延，不经过模型。", r, is_priv_kw)
         HIST[user].extend([("user", text, is_priv_kw, t0), ("assistant", r, is_priv_kw, time.time())])
         return events.get(eid)
 
     # 1.5 在回"要不要训练"？
-    g = growth.try_reply(text)
+    g = None if force else growth.try_reply(text)
     if g:
         eid = _quick(job, text, src, "回应提醒", "这是在回答「要不要训练新小脑」，直接记下，不经过模型。", g, is_priv_kw)
         HIST[user].extend([("user", text, is_priv_kw, t0), ("assistant", g, is_priv_kw, time.time())])
         return events.get(eid)
 
     # 2. 设提醒？
-    if reminders.parse_command(text):
+    if not force and reminders.parse_command(text):
         reply = await reminders.create_from_text(text)
         eid = _quick(job, text, src, "设提醒", "认出了时间和事情，由程序直接建提醒，不经过模型（先斩后奏，写进报告）。", reply, is_priv_kw,
                            [["收到", SRC_LABEL.get(src, src)], ["认出提醒", "时间 + 事情"], ["新建提醒", "先斩后奏"], ["回复", "已回复"]])
         return events.get(eid)
 
     # 3. 让我记东西？
-    m = REMEMBER.match(text)
+    m = None if force else REMEMBER.match(text)
     if m and len(m.group(4).strip()) >= 2:
         done, _ = await memory.remember(m.group(4))
         reply = "记下了。" if done else "要写记忆文件，已放进「等你决定」。"
@@ -120,12 +123,21 @@ async def handle(text: str, src="qq", user="me", job=None):
 
     # 4. 决策脑两票（出错就退回简单规则，不让一条消息卡死）
     try:
-        dec = await router.decide(text)
+        dec = await router.decide(text, force=force, allow_private=allow_private)
+    except router.NeedConfirm:
+        raise
     except Exception as e:
         print("决策脑出错，改用简单规则：", e)
-        dec = await router.decide(text, vec=False)
-    to_name = dec["brain_name"] if dec["ui_to"] == "local" else {"neu": "新类别", "ds": "DeepSeek", "cl": "网页 Claude"}[dec["ui_to"]]
+        dec = await router.decide(text, vec=False, force=force, allow_private=allow_private)
+    to_name = dec["brain_name"] if dec["ui_to"] == "local" else {"neu": "新类别", "ds": "DeepSeek", "cl": router.strong_name()}[dec["ui_to"]]
     steps = [["收到", SRC_LABEL.get(src, src)], ["决策脑打分", f"{to_name} {dec['conf']}%"]]
+    fz = dec["votes"].get("forced")
+    # 隐私的事你确认过要交给云端（界面上点了两次「换它重做」）：这一次放行，按安全线记一笔
+    confirmed = bool(fz and allow_private and dec["private"] and dec["ui_to"] != "local")
+    if fz:
+        steps.append(["你指定了去向", f"交给 {to_name}" + (f"（重做事件 #{redo_of}）" if redo_of else "")])
+        if redo_of:
+            dec["votes"]["redo_of"] = redo_of
     eid = db.insert("events", {"ts": t0, "src": src, "user": user, "text": text, "private": int(dec["private"]), "route": dec["route"],
                                "ui_to": dec["ui_to"], "label": dec["brain_name"] or "", "conf": dec["conf"], "scores": dec["scores"],
                                "votes": {k: v for k, v in dec["votes"].items()}, "thresholds": dec["thresholds"],
@@ -188,7 +200,7 @@ async def handle(text: str, src="qq", user="me", job=None):
     if route == "ds":
         try:
             mode = settings.S["dsThinking"]
-            thinking = mode == "on" or (mode == "auto" and (dec["p"].get("cl", 0) > 0.25 or len(text) > 150))
+            thinking = mode == "on" or (mode == "auto" and (dec.get("hard", dec["p"].get("cl", 0)) > 0.25 or len(text) > 150))
             snips = await memory.search(qvec, allow_private=False)
             msgs = _build(text, user, snips, False, docs, src)
             prog("交给 DeepSeek，正在想……")
@@ -199,7 +211,10 @@ async def handle(text: str, src="qq", user="me", job=None):
                                                         progress=prog)
                 out = {"text": web["text"], "cny": web["cny"]}
             else:
-                out = await deepseek.chat(msgs, thinking=thinking, private=dec["private"], event_id=eid, purpose=purpose)
+                if confirmed:
+                    safety.log("privacy.send", {"event": eid, "to": "DeepSeek"}, "user")
+                    steps.append(["你确认了发出本机", "隐私内容这一次交给 DeepSeek（不联网搜、不进训练）"])
+                out = await deepseek.chat(msgs, thinking=thinking, private=dec["private"] and not confirmed, event_id=eid, purpose=purpose)
             searched = bool(web and (web["searched"] or web["fetched"]))
             cost_all = out["cny"] + (websearch.PRICE_USD * float(settings.S["usdCny"]) * (web["searched"] + web["fetched"]) if web else 0)
             reply, cost = out["text"], cost_all
@@ -217,9 +232,10 @@ async def handle(text: str, src="qq", user="me", job=None):
         except Exception as e:
             reply = f"DeepSeek 这次没回上来：{str(e)[:80]}"
     elif route == "cl":
+        sn = router.strong_name()
         prompt = await _claude_prompt(text, dec["private"], eid)
-        reply = ("这件事比较复杂，建议你带着下面的提示词去问网页 Claude。聊完让它出一份 Markdown 总结，"
-                 "带回来在 界面 › 大脑 › 网页 Claude › 导入总结。\n\n" + prompt)
+        reply = (f"这件事比较复杂，建议你带着下面的提示词去问{sn}（你能用的最强的 AI 都行）。聊完让它出一份 Markdown 总结，"
+                 f"带回来在 界面 › 大脑 › {sn} › 导入总结。\n\n" + prompt)
         steps.append(["写提示词", "DeepSeek 附上背景" if not dec["private"] else "本地模板（涉及隐私）"])
 
     steps.append(["回复", "已回复" if reply else "没有回复"])
@@ -235,7 +251,7 @@ async def _claude_prompt(text, private, eid):
     if private:
         return f"{tpl}\n\n我的问题：{text}"
     try:
-        out = await deepseek.chat([{"role": "system", "content": "你帮用户写一段发给 Claude 的提示词：交代背景、目标、约束、希望得到的输出（结尾要求输出 Markdown 总结）。只输出提示词本身，300 字以内。"},
+        out = await deepseek.chat([{"role": "system", "content": "你帮用户写一段发给更强的 AI 模型（比如网页 Claude、ChatGPT）的提示词：交代背景、目标、约束、希望得到的输出（结尾要求输出 Markdown 总结）。只输出提示词本身，300 字以内。"},
                                    {"role": "user", "content": f"开头用这句：{tpl}\n\n用户的问题：{text}"}], purpose="claude_prompt", event_id=eid)
         prompt = out["text"]
     except Exception:

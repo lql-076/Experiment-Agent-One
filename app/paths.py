@@ -33,9 +33,10 @@ TRAINING_RULES = """# 训练数据的规矩（写死在代码里）
 - DeepSeek 的处理记录（DeepSeek 官方明确允许用它的输出训练其他模型）
 - 本地模型自己的输出
 
-**不放任何 Claude 的输出**：网页 Claude 的回答、带回的总结、和 Claude 的聊天记录都不行，
-回答时参考过 Claude 内容的 DeepSeek 记录也不存。
-原因：Anthropic 的用户条款不允许用 Claude 的服务去开发或训练 AI 模型。Claude 的总结只放在 memory\\总结，当参考资料读。
+**不放任何「更强的模型」的输出**：网页 Claude、ChatGPT 这些的回答、带回的总结、聊天记录都不行，
+回答时参考过这些内容的 DeepSeek 记录也不存。
+原因：Anthropic 的用户条款不允许用 Claude 的服务去开发或训练 AI 模型，OpenAI 等的条款也有类似限制，一律不进最省事。
+带回的总结只放在 memory\\总结，当参考资料读。
 """
 
 
@@ -68,6 +69,9 @@ def keep_inside():
         "XDG_CACHE_HOME": str(CACHE),
         "CUDA_CACHE_PATH": str(CACHE / "cuda"),        # 显卡编译缓存，默认在 AppData\Roaming\NVIDIA
         "TMP": str(TMP), "TEMP": str(TMP),
+        # HuggingFace 新的 Xet 下载方式要直连 cas-server.xethub.hf.co，hf-mirror 不支持（返回 401，Kev 的权重下不动）。
+        # 关掉它，走老的按文件下载，hf-mirror 和官方都能用
+        "HF_HUB_DISABLE_XET": "1",
     })
     import tempfile
     tempfile.tempdir = None                            # 让 Python 自己重新读 TEMP

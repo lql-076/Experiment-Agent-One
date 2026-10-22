@@ -24,7 +24,7 @@ function api(method, path, body, ms) {
   var opt = { method: method, headers: method === 'GET' ? {} : { 'X-Agent': '1' } };
   if (body !== undefined && body !== null) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
   return fetchT(path, opt, ms || 20000).then(function (r) {
-    return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.detail || j.msg || ('出错了 ' + r.status)); return j; });
+    return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) { var er = new Error(j.detail || j.msg || ('出错了 ' + r.status)); er.status = r.status; throw er; } return j; });
   });
 }
 var ICONS = {

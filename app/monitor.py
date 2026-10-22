@@ -1,7 +1,9 @@
 """后台监控：正在跑的任务、各个服务的状态、日志。给界面的「后台」页用。
 
 日志都在 data\\logs\\ 里：
-  backend.log        后端自己（启动.bat 黑窗口里打印的东西也会写进来）
+  backend.log        后端自己说的话（没有黑窗口了，都写在这里）
+  hw_helper.log      硬件监控助手
+  osd.log            游戏内显示
   model_server.log   本地模型服务
   kev.log            Kev
   setup_*.log        一键补齐的每一步
@@ -20,11 +22,11 @@ T0 = time.time()
 LOG_RE = re.compile(r"^[\w.\-]+\.log$")
 LABEL = {"setup_git.log": "补齐 1 · Git", "setup_aienv.log": "补齐 2 · 模型环境", "setup_models.log": "补齐 3 · 下载模型",
          "setup_start.log": "补齐 4 · 启动服务", "setup_kev.log": "补齐 5 · Kev 权重", "setup_hwmon.log": "补齐 6 · 硬件监控",
-         "backend.log": "后端黑窗口", "model_server.log": "模型服务", "kev.log": "Kev"}
+         "backend.log": "后端", "model_server.log": "模型服务", "kev.log": "Kev", "hw_helper.log": "硬件监控助手", "osd.log": "游戏内显示"}
 
 
 class _Tee:
-    """黑窗口里打印的同时，写一份到 backend.log（带时间）。"""
+    """打印的同时写一份到 backend.log（带时间）；没有黑窗口时就只写日志。"""
 
     def __init__(self, stream, path):
         self.s, self.path, self.bol = stream, path, True
@@ -145,8 +147,8 @@ async def services():
     from . import hw
     src = (hw._cache.get("data") or {}).get("sources") or {}
     out.append({"k": "hw", "name": "硬件监控助手", "st": "ok" if src.get("sensors") else "off",
-                "detail": ("传感器可读（管理员运行中）" + (" · 游戏帧数可读" if src.get("fps") else " · 游戏帧数读不了（看它的黑窗口）"))
-                          if src.get("sensors") else "没在运行：CPU 温度、功耗、硬盘温度、游戏帧数读不到（双击 硬件监控.bat）"})
+                "detail": ("传感器可读（管理员运行中）" + (" · 游戏帧数可读" if src.get("fps") else " · 游戏帧数读不了（看「硬件监控助手」日志）"))
+                          if src.get("sensors") else "没在运行：CPU 温度、功耗、硬盘温度、游戏帧数读不到（设置 › 硬件监控 打开）"})
     b = deepseek.balance_cached() or {}
     last = db.one("SELECT ts, purpose FROM costs ORDER BY id DESC LIMIT 1")
     calls = db.one("SELECT COUNT(*) n FROM costs WHERE ts>?", (time.time() - 86400,))["n"]

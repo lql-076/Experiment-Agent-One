@@ -32,23 +32,37 @@ function prepRow(c) {
       (useLive() && st === 'miss' ? '<button class="btn mini" data-diag="' + c.k + '">问 DeepSeek</button>' : '') + '</div>' +
     '<div class="diag" id="diag-' + c.k + '" hidden></div></div></div>';
 }
-function prepGroups() {
-  var todo = LIVE_CHECKS.filter(function (c) { var st = stOf(c); return st !== 'ok' && st !== 'man'; });
-  var ok = LIVE_CHECKS.filter(function (c) { var st = stOf(c); return st === 'ok' || st === 'man'; });
-  return (todo.length ? '<div class="label grp">要处理 · ' + todo.length + ' 项</div><div class="setup">' + todo.map(prepRow).join('') + '</div>' : '') +
-    (ok.length ? '<div class="label grp">已就绪 · ' + ok.length + ' 项</div><div class="setup ready">' + ok.map(prepRow).join('') + '</div>' : '');
+/* 已就绪的：一项一个小标签（✓ 名字），停在上面看检测结果；手动确认的点一下取消。一屏放得下 */
+function okChip(c) {
+  var r = S.check[c.k] || {}, st = stOf(c), act = r.action || (c.act && c.act[0]);
+  var extra = act === 'qq_test' && useLive() ? '<button class="linkbtn" data-act="' + act + '" data-k="' + c.k + '">' + esc(c.act ? c.act[1] : '再测一次') + '</button>' : '';
+  return '<span class="okchip st-' + st + '" id="su-' + c.k + '" title="' + esc(c.t + '：' + (st === 'man' ? '你手动确认过' : (r.d || '已就绪'))) + '">' +
+    (st === 'man' ? '<button class="ck" role="checkbox" aria-checked="true" data-man="' + c.k + '" aria-label="取消手动确认">' + ICONS.check + '</button>' : ICONS.check) + esc(c.t) + extra + '</span>';
 }
+function prepTodo() {
+  var todo = LIVE_CHECKS.filter(function (c) { var st = stOf(c); return st !== 'ok' && st !== 'man'; });
+  return todo.length ? '<div class="label grp">要处理 · ' + todo.length + ' 项</div><div class="setup">' + todo.map(prepRow).join('') + '</div>' : '<div class="label grp">要处理 · 没有了，全部就绪</div>';
+}
+function prepOk() {
+  var ok = LIVE_CHECKS.filter(function (c) { var st = stOf(c); return st === 'ok' || st === 'man'; });
+  return ok.length ? '<div class="label grp">已就绪 · ' + ok.length + ' 项</div><div class="prep-ok">' + ok.map(okChip).join('') + '</div>' : '';
+}
+function prepGroups() { return prepTodo() + prepOk(); }
 function prepHTML() {
   var n = readyCount(), tot = LIVE_CHECKS.length;
   var when = S.checking ? '正在自检…' : S.lastCheck ? '上次自检 ' + pad(S.lastCheck.getHours()) + ':' + pad(S.lastCheck.getMinutes()) + (useLive() ? '' : ' · 演示数据') : '还没有自检';
-  return '<div class="prep-head"><div><div class="prep-num num"><b id="prepReady">' + n + '</b> / ' + tot + '</div><div class="help" id="prepWhen" style="margin-top:.375rem">' + when + ' · Agent 文件夹：' + esc(P('root')) + (LIVE ? '' : '（示例路径，按你实际放的位置）') + '</div></div><button class="btn primary" id="recheck">重新自检</button></div>' +
-    '<div class="prep-bar"><i id="prepBar" style="transform:scaleX(' + (n / tot).toFixed(3) + ')"></i></div>' + setupHTML() + '<div id="prepGroups">' + prepGroups() + '</div>' +
-    '<div class="label grp">以后再装 · 不参与自检</div><div class="setup ready">' +
-    CHECKS.filter(function (c) { return c.later; }).map(function (c) { return '<div class="su sm later"><span></span><div class="su-b"><div class="su-top"><h3>' + esc(c.t) + '</h3></div><p class="su-d">' + esc(c.why) + '</p>' + (c.links && c.links.length ? '<div class="links">' + linksHTML(c.links) + '</div>' : '') + '</div></div>'; }).join('') + '</div>';
+  // 一屏放下：上面一行是几项就绪和进度；左边一键补齐，右边要处理的、已就绪的、以后再装的
+  return '<div class="prep-wrap"><div class="prep2"><div class="prep-head"><div class="prep-num num"><b id="prepReady">' + n + '</b> / ' + tot + '</div>' +
+    '<div class="prep-mid"><div class="prep-bar"><i id="prepBar" style="transform:scaleX(' + (n / tot).toFixed(3) + ')"></i></div><div class="help" id="prepWhen">' + when + ' · Agent 文件夹：' + esc(P('root')) + (LIVE ? '' : '（示例路径，按你实际放的位置）') + '</div></div>' +
+    '<button class="btn primary" id="recheck">重新自检</button></div>' +
+    '<div class="prep-l">' + setupHTML() + '<div id="prepOk">' + prepOk() + '</div>' +
+    '<div class="label grp">以后再装 · 不参与自检</div><div class="prep-ok later">' +
+    CHECKS.filter(function (c) { return c.later; }).map(function (c) { var l = c.links && c.links[0]; return (l ? '<a class="okchip later" href="' + l[1] + '" target="_blank" rel="noopener noreferrer"' : '<span class="okchip later"') + ' title="' + esc(c.why) + '">' + esc(c.t) + (l ? ICONS.ext + '</a>' : '</span>'); }).join('') + '</div></div>' +
+    '<div class="prep-r"><div id="prepGroups">' + prepTodo() + '</div></div></div></div>';
 }
 function updatePrepUI(k) {
   var n = readyCount(), tot = LIVE_CHECKS.length;
-  if (k) { var g = $('#prepGroups'); if (g) g.innerHTML = prepGroups(); }
+  if (k) { var g = $('#prepGroups'), o = $('#prepOk'); if (g) g.innerHTML = o ? prepTodo() : prepGroups(); if (o) o.innerHTML = prepOk(); }
   var pr = $('#prepReady'); if (pr) pr.textContent = n;
   var pb = $('#prepBar'); if (pb) pb.style.transform = 'scaleX(' + (n / tot).toFixed(3) + ')';
   var mini = $('#prepMini'); if (mini) { mini.textContent = n + '/' + tot; mini.classList.toggle('warn', n < tot && !S.checking); }

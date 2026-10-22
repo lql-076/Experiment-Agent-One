@@ -18,7 +18,7 @@ from . import db, deepseek, memory, paths, privacy, router, safety, settings
 from .models import M
 
 LABELS = {"local": "本地处理（日常、提醒、笔记、闲聊、隐私）", "ds": "DeepSeek（查资料、知识、写作、代码、一般难题）",
-          "cl": "网页 Claude（非常复杂、需要深入讨论）", "neu": "新类型的事（以上都不太合适）"}
+          "cl": "更强的模型（非常复杂、需要深入讨论，用户自己带提示词去问）", "neu": "新类型的事（以上都不太合适）"}
 
 
 async def teacher_labels(limit=40):
@@ -156,8 +156,8 @@ async def synthesize():
 
 
 async def ingest_summary(rel: str):
-    """网页 Claude 带回的总结：原样保存，只在本地建检索索引，当参考资料用。
-    不交给 DeepSeek 加工，不进任何训练数据（Anthropic 条款不允许用 Claude 的输出训练模型）。"""
+    """从更强的模型（网页 Claude、ChatGPT……）带回的总结：原样保存，只在本地建检索索引，当参考资料用。
+    不交给 DeepSeek 加工，不进任何训练数据（Anthropic、OpenAI 等的条款都不允许用它们的输出训练模型，一律不进最省事）。"""
     n = await memory.index()
     return "已保存为参考资料（只在本地检索，不进训练集）" + (f"，新增 {n} 段索引" if n else "")
 

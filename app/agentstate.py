@@ -141,7 +141,10 @@ async def view():
                           f"开着 · 今天 {st['today']['n']} / {st['limit']} 次" + (" · 今天的次数用完了" if full else ""), m=_m(min(st["today"]["n"], st["limit"]), st["limit"], f"{st['today']['n']} / {st['limit']}")))
         kpi["search"] = {"st": "warn" if full else "ok", "v": str(st["today"]["n"]), "unit": f"/ {st['limit']} 次", "p": round(min(1, st["today"]["n"] / max(1, st["limit"])), 3),
                          "sub": f"本月 {st['month']['n']} 次 · ¥{st['month']['cny']:.2f}"}
-    cloud.append(_row("claude", "网页 Claude", "ok", "特别复杂的事写好提示词，你自己去问（不自动登录）"))
+    if router.strong_on():
+        cloud.append(_row("claude", router.strong_name(), "ok", "特别复杂的事写好提示词，你自己去问（网页 Claude、ChatGPT、Kimi……你能用的最强的都行）"))
+    else:
+        cloud.append(_row("claude", router.strong_name(), "off", "你选了不用：特别难的事也交给 DeepSeek", {"label": "去打开", "sec": "cloud"}))
 
     # ---------- 通道 ----------
     chan = []
@@ -180,7 +183,8 @@ async def view():
     back.append(_row("model", "本地模型服务", {"ok": "ok", "warn": "warn", "bad": "bad"}.get(m.get("st"), "bad" if not env_ok else "off"),
                      m.get("detail") or "没在运行", None if env_ok else PREP, m=vm))
     hwv = svc.get("hw", {})
-    back.append(_row("hw", "硬件监控助手", "ok" if hwv.get("st") == "ok" else "off", hwv.get("detail") or "没在运行"))
+    back.append(_row("hw", "硬件监控助手", "ok" if hwv.get("st") == "ok" else ("warn" if S.get("hwOn") else "off"), hwv.get("detail") or "没在运行",
+                     None if hwv.get("st") == "ok" else {"label": "去打开" if not S.get("hwOn") else "去看看", "sec": "hw"}))
     nl = svc.get("nightly", {})
     back.append(_row("nightly", "每日差事", "ok" if nl.get("st") == "ok" else ("off" if not S.get("nightly", True) else "idle"),
                      nl.get("detail") or "还没跑过"))

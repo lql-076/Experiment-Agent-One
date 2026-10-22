@@ -149,7 +149,7 @@ async def c_hwmon():
             return ok(f"传感器可读 · CPU {d['cpu']['temp']:.0f}°C")
         return wait("数据能读到，但没有 CPU 温度：装一下 PawnIO 驱动，并确认是管理员身份运行")
     except Exception:
-        return miss("连不上硬件监控：双击 硬件监控.bat（会请求管理员权限）")
+        return miss("硬件监控助手没开：设置 › 硬件监控 打开（第一次弹一次管理员确认）")
 
 
 async def c_ds():

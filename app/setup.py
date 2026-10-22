@@ -540,17 +540,14 @@ async def s_hwmon(opts):
         return True, r["d"]
     if not paths.IS_WIN:
         return True, "不是 Windows，跳过"
-    bat = paths.ROOT / "硬件监控.bat"
-    _say("hwmon", "打开 硬件监控.bat：会弹一次管理员确认，点「是」。等它连上（最多 90 秒）", "warn")
-    os.startfile(str(bat))   # noqa: S606  这个 .bat 会自己请求管理员权限
-    for _ in range(45):
-        await asyncio.sleep(2)
-        if JOB["stop"]:
-            break
+    from . import hwctl
+    _say("hwmon", "打开硬件监控助手：第一次会弹一次管理员确认，点「是」。以后跟着 Agent 一起起，不再弹，也没有黑窗口", "warn")
+    ok, msg = await hwctl.start(allow_prompt=True)
+    if ok:
+        settings.update({"hwOn": True})
         r = await checks.c_hwmon()
-        if r["st"] != "miss":
-            return True, r["d"] + ("" if r["st"] == "ok" else "（CPU 温度要装 PawnIO 驱动：pawnio.eu，装完重启电脑）")
-    return False, "90 秒内没连上硬件监控助手：管理员确认点了「是」吗？"
+        return True, r["d"] + ("" if r["st"] == "ok" else "（CPU 温度要装 PawnIO 驱动：pawnio.eu，装完重启电脑）")
+    return False, f"硬件监控助手没起来：{msg}"
 
 
 STEP_FN = {"git": s_git, "aienv": s_aienv, "models": s_models, "start": s_start, "kev": s_kev, "hwmon": s_hwmon}

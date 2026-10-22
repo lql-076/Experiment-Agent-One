@@ -4,7 +4,7 @@ var ROUTES = {
   local: { name: '本地小脑', color: 'var(--c-local)' },
   neu:   { name: '新类别', color: 'var(--c-neu)' },
   ds:    { name: 'DeepSeek', color: 'var(--c-ds)' },
-  cl:    { name: '网页 Claude', color: 'var(--c-cl)' }
+  cl:    { name: '更强的模型', color: 'var(--c-cl)' }      // 名字跟着 设置 › 云端 改（syncRouteNames）
 };
 var ORDER = ['local', 'neu', 'ds', 'cl'];
 var EVENTS = [
@@ -20,9 +20,9 @@ var EVENTS = [
     why: '你明确说了记住，直接写进记忆收件箱（本地文件，先斩后奏，可撤销）。', result: '记下了。',
     reply: '记下了。', steps: [['收到', 'QQ 私聊'], ['认出「记住」', '不经过模型'], ['写记忆', '记忆/收件箱.md'], ['回复', '已回复']] },
   { id: 1039, t: '20:12', src: 'QQ', text: '我想改成多个 agent 协作，可行吗', to: 'cl', label: '', s: { local: 6, neu: 5, ds: 31, cl: 58 },
-    why: '「找 Claude」得分 58%，超过 50%，属于很复杂的难题，建议你亲自去和 Claude 深聊。 语义路由 → 网页 Claude 64%；Kev → 网页 Claude 52%。', result: 'DeepSeek 已写好提示词，等你带去。聊完把总结 .md 带回来，会存进记忆。',
-    reply: '这件事比较复杂，建议你带着下面的提示词去问网页 Claude。聊完让它出一份 Markdown 总结，带回来在 大脑 › 网页 Claude › 导入总结。\n\n> 我在搭一个自己的本地 agent，现在想把它改成多个 agent 协作……', cost: 0.0008, latency: 3.1,
-    steps: [['收到', 'QQ 私聊'], ['决策脑打分', '网页 Claude 58%'], ['写提示词', 'DeepSeek 附上背景'], ['回复', '已回复']] },
+    why: '「更强的模型」得分 58%，超过 50%，属于很复杂的难题，建议你带着提示词亲自去和更强的模型深聊。 语义路由 → 更强的模型 64%；Kev → 更强的模型 52%。', result: 'DeepSeek 已写好提示词，等你带去。聊完把总结 .md 带回来，会存进记忆。',
+    reply: '这件事比较复杂，建议你带着下面的提示词去问更强的模型（你能用的最强的 AI 都行）。聊完让它出一份 Markdown 总结，带回来在 大脑 › 更强的模型 › 导入总结。\n\n> 我在搭一个自己的本地 agent，现在想把它改成多个 agent 协作……', cost: 0.0008, latency: 3.1,
+    steps: [['收到', 'QQ 私聊'], ['决策脑打分', '更强的模型 58%'], ['写提示词', 'DeepSeek 附上背景'], ['回复', '已回复']] },
   { id: 1038, t: '19:05', src: 'QQ', text: '猫粮还能吃几天？', to: 'neu', label: '', s: { local: 22, neu: 48, ds: 26, cl: 4 },
     why: '所有本地小脑都低于新类别线 40%（最高 22%），像是一类新事情：先交给 DeepSeek，同时记为样本。 语义路由 → 新类别 55%；Kev → DeepSeek 40%。', result: '先由 DeepSeek 回答；每日差事会给这一类起名，攒够了训练新小脑。',
     reply: '要看你家猫一天吃多少。一般成年猫一天 50~70 克干粮，一袋 2 公斤大概能吃 **一个月左右**。你告诉我袋子还剩多少，我帮你算。', cost: 0.0009, latency: 2.2,
@@ -45,7 +45,7 @@ var BRAINS = [
   { kind: '云端', name: 'DeepSeek', sub: 'deepseek-flash · API', st: '有 Key', c: 'var(--c-ds)', note: '长对话和一般难题；它的处理记录也是小脑的教材。每日差事里还负责打标签、整理记忆。余额来自官方接口；花费是本机按 token 估算的。',
     ring: [95.5, '¥8.59', '', '余额'], trend: [9, 12, 8, 11, 7, 10, 6], tmax: 15, tl: '每日调用',
     stats: [['余额', '¥8.59', ''], ['本月花了（估算）', '¥0.41', ''], ['今日花了（估算）', '¥0.030', ''], ['本月调用', '63', '次'], ['贡献样本', '58', '条']], acts: ['刷新余额', '去充值'] },
-  { kind: '云端', name: '网页 Claude', sub: '你本人带提示词去聊', st: '有提示词等你', c: 'var(--c-cl)', note: '非常复杂的难题；聊完把总结 .md 带回来，只当参考资料读，不进训练集。',
+  { kind: '云端', name: '更强的模型', sub: '你本人带提示词去聊', st: '有提示词等你', c: 'var(--c-cl)', note: '非常复杂的难题；聊完把总结 .md 带回来，只当参考资料读，不进训练集。',
     ring: [75, '3', '/4', '总结已带回'], trend: [0, 1, 0, 1, 1, 0, 1], tmax: 2, tl: '每日求助',
     stats: [['待处理提示词', '1', '份'], ['已带回总结', '3', '份']], acts: ['复制最新提示词', '导入总结'] }
 ];
@@ -70,7 +70,7 @@ var SAFETY = [
   { k: 'perm', n: '给自己加新工具或新权限', lock: true },
   { k: 'money', n: '花钱：充值、换更贵的模型、提高额度', lock: true },
   { k: 'priv', n: '把隐私内容发出本机', lock: true },
-  { k: 'claude', n: '把 Claude 的回答、总结或聊天记录拿去训练模型', h: 'Anthropic 的用户条款不允许用 Claude 的服务训练 AI 模型。这些内容只当参考资料读', lock: true, lockText: '固定不做' }
+  { k: 'claude', n: '把更强的模型（网页 Claude、ChatGPT……）的回答、总结或聊天记录拿去训练模型', h: 'Anthropic 的用户条款不允许用 Claude 的服务训练 AI 模型，OpenAI 等也有类似限制。这些内容只当参考资料读', lock: true, lockText: '固定不做' }
 ];
 
 /* 主题清单来自 themes/themes.js（Agent 启动时扫描 themes 文件夹自动生成）。一个 .css 文件就是一套主题。 */
@@ -105,8 +105,8 @@ var CHECKS = [
     why: '装好环境和两个模型后，启动 Agent 时会自动拉起它。启动失败就看上面的日志文件最后几行。' , links: [] },
   { k: 'kev', auto: 1, t: '决策脑 Kev-0.8B', how: '连接 127.0.0.1:8091，看 Kev 服务在不在线', place: '源码在 {kev}（已打包）；权重下载到 {hfcache}', demo: ['wait', '按需启动：用到时自动启动；第一次启动会下载约 2GB 权重'], act: ['start_kev', '现在启动 Kev'], go: 'models',
     why: '决策脑的第二票。源码已经随项目打包（Apache-2.0 许可），装环境时一起装好。第一次启动会经 hf-mirror 下载权重（Kev 适配器 + Qwen3.5-0.8B 底座）。下载不动就在 设置 › 本地模型 把 Kev 先关掉，决策脑只用语义路由一票也能工作。', links: [['hf-mirror 上的 Kev 权重', 'https://hf-mirror.com/jaredpalmer/kev-0.8b']] },
-  { k: 'hwmon', auto: 1, t: '硬件监控', how: '读取 127.0.0.1:8085/data.json，看有没有 CPU 温度', place: '不用放文件，双击「硬件监控.bat」', demo: ['ok', '传感器可读 · CPU 47°C'], go: 'hw',
-    why: '一键补齐会帮你启动它（弹一次管理员确认）。显卡占用、显存、显卡功耗不用它也能读（驱动自带）。CPU 温度、功耗和硬盘温度要靠它：双击「硬件监控.bat」，会请求管理员权限。CPU 温度还要装一次 PawnIO 驱动。', links: [['PawnIO 驱动', 'https://pawnio.eu']] },
+  { k: 'hwmon', auto: 1, t: '硬件监控', how: '读取 127.0.0.1:8085/data.json，看有没有 CPU 温度', place: '不用放文件，在 设置 › 硬件监控 打开', demo: ['ok', '传感器可读 · CPU 47°C'], go: 'hw',
+    why: '一键补齐会帮你打开它（第一次弹一次管理员确认，之后跟着 Agent 一起起，不再弹，也没有黑窗口）。显卡占用、显存、显卡功耗不用它也能读（驱动自带）。CPU 温度、功耗和硬盘温度要靠它；CPU 温度还要装一次 PawnIO 驱动。', links: [['PawnIO 驱动', 'https://pawnio.eu']] },
   { k: 'ds', t: 'DeepSeek API Key', how: '用 Key 查一次账户余额', place: '填在 设置 › 云端（加密保存在本机）', demo: ['miss', '还没有填 Key'], go: 'cloud',
     why: '长对话和一般难题交给它，每日差事里还负责打标签和整理记忆；一键补齐某一步失败时，也是它看日志选修法。不设每月上限，界面上直接显示官方查到的余额。', links: [['DeepSeek 开放平台 · API Keys', 'https://platform.deepseek.com/api_keys']] },
   { k: 'qq', t: 'QQ 官方机器人', how: '用 AppID 和 AppSecret 换一次访问凭证，再连 WebSocket', place: '填在 设置 › QQ 通道', demo: ['miss', '还没有填 AppID 和 AppSecret'], go: 'qq',
@@ -117,7 +117,7 @@ var CHECKS = [
     why: '提醒靠主动消息。你在 QQ 里关掉了"允许主动发送"就会失败，这时会自动改成电脑弹窗 + 界面卡片。', links: [] },
   { k: 'memory', t: '记忆文件夹', how: '看文件夹在不在、有没有 git 记录', place: '{memory}', demo: ['ok', '文件夹在 · git 记录中'], go: 'memory',
     why: '启动时自动创建，记忆、技能、提示词全是中文 Markdown。想放进 Obsidian：在 设置 › 记忆与文件 填库里的一个子文件夹。', links: [['Obsidian 官网', 'https://obsidian.md']] },
-  { k: 'search', t: '联网搜索', later: true, why: '让 DeepSeek 能查最新资料。需要一个国内能用的搜索接口，下一步再接。', links: [] },
+  { k: 'media', t: '做视频（图像生成、配音、背景音乐、合成）', later: true, why: '以后做自媒体用：留好了位置，先不做。图像生成接 OpenAI 最新的图像模型；配音用本地 TTS（显存 3~5GB 以内，用到才加载）；背景音乐用代码编曲或你从剪映选；动画代码逐帧渲染再用 FFmpeg 合成。发布前一律先问你。', links: [] },
   { k: 'train', t: '小脑训练（Unsloth / PEFT）', later: true, why: '慢成长：样本攒够后先问你，你说开始才训练新小脑。训练用的就是现在这套本地模型环境。', links: [['Unsloth', 'https://unsloth.ai']] },
   { k: 'voice', t: '语音（听写 + 说话）', later: true, why: '以后接：本地听写和说话，QQ 语音消息也能直接发给它。', links: [] },
   { k: 'rea', t: 'REA 逆向工具', later: true, why: '只认官方仓库 morluto/rea，网上有带木马的假冒版本。', links: [['REA 官方仓库', 'https://github.com/morluto/rea']] }
@@ -143,7 +143,10 @@ var SECTIONS = [
     { k: 'kevPort', l: 'Kev 端口', t: 'number', d: 8091 },
     { note: '只用显卡跑模型：检测不到显卡时模型服务直接拒绝工作，不会偷偷用 CPU。这一条固定，改不了。' }
   ] },
-  { id: 'cloud', name: '云端', desc: 'DeepSeek 负责长对话和一般难题；非常复杂的难题建议你带提示词去找网页端 Claude。', custom: 'cloud', fields: [
+  { id: 'cloud', name: '云端', desc: 'DeepSeek 负责长对话和一般难题；特别难的事可以写好提示词让你带去问更强的模型（第三条路，用不用在下面选）。', custom: 'cloud', fields: [
+    { k: 'strongOn', l: '第三条路「更强的模型」', t: 'choice', d: true, o: [[true, '接受：特别难的事写好提示词，我带去问'], [false, '不接受：特别难的事也交给 DeepSeek']], h: '问哪家都行：网页 Claude、ChatGPT、Gemini、Kimi、豆包……用你能稳定用上的最强的那个。带回来的总结只当参考资料，不进训练' },
+    { k: 'strongName', l: '这条路叫什么', d: '更强的模型', ph: '更强的模型', h: '界面上显示的名字，比如改成「网页 Claude」' },
+    { k: 'claudeTpl', l: '给更强的模型的提示词开头', t: 'textarea', d: '我在搭一个自己的本地 agent。下面是遇到的问题和相关背景，请帮我分析。聊完请输出一份简短的 Markdown 总结，方便我带回给 agent 学习。' },
     { k: 'dsKey', l: 'DeepSeek API Key', t: 'secret', h: '加密保存在本机（Windows DPAPI），只有你这个 Windows 账号能解开；导出设置时不包含' },
     { k: 'dsModel', l: '模型', t: 'model', d: 'deepseek-flash', h: '点「获取模型列表」，用你的 Key 查官方现在能用哪些模型，再从下拉框里选；列表里没有的也可以手动填' },
     { k: 'dsLow', l: '余额低于多少时提醒你', t: 'number', u: '元', d: 2, h: '只是提醒，不会停用。余额不够时 DeepSeek 自己会拒绝调用' },
@@ -153,7 +156,6 @@ var SECTIONS = [
     { k: 'searchRounds', l: '一个问题最多查几轮', t: 'number', u: '轮', d: 4, h: '一轮里可以同时搜几个词、读几个网页。一般 1~2 轮就够了' },
     { k: 'dsBase', l: '接口地址', d: 'https://api.deepseek.com', h: '联网搜索也走这个地址（/v1/tools/search、/v1/tools/fetch）' },
     { note: '花了多少钱是按官方价格自动估算的（闲时、忙时自动区分），不用你填。准确的数字以上面的余额为准。' },
-    { k: 'claudeTpl', l: '找 Claude 时的提示词开头', t: 'textarea', d: '我在搭一个自己的本地 agent。下面是遇到的问题和相关背景，请帮我分析。聊完请输出一份简短的 Markdown 总结，方便我带回给 agent 学习。' }
   ] },
   { id: 'qq', name: 'QQ 通道', desc: '用 QQ 官方机器人和你说话，WebSocket 接入，不需要公网地址，不用非官方接口，没有封号风险。', fields: [
     { k: 'qqEnabled', l: '启用 QQ 通道', t: 'toggle', d: true },
@@ -171,7 +173,7 @@ var SECTIONS = [
   { id: 'routing', name: '分流旋钮', desc: '决策脑每次给四个去向打分，这几条线决定交给谁。', fields: [
     { k: 'take', l: '本地小脑接手线', t: 'range', min: 5, max: 95, step: 5, u: '%', d: 60, h: '本地小脑的把握低于这条线，就交给 DeepSeek' },
     { k: 'fresh', l: '新类别线', t: 'range', min: 5, max: 95, step: 5, u: '%', d: 40, h: '所有小脑都低于这条线、又不像已知的事，记为新类别并开始攒样本' },
-    { k: 'clLine', l: '建议找 Claude 的线', t: 'range', min: 20, max: 95, step: 5, u: '%', d: 50 },
+    { k: 'clLine', l: '建议找更强的模型的线', t: 'range', min: 20, max: 95, step: 5, u: '%', d: 50, h: '「更强的模型」的分数高过这条线、又高过 DeepSeek，才建议你去问它。不接受这条路时不起作用' },
     { k: 'voteEmbed', l: '语义路由这一票的权重', t: 'range', min: 0, max: 100, step: 5, u: '%', d: 50, h: 'Kev 的权重 = 100% 减去它' },
     { k: 'voteAuto', l: '实测后自动定权重', t: 'toggle', d: true },
     { k: 'privWords', l: '额外隐私关键词', ph: '逗号分隔，比如：前任, 某某医院', h: '出现任何一个词，这件事就只在本地处理。内置名单已经包含药、医院、病、密码、银行卡等' },
@@ -188,9 +190,9 @@ var SECTIONS = [
     { k: 'pass', l: '新小脑上线的及格线', t: 'range', min: 60, max: 99, step: 1, u: ' 分', d: 85 },
   ] },
   { id: 'safety', name: '安全线', desc: '能撤销的事可以先斩后奏，事后写进报告；撤销不了的事必须先问你。分级写死在代码里，不让模型自己判断；没登记的新动作默认先问。', custom: 'safety' },
-  { id: 'hw', name: '硬件监控', desc: '常驻模式里的占用、频率、温度、功耗从这里来。显卡数据由驱动直接提供；CPU 温度、功耗和硬盘温度要靠「硬件监控.bat」。', fields: [
+  { id: 'hw', name: '硬件监控', desc: '常驻模式里的占用、频率、温度、功耗从这里来。显卡数据由驱动直接提供；CPU 温度、功耗、硬盘温度和游戏帧数要靠「硬件监控助手」，在下面打开。', custom: 'hw', fields: [
     { k: 'hwSource', l: '数据来源', t: 'select', d: 'auto', o: [['auto', '真实数据（后端读取）'], ['demo', '演示数据']] },
-    { k: 'hwUrl', l: '硬件监控助手地址', d: 'http://127.0.0.1:8085/data.json', h: '「硬件监控.bat」默认就是这个；用 LibreHardwareMonitor 程序自带的网页服务也行' },
+    { k: 'hwUrl', l: '硬件监控助手地址', d: 'http://127.0.0.1:8085/data.json', h: '硬件监控助手默认就是这个；用 LibreHardwareMonitor 程序自带的网页服务也行' },
     { k: 'hwInterval', l: '刷新间隔', t: 'select', d: '2', o: [['1', '1 秒'], ['2', '2 秒'], ['5', '5 秒']] },
     { k: 'sysOther', l: '其他部件功耗估计', t: 'number', u: 'W', d: 45, h: '主板、内存、硬盘、7 把风扇等，读不到，只能估' },
     { k: 'psuEff', l: '电源转换效率', t: 'range', min: 80, max: 95, step: 1, u: '%', d: 89, h: '金牌电源在常见负载下大约 87% 到 90%' },
@@ -198,7 +200,7 @@ var SECTIONS = [
   ] },
   { id: 'osd', name: '游戏内显示', desc: '像游戏加加那样，在游戏画面一角浮一个小框，显示帧数、1% 低帧、CPU、显卡、显存、整机功耗。不往游戏里注入任何东西，不会被反作弊当外挂。', custom: 'osd', fields: [
     { k: 'osdOn', l: '在游戏里显示', t: 'toggle', d: false, h: '打开后会单独开一个小窗：永远在最上层、鼠标点得穿、不抢游戏的焦点、不进任务栏' },
-    { k: 'osdWhen', l: '什么时候显示', t: 'select', d: 'game', o: [['game', '只在玩游戏时（读到帧数才显示）'], ['always', '一直显示']], h: '读帧数要「硬件监控助手」开着（硬件监控.bat）；没开的话选「一直显示」也能看占用和温度' },
+    { k: 'osdWhen', l: '什么时候显示', t: 'select', d: 'game', o: [['game', '只在玩游戏时（游戏在最前面才显示）'], ['always', '一直显示（不管在不在游戏里）']], h: '「只在玩游戏时」要硬件监控助手开着（设置 › 硬件监控），靠帧数认出游戏；认错了在下面点「这不是游戏」。没开助手就选「一直显示」' },
     { k: 'osdPos', l: '位置', t: 'select', d: 'tl', o: [['tl', '左上角'], ['tr', '右上角'], ['bl', '左下角'], ['br', '右下角']] },
     { k: 'osdScreen', l: '显示在哪块屏幕', t: 'select', d: '0', o: [['0', '主屏幕'], ['1', '第 2 块屏幕'], ['2', '第 3 块屏幕']] },
     { k: 'osdMargin', l: '离屏幕边多远', t: 'range', min: 0, max: 120, step: 4, u: ' 像素', d: 16 },

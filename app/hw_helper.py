@@ -1,32 +1,44 @@
-"""硬件监控助手：用 LibreHardwareMonitor 的核心库读传感器，在 127.0.0.1:8085/data.json 提供数据
+r"""硬件监控助手：用 LibreHardwareMonitor 的核心库读传感器，在 127.0.0.1:8085/data.json 提供数据
 （格式和 LibreHardwareMonitor 自带的网页服务一样）。
 
-必须用管理员身份运行（双击 硬件监控.bat 会自动请求管理员权限），否则 CPU 温度、功耗读不到。
+必须用管理员身份运行，否则 CPU 温度、功耗读不到。平时由 Agent 管：设置 › 硬件监控 打开（第一次弹一次管理员确认，
+之后用 Windows 计划任务提权启动，不再弹）；用 pythonw 跑，没有黑窗口，说的话写进 data\logs\hw_helper.log。
+手动启动也行：双击 硬件监控.bat。
 CPU 温度还需要 PawnIO 驱动（https://pawnio.eu 下载安装一次）。
-只监听本机 127.0.0.1，别的电脑访问不到。
+只监听本机 127.0.0.1，别的电脑访问不到。POST /quit（带 X-Agent 头）让它自己退出。
 
 游戏帧数（FPS 和 1% 低帧）：用 Windows 自带的 ETW 事件读（和 Intel PresentMon、很多帧数工具的办法一样），
 不往游戏里注入任何东西，不会被反作弊当成外挂。统计每个程序交画面（DXGI Present）的时间间隔：
+- 哪个算游戏：在交画面的程序里，去掉系统、浏览器、聊天、播放器、游戏加加这类监控 / 录屏 / 叠加层工具，前台的优先；
+  几个候选都报给后端（cands），后端再去掉你在设置里说过"不是游戏"的
 - FPS：最近 1 秒交了几帧
 - 1% 低帧：最近 30 秒里最慢的 1% 那些帧，换算成帧数（越接近 FPS 越稳）
 DirectX 10/11/12 的游戏都能读；Vulkan、OpenGL 的读不到。也需要管理员权限。
 """
 import ctypes
 import json
+import os
 import sys
 import threading
 import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8085
+PORT = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 8085
+LOG = Path(__file__).resolve().parent.parent / "data" / "logs" / "hw_helper.log"
+if sys.stdout is None or "--log" in sys.argv:           # pythonw 没有黑窗口：说的话写进日志
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    sys.stdout = sys.stderr = open(LOG, "a", encoding="utf-8", errors="replace", buffering=1)
+    print(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} 硬件监控助手启动")
 
 try:
     from HardwareMonitor.Hardware import Computer
 except Exception as e:  # pragma: no cover - 只在 Windows 上能用
     print("读不了 HardwareMonitor 库：", e)
     print("这个助手只能在 Windows 上运行，并且要先运行一次 启动.bat 装好依赖。")
-    input("按回车退出")
+    if sys.stdin and sys.stdin.isatty():
+        input("按回车退出")
     sys.exit(1)
 
 IMG = {"Cpu": "images_icon/cpu.png", "GpuNvidia": "images_icon/nvidia.png", "GpuAmd": "images_icon/ati.png",
@@ -51,9 +63,28 @@ latest = {"json": b"{}"}
 class FpsMeter:
     GUID = "{CA11C036-0102-4A2D-A6AD-F03CFED5D3C9}"     # Microsoft-Windows-DXGI
     PRESENT = (42, 55)                                     # Present_Start、PresentMultiplaneOverlay_Start
-    SKIP = {"dwm.exe", "explorer.exe", "msedge.exe", "msedgewebview2.exe", "chrome.exe", "firefox.exe", "pythonw.exe",
-            "python.exe", "qq.exe", "wechat.exe", "weixin.exe", "steamwebhelper.exe", "searchhost.exe", "shellexperiencehost.exe",
-            "startmenuexperiencehost.exe", "textinputhost.exe", "applicationframehost.exe"}
+    # 也在不停交画面、但不是游戏的：系统、浏览器、聊天、视频和音乐播放器、壁纸、录屏、帧数监控和叠加层工具（游戏加加就是这一类）
+    SKIP = {
+        "dwm.exe", "explorer.exe", "searchhost.exe", "shellexperiencehost.exe", "startmenuexperiencehost.exe", "textinputhost.exe",
+        "applicationframehost.exe", "lockapp.exe", "systemsettings.exe", "widgets.exe", "phoneexperiencehost.exe", "snippingtool.exe",
+        "msedge.exe", "msedgewebview2.exe", "chrome.exe", "firefox.exe", "opera.exe", "brave.exe", "vivaldi.exe", "360se.exe",
+        "360chrome.exe", "qqbrowser.exe", "sogouexplorer.exe", "2345explorer.exe", "liebao.exe", "quark.exe",
+        "pythonw.exe", "python.exe", "qq.exe", "tim.exe", "wechat.exe", "weixin.exe", "wxwork.exe", "dingtalk.exe", "feishu.exe",
+        "lark.exe", "discord.exe", "kook.exe", "yy.exe", "code.exe", "cursor.exe", "notion.exe",
+        "steam.exe", "steamwebhelper.exe", "wegame.exe", "epicgameslauncher.exe", "eadesktop.exe", "battle.net.exe",
+        "potplayer.exe", "potplayer64.exe", "potplayermini.exe", "potplayermini64.exe", "vlc.exe", "mpv.exe", "mpc-hc.exe",
+        "mpc-hc64.exe", "mpc-be.exe", "mpc-be64.exe", "wmplayer.exe", "video.ui.exe", "microsoft.media.player.exe", "qqlive.exe",
+        "qqmusic.exe", "cloudmusic.exe", "kugou.exe", "bilibili.exe", "哔哩哔哩.exe", "douyin.exe", "iqiyi.exe",
+        "wallpaper32.exe", "wallpaper64.exe", "lively.exe", "obs64.exe", "obs32.exe", "bandicam.exe", "nvidia overlay.exe",
+        "nvidia app.exe", "nvcontainer.exe", "gamebar.exe", "gamebarftserver.exe", "xboxpcapp.exe", "radeonsoftware.exe",
+        "amdrsserv.exe", "rtss.exe", "msiafterburner.exe", "librehardwaremonitor.exe", "hwinfo64.exe", "aida64.exe",
+    }
+    SKIP_PREFIX = ("gamepp", "游戏加加", "wallpaper", "nvidia ", "obs")
+
+    @classmethod
+    def skipped(cls, name):
+        n = (name or "").lower()
+        return not n or n in cls.SKIP or n.startswith(cls.SKIP_PREFIX)
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -144,13 +175,16 @@ class FpsMeter:
         live = {}
         for pid, d in snap.items():
             n2 = sum(1 for x in d if x >= newest - 2)
-            if d[-1] >= newest - 2 and n2 >= 20 and self._name(pid).lower() not in self.SKIP:
+            if d[-1] >= newest - 2 and n2 >= 20 and not self.skipped(self._name(pid)):
                 live[pid] = n2
         if not live:
-            return {"ok": True, "fps": None}
+            return {"ok": True, "fps": None, "cands": []}
         fg = self._fg()
-        pid = fg if fg in live else max(live, key=live.get)
-        d = snap[pid]
+        order = sorted(live, key=lambda p: (p != fg, -live[p]))[:6]      # 前台的排第一，其余按交画面多少
+        cands = [dict(self._one(p, snap[p]), fg=(p == fg)) for p in order]
+        return {"ok": True, **cands[0], "cands": cands}
+
+    def _one(self, pid, d):
         end = d[-1]
         fps = sum(1 for x in d if x > end - 1)
         win = [x for x in d if x > end - 30]
@@ -159,7 +193,7 @@ class FpsMeter:
         if len(gaps) >= 20:
             k = max(1, len(gaps) // 100)
             low = 1 / (sum(gaps[:k]) / k)
-        return {"ok": True, "fps": fps, "low1": round(low, 1) if low else None, "proc": self._name(pid), "pid": pid}
+        return {"fps": fps, "low1": round(low, 1) if low else None, "proc": self._name(pid), "pid": pid}
 
 
 FPS = FpsMeter()
@@ -213,6 +247,18 @@ def loop():
 
 
 class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        # Agent 设置里点「关闭」：自己退出（要带 X-Agent 头，网页没法偷偷让它退）
+        if self.path == "/quit" and self.headers.get("X-Agent") == "1":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"bye")
+            print("Agent 让我退出")
+            threading.Thread(target=_quit, daemon=True).start()
+            return
+        self.send_response(404)
+        self.end_headers()
+
     def do_GET(self):
         if self.path.split("?")[0] != "/data.json":
             self.send_response(404)
@@ -230,8 +276,23 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
+def _quit():
+    time.sleep(0.3)
+    FPS.stop()
+    try:
+        pc.Close()
+    except Exception:
+        pass
+    os._exit(0)
+
+
 if __name__ == "__main__":
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
+    except OSError as e:                                  # 端口被占：多半是已经有一个助手在跑了
+        print(f"127.0.0.1:{PORT} 已经被占用（已经有一个硬件监控助手在跑？），这个就不开了：{e}")
+        sys.exit(0)
     FPS.start()
     threading.Thread(target=loop, daemon=True).start()
-    print(f"硬件监控助手已启动：http://127.0.0.1:{PORT}/data.json （这个窗口可以最小化，关掉就停止）")
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    print(f"硬件监控助手已启动：http://127.0.0.1:{PORT}/data.json")
+    srv.serve_forever()

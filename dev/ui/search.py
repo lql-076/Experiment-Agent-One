@@ -37,7 +37,7 @@ with sync_playwright() as pw:
     p.wait_for_timeout(2500)
     p.evaluate("typeof fetchEvents === 'function' && fetchEvents()")
     p.wait_for_timeout(1500)
-    p.click("#evlist .ev >> nth=0")
+    p.click("#evlist .ev:has-text('帕鲁最近更新了什么') >> nth=0")
     p.wait_for_timeout(900)
     txt = p.evaluate("(document.querySelector('.detail') || {}).innerText || ''")
     print("事件详情里有联网搜索：", "联网搜索" in txt, "读网页：", "读网页" in txt, flush=True)

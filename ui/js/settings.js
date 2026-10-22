@@ -23,6 +23,8 @@ function fieldHTML(f) {
       var when = DS_MODELS && DS_MODELS.ts ? new Date(DS_MODELS.ts * 1000) : null;
       return '<div class="field"><label for="' + id + '">' + esc(f.l) + '</label><div class="secret">' + box + '<button class="btn" data-fetch-models>' + (ml.length ? '刷新列表' : '获取模型列表') + '</button></div>' +
         '<div class="help">' + (ml.length ? '用你的 Key 查到 ' + ml.length + ' 个模型（' + pad(when.getMonth() + 1) + '-' + pad(when.getDate()) + ' ' + pad(when.getHours()) + ':' + pad(when.getMinutes()) + '）。官方出了新模型，点「刷新列表」就有' + (DS_MANUAL ? '；现在是手动填写，点「刷新列表」回到下拉框' : '') : esc(f.h)) + '</div></div>';
+    case 'choice': return '<div class="field"><label>' + esc(f.l) + '</label><div class="seg choice" role="group" aria-label="' + esc(f.l) + '">' + f.o.map(function (o) {
+      return '<button data-choice="' + f.k + '" data-v="' + (o[0] ? 1 : 0) + '" aria-pressed="' + (!!v === !!o[0]) + '">' + esc(o[1]) + '</button>'; }).join('') + '</div>' + help + '</div>';
     case 'textarea': return '<div class="field"><label for="' + id + '">' + esc(f.l) + '</label><textarea class="inp" id="' + id + '" data-k="' + f.k + '">' + esc(v) + '</textarea>' + help + '</div>';
     case 'number': return '<div class="field"><div class="fl"><label for="' + id + '">' + esc(f.l) + '</label><span class="help">' + (f.u || '') + '</span></div><input class="inp num" type="number" min="0" step="any" id="' + id + '" data-k="' + f.k + '" value="' + esc(v) + '">' + help + '</div>';
     case 'time': return '<div class="field"><label for="' + id + '">' + esc(f.l) + '</label><input class="inp num" type="time" id="' + id + '" data-k="' + f.k + '" value="' + esc(v) + '">' + help + '</div>';
@@ -72,8 +74,9 @@ function sectionBody(sec) {
       return '<button class="tcard" data-theme-pick="' + t.id + '" aria-pressed="' + (S.set.theme === t.id) + '"><span class="tprev" data-theme="' + t.id + '"><i class="tp-bg"></i><i class="tp-ring"></i><i class="tp-time num">21:47</i><i class="tp-bar"></i></span><b>' + esc(t.name) + '</b><span class="tdesc">' + esc(t.desc) + '</span></button>';
     }).join('') + '</div><p class="help" style="margin:-1rem 0 1.75rem">主题都在 ' + esc(P('root')) + '\\ui\\themes 里，一个 .css 文件就是一套。想加新的：复制一个改名、改颜色，刷新界面就会出现在这里。</p>';
   }
-  if (sec.custom === 'cloud') h += balanceHTML() + searchHTML();
-  if (sec.custom === 'osd') h += osdHTML();
+  if (sec.custom === 'cloud') h += '<div class="balrow">' + balanceHTML() + searchHTML() + '</div>';
+  if (sec.custom === 'osd') h += osdHTML() + '<div id="fpsSeen">' + fpsSeenHTML() + '</div>';
+  if (sec.custom === 'hw') h += '<div id="hwCtl">' + hwCtlHTML() + '</div>';
   if (sec.custom === 'growth') h += '<div class="btnrow" style="margin-bottom:1.5rem"><button class="btn" id="nightNow"' + (useLive() ? '' : ' disabled') + '>现在跑一次每日差事</button></div>';
   return h + '<div class="fields">' + sec.fields.map(fieldHTML).join('') + '</div>';
 }
@@ -116,7 +119,42 @@ function osdHTML() {
     }).join('') + '</div><p class="help">预览里的数字是现在的真实读数' + (liveHW() ? '' : '（演示）') + '。帧数要在玩游戏、并且「硬件监控助手」开着时才有。</p></div></div>';
 }
 function osdPreview() { var p = $('#osdPrev'); if (!p) return; var b = p.querySelector('.osd-box'); if (b) b.outerHTML = osdBoxHTML(); }
-setInterval(function () { if (S.view === 'settings' && S.sec === 'osd') osdPreview(); }, 1000);
+setInterval(function () {
+  if (S.view !== 'settings') return;
+  if (S.sec === 'osd') { osdPreview(); var f = $('#fpsSeen'), x = fpsSeenHTML(); if (f && f.innerHTML !== x) f.innerHTML = x; }
+  if (S.sec === 'hw') { var c = $('#hwCtl'), y = hwCtlHTML(); if (c && c.innerHTML !== y) c.innerHTML = y; }
+}, 1000);
+
+/* 游戏识别：哪个程序被当成了游戏（帧数从它读）。游戏加加、播放器这类内置就排除了；还有认错的，点「这不是游戏」 */
+function fpsSkipList() { return String(S.set.fpsSkip || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean); }
+var FPS_DEMO = [{ proc: 'Palworld-Win64-Shipping.exe', fps: 98, fg: true, skipped: false }, { proc: 'SomeOverlay.exe', fps: 60, fg: false, skipped: false }];
+function fpsSeenHTML() {
+  var live = liveHW(), seen = live ? (HW.fpsSeen || []) : FPS_DEMO, skip = fpsSkipList(), cur = live ? HW.fps && HW.fps.proc : seen[0].proc;
+  var helper = !live || (HW.sources && HW.sources.sensors);
+  var rows = !helper ? '<div class="help">要先打开硬件监控助手（设置 › 硬件监控），才知道哪个程序在出画面。</div>'
+    : !seen.length ? '<div class="help">现在没有程序在出画面。打开游戏后，这里会显示它被认成了游戏。</div>'
+    : seen.map(function (c) {
+      var nm = String(c.proc || '').replace(/\.exe$/i, ''), isCur = !c.skipped && c.proc === cur;
+      return '<div class="fps-row' + (isCur ? ' cur' : '') + (c.skipped ? ' skipped' : '') + '"><b>' + esc(nm) + '</b><span class="num">' + (c.fps == null ? '—' : c.fps) + ' 帧</span>' +
+        '<span class="cap">' + (c.skipped ? '你说过不是游戏' : isCur ? '← 现在当作游戏' + (c.fg ? '' : '（不在最前面）') : c.fg ? '在最前面' : '在后台出画面') + '</span>' +
+        (c.skipped ? '<button class="btn mini" data-fps-unskip="' + esc(c.proc) + '">其实是游戏</button>' : '<button class="btn mini" data-fps-skip="' + esc(c.proc) + '">这不是游戏</button>') + '</div>';
+    }).join('');
+  return '<div class="fps-seen"><div class="label">游戏识别 · 正在出画面的程序</div>' + rows +
+    (skip.length ? '<div class="fps-skip"><span class="cap">你排除的：</span>' + skip.map(function (x) { return '<button class="chip" data-fps-unskip="' + esc(x) + '" title="点一下取消排除">' + esc(x.replace(/\.exe$/i, '')) + ' ×</button>'; }).join('') + '</div>' : '') +
+    '<p class="help">游戏加加、视频和音乐播放器、录屏、浏览器、聊天软件本来就不算游戏。「只在玩游戏时」显示：游戏在最前面才显示，切到桌面或别的窗口就藏起来。</p></div>';
+}
+
+/* 硬件监控助手的开关：开着就跟着 Agent 一起起（app/hwctl.py） */
+var HWCTL = { busy: false, msg: '' };
+function hwCtlHTML() {
+  var on = !!S.set.hwOn, live = useLive(), run = live ? !!(HW.sources && HW.sources.sensors) : true;
+  var st = HWCTL.busy ? ['warn', '正在打开……'] : run ? ['ok', '运行中'] : on ? ['warn', '开着，但没在运行'] : ['off', '关着'];
+  var detail = HWCTL.busy ? '第一次会弹一次管理员确认，点「是」。' : run ? (live && HW.sources && HW.sources.cpuTemp === false ? 'CPU 温度、功耗读不到：要装 PawnIO 驱动（pawnio.eu），装完重启电脑。显卡、硬盘、帧数照常。' : '读得到 CPU 温度、功耗、硬盘温度和游戏帧数。')
+    : on ? (HWCTL.msg || '后台会自己把它拉起来，稍等。') : '关着时 CPU 温度、功耗、硬盘温度和游戏帧数读不到；显卡和内存照常（驱动自带）。';
+  return '<div class="balbox hwctl"><div><span class="label">硬件监控助手</span><div class="hwc-st st-' + st[0] + '"><i></i><b>' + st[1] + '</b></div>' +
+    '<div class="help">' + esc(detail) + '<br>要管理员权限才读得到。打开后跟着 Agent 一起启动、退出 Agent 时一起关；第一次弹一次管理员确认，之后不再弹，也没有黑窗口。</div></div>' +
+    '<div class="btnrow"><span class="cap">' + (on ? '开着 · 跟着 Agent 起' : run ? '没设成跟着 Agent 起' : '关着') + '</span><button class="switch" role="switch" id="hwHelperSw" aria-label="硬件监控助手开关" aria-checked="' + on + '"' + (live && !HWCTL.busy ? '' : ' disabled') + '></button></div></div>';
+}
 
 /* 联网搜索：今天搜了几次 / 上限、这个月多少次花了多少；能现场测一次 */
 function searchStats() {
@@ -173,6 +211,7 @@ function setVal(k, val) {
   if (k === 'sysOther' || k === 'psuEff') { if (!liveHW()) { calcSys(); renderHW(); } }
   if (k === 'dsLow') renderHome(true);
   if (k.indexOf('osd') === 0) osdPreview();
+  if (k === 'strongName' || k === 'strongOn') { syncRouteNames(); renderChat(); renderEvents(); renderHome(true); }
   if (k === 'autoScale') requestAnimationFrame(function () { placeInd(true); });
   if (k === 'uiShell') toast('下次启动 Agent 时生效');
   if (k === 'demo') { cardSig = ''; renderAll(); runChecks(false); if (!val) { fetchReport(); fetchBrains(); poll(); } }
@@ -224,6 +263,24 @@ sv.addEventListener('click', function (ev) {
     var nr = { title: '新提醒', kind: 'daily', at: '21:00', days: '1234567', text: '', enabled: 0 };
     if (!useLive()) { nr.id = Date.now(); DEMO_REM.push(nr); $('#remBox').innerHTML = remHTML(); return; }
     api('POST', '/api/reminders', nr).then(function () { fetchReminders(); });
+  }
+  else if (t.dataset.choice) {
+    setVal(t.dataset.choice, t.dataset.v === '1');
+    $$('[data-choice="' + t.dataset.choice + '"]').forEach(function (b) { b.setAttribute('aria-pressed', b === t); });
+  }
+  else if (t.id === 'hwHelperSw') {
+    var want = t.getAttribute('aria-checked') !== 'true';
+    HWCTL.busy = true; HWCTL.msg = ''; $('#hwCtl').innerHTML = hwCtlHTML();
+    api('POST', '/api/hw/helper', { on: want }, 150000).then(function (r) { S.set.hwOn = r.on; HWCTL.msg = r.ok ? '' : r.msg; toast('硬件监控助手：' + r.msg, 5000); })
+      .catch(function (e) { toast(e.message, 6000); }).then(function () { HWCTL.busy = false; sampleHW(); var c = $('#hwCtl'); if (c) c.innerHTML = hwCtlHTML(); });
+  }
+  else if (t.dataset.fpsSkip || t.dataset.fpsUnskip) {
+    var l = fpsSkipList(), nm = t.dataset.fpsSkip || t.dataset.fpsUnskip, lo = nm.toLowerCase();
+    l = l.filter(function (x) { return x.toLowerCase() !== lo; });
+    if (t.dataset.fpsSkip) l.push(nm);
+    setVal('fpsSkip', l.join(','));
+    toast(t.dataset.fpsSkip ? '记下了：「' + nm.replace(/\.exe$/i, '') + '」不算游戏' : '取消了排除：「' + nm.replace(/\.exe$/i, '') + '」');
+    var f = $('#fpsSeen'); if (f) f.innerHTML = fpsSeenHTML();
   }
   else if (t.classList.contains('switch')) setVal(t.dataset.k, t.getAttribute('aria-checked') !== 'true');
   else if (t.dataset.man) {

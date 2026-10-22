@@ -10,7 +10,7 @@ BAD=()
 step() { echo; echo "── $1"; shift; "$@" || BAD+=("$*"); }
 
 if command -v ruff > /dev/null; then
-  step "代码检查（ruff）" ruff check --isolated --select E9,F --line-length 200 app scripts dev
+  step "代码检查（ruff）" ruff check --isolated --select E9,F,W605 --line-length 200 app scripts dev
 else
   step "语法检查" "$PY" -m compileall -q app scripts dev
 fi
@@ -22,8 +22,10 @@ step "说明页" "$PY" dev/ui/docs.py dev/.run/shots
 step "说明页树状图" "$PY" dev/ui/tree.py dev/.run/shots
 step "重新自检窗口 · 连后端" "$PY" dev/ui/recheck.py dev/.run/shots
 step "联网搜索和查说明书" "$PY" dev/test_search.py
+step "更强的模型和换它重做" "$PY" dev/test_route.py
 step "设置里的联网搜索" "$PY" dev/ui/search.py dev/.run/shots
 step "对话页、Agent 状态、游戏内显示设置" "$PY" dev/ui/chat.py dev/.run/shots
+step "一页一屏放下（不靠滚轮）" "$PY" dev/ui/fit.py dev/.run/shots
 step "游戏帧数统计" "$PY" dev/test_fps.py
 step "游戏内显示的逻辑" "$PY" dev/test_osd.py
 "$DEV/serve.sh" stop
