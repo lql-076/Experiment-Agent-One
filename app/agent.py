@@ -1,12 +1,14 @@
 """处理一条消息的全过程：先看是不是在回提醒、设提醒、让我记东西（这些不用模型）；
-其余的过决策脑两票，交给本地小脑 / DeepSeek / 建议找网页 Claude；每一步都写进事件日志。"""
+其余的过决策脑两票，交给本地小脑 / DeepSeek / 建议找网页 Claude；每一步都写进事件日志。
+交给 DeepSeek 的，带上联网搜索工具（app/websearch.py），要不要搜由它自己定；问到 agent 自己怎么用的，
+先从说明书（docs/操作手册.md、docs/AI文档）里找相关段落一起给模型。"""
 import asyncio
 import json
 import re
 import time
 from collections import defaultdict, deque
 
-from . import db, deepseek, events, growth, memory, notify, paths, privacy, reminders, router, settings
+from . import db, deepseek, events, growth, memory, notify, paths, privacy, reminders, router, settings, websearch
 from .models import M
 from .qq import BOT
 
@@ -26,10 +28,14 @@ def _history(user, allow_private):
     return out
 
 
-def _build(text, user, snips, allow_private):
-    sys = memory.persona()
+def _build(text, user, snips, allow_private, docs=None):
+    d = time.localtime()
+    sys = memory.persona() + f"\n现在是 {d.tm_year} 年 {d.tm_mon} 月 {d.tm_mday} 日 {d.tm_hour:02d}:{d.tm_min:02d}（星期{'一二三四五六日'[d.tm_wday]}）。"
     if snips:
         sys += "\n\n下面是他的记忆文件里和这条消息相关的内容，用得上就用，用不上别提：\n" + "\n".join(f"- {m['text']}" for m in snips)
+    if docs:
+        sys += ("\n\n下面是你自己（这个 agent）的说明书里和这条消息相关的段落。回答关于你自己能做什么、怎么用、在哪设置的问题时，以它为准，"
+                "说清楚在界面哪里点：\n" + "\n".join(f"- 〔{m['file'].replace('@说明/', '')}〕{m['text']}" for m in docs))
     return [{"role": "system", "content": sys}] + _history(user, allow_private) + [{"role": "user", "content": text}]
 
 
@@ -41,15 +47,18 @@ def _quick_event(text, src, label, why, reply, private=False, steps=None):
     return eid
 
 
-def _save_sample(e_text, reply, label, eid, private, claude_ctx=False):
+def _save_sample(e_text, reply, label, eid, private, claude_ctx=False, web=False):
     """存 DeepSeek 的处理记录给慢成长用（DeepSeek 官方允许用输出训练模型）。
-    隐私内容不存；回答时参考了 Claude 的内容（总结、聊天记录）也不存——Claude 的输出不进训练数据。"""
+    隐私内容不存；回答时参考了 Claude 的内容（总结、聊天记录）也不存——Claude 的输出不进训练数据。
+    联网查过的标上 web=true：里面的事实会过时，以后训练时可以只学"怎么答"、不背答案。"""
     if private or claude_ctx:
         return
     paths.TRAINING.mkdir(parents=True, exist_ok=True)
+    rec = {"ts": time.time(), "event_id": eid, "label": label, "input": e_text, "output": reply, "source": "deepseek"}
+    if web:
+        rec["web"] = True
     with open(paths.TRAINING / "samples.jsonl", "a", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": time.time(), "event_id": eid, "label": label, "input": e_text, "output": reply,
-                            "source": "deepseek"}, ensure_ascii=False) + "\n")
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
 async def handle(text: str, src="qq", user="me"):
@@ -107,7 +116,16 @@ async def handle(text: str, src="qq", user="me"):
     except Exception:
         pass
 
+    docs = []
+    if memory.about_agent(text):
+        docs = await memory.search_docs(qvec, text)
+        if docs:
+            steps.append(["查了说明书", f"{len(docs)} 段 · " + "、".join(sorted({d['file'].replace('@说明/', '').split('/')[-1].replace('.md', '') for d in docs}))[:40]])
+
     is_local = dec["brain"] is not None
+    if is_local and not dec["private"] and settings.S.get("searchOn", True) and websearch.wants_fresh(text) and not docs:
+        route, is_local = "ds", False
+        why_extra = "（看着要查最新信息，本地小脑上不了网，改交 DeepSeek 联网搜）"
     if is_local and M.yielding and not dec["private"]:
         route, is_local = "ds", False
         why_extra = f"（让路模式：{M.yield_reason}，改交 DeepSeek）"
@@ -120,7 +138,7 @@ async def handle(text: str, src="qq", user="me"):
             return events.get(eid)
         try:
             snips = await memory.search(qvec, allow_private=True)
-            out = await M.chat(_build(text, user, snips, True), lora=dec["lora"], max_new_tokens=400)
+            out = await M.chat(_build(text, user, snips, True, docs), lora=dec["lora"], max_new_tokens=400)
             reply = out["text"]
             steps.append(["本地处理", f"{dec['brain_name']} · {out['tokens']} 个 token · {out['tok_per_s']}/秒"])
             if snips:
@@ -140,12 +158,20 @@ async def handle(text: str, src="qq", user="me"):
             mode = settings.S["dsThinking"]
             thinking = mode == "on" or (mode == "auto" and (dec["p"].get("cl", 0) > 0.25 or len(text) > 150))
             snips = await memory.search(qvec, allow_private=False)
-            out = await deepseek.chat(_build(text, user, snips, False), thinking=thinking, private=dec["private"], event_id=eid,
-                                      purpose="neu" if dec["neu"] else "chat")
-            reply, cost = out["text"], out["cny"]
-            steps.append(["交给 DeepSeek", f"{'思考' if thinking else '快速'}模式 · ¥{out['cny']:.4f}"])
+            msgs = _build(text, user, snips, False, docs)
+            purpose = "neu" if dec["neu"] else "chat"
+            web = None
+            if settings.S.get("searchOn", True) and not dec["private"]:
+                web = await websearch.answer_with_tools(msgs, thinking=thinking, event_id=eid, purpose=purpose, user_text=text, steps=steps)
+                out = {"text": web["text"], "cny": web["cny"]}
+            else:
+                out = await deepseek.chat(msgs, thinking=thinking, private=dec["private"], event_id=eid, purpose=purpose)
+            searched = bool(web and (web["searched"] or web["fetched"]))
+            cost_all = out["cny"] + (websearch.PRICE_USD * float(settings.S["usdCny"]) * (web["searched"] + web["fetched"]) if web else 0)
+            reply, cost = out["text"], cost_all
+            steps.append(["交给 DeepSeek", f"{'思考' if thinking else '快速'}模式" + (f" · 联网 {web['searched']} 搜 {web['fetched']} 读" if searched else "") + f" · ¥{cost_all:.4f}"])
             used_claude = any(s.get("claude") for s in snips)
-            _save_sample(text, reply, "neu" if dec["neu"] else "ds", eid, dec["private"], used_claude)
+            _save_sample(text, reply, "neu" if dec["neu"] else "ds", eid, dec["private"], used_claude, searched)
             if used_claude:
                 steps.append(["不进训练集", "参考了 Claude 的总结"])
             if dec["neu"] and not used_claude and not dec["private"]:

@@ -72,7 +72,7 @@ function sectionBody(sec) {
       return '<button class="tcard" data-theme-pick="' + t.id + '" aria-pressed="' + (S.set.theme === t.id) + '"><span class="tprev" data-theme="' + t.id + '"><i class="tp-bg"></i><i class="tp-ring"></i><i class="tp-time num">21:47</i><i class="tp-bar"></i></span><b>' + esc(t.name) + '</b><span class="tdesc">' + esc(t.desc) + '</span></button>';
     }).join('') + '</div><p class="help" style="margin:-1rem 0 1.75rem">主题都在 ' + esc(P('root')) + '\\ui\\themes 里，一个 .css 文件就是一套。想加新的：复制一个改名、改颜色，刷新界面就会出现在这里。</p>';
   }
-  if (sec.custom === 'cloud') h += balanceHTML();
+  if (sec.custom === 'cloud') h += balanceHTML() + searchHTML();
   if (sec.custom === 'growth') h += '<div class="btnrow" style="margin-bottom:1.5rem"><button class="btn" id="nightNow"' + (useLive() ? '' : ' disabled') + '>现在跑一次每日差事</button></div>';
   return h + '<div class="fields">' + sec.fields.map(fieldHTML).join('') + '</div>';
 }
@@ -82,6 +82,18 @@ function balanceHTML() {
   return '<div class="balbox"><div><span class="label">DeepSeek 余额</span><div class="big num" style="margin:.35rem 0;' + (b.low ? 'color:var(--bad)' : '') + '">' + (b.key ? money(b.total) : '—') + '</div>' +
     '<div class="help">' + sub + '<br>本月估计花了 ¥' + (+b.cost).toFixed(2) + '（本机按 token 算的，和官方账单可能差一点）</div></div>' +
     '<div class="btnrow"><button class="btn" id="balRefresh"' + (useLive() && b.key ? '' : ' disabled') + '>刷新</button><a class="btn" style="display:inline-flex;align-items:center;text-decoration:none;color:var(--text)" href="https://platform.deepseek.com/top_up" target="_blank" rel="noopener noreferrer">去充值</a></div></div>';
+}
+/* 联网搜索：今天搜了几次 / 上限、这个月多少次花了多少；能现场测一次 */
+function searchStats() {
+  if (!useLive()) return { on: true, limit: 200, today: { n: 7, cny: 0.04 }, month: { n: 86, cny: 0.46 } };
+  return (D.state && D.state.search) || { on: !!S.set.searchOn, limit: S.set.searchDaily, today: { n: 0, cny: 0 }, month: { n: 0, cny: 0 } };
+}
+function searchHTML() {
+  var s = searchStats();
+  return '<div class="balbox" id="searchBox"><div><span class="label">联网搜索 · DeepSeek 搜索引擎</span><div class="big num" style="margin:.35rem 0">' + s.today.n + '<small style="font-size:.5em;color:var(--text3)"> / ' + s.limit + ' 次</small></div>' +
+    '<div class="help">今天搜了几次（搜索和读网页都算）' + (s.on ? '' : ' · <b style="color:var(--bad)">现在关着</b>') + '<br>这个月 ' + s.month.n + ' 次，约 ¥' + (+s.month.cny).toFixed(2) + (useLive() ? '' : '（演示）') + '</div>' +
+    '<div class="help" id="searchOut" hidden></div></div>' +
+    '<div class="btnrow"><button class="btn" id="searchTest"' + (useLive() ? '' : ' disabled') + '>测试一下</button></div></div>';
 }
 function renderSettings() {
   $('#view-settings').innerHTML = '<div class="settings"><nav class="snav" aria-label="设置分类">' +
@@ -208,6 +220,14 @@ sv.addEventListener('click', function (ev) {
   else if (t.id === 'setupGo') setupStart(t);
   else if (t.id === 'setupStop') setupStop();
   else if (t.id === 'recheck') checkPanel(true);
+  else if (t.id === 'searchTest') {
+    t.disabled = true; t.textContent = '在搜…';
+    api('POST', '/api/actions/search_test', {}, 40000).then(function (j) {
+      if (D.state) D.state.search = j.search;
+      var o = $('#searchOut'); if (o) { o.hidden = false; o.innerHTML = esc(j.msg) + (j.results && j.results.length ? '<br>' + j.results.slice(0, 3).map(function (r) { return '· ' + esc((r.title || '').slice(0, 40)) + ' <span class="cap">' + esc(r.site || '') + '</span>'; }).join('<br>') : ''); }
+      toast(j.msg, 5000);
+    }).catch(function (e) { toast(e.message, 6000); }).then(function () { t.disabled = false; t.textContent = '测试一下'; });
+  }
   else if (t.id === 'nightNow') { t.disabled = true; t.textContent = '在跑…'; api('POST', '/api/actions/nightly_run', {}, 600000).then(function (j) { var e = j.res.errs || {}; toast(Object.keys(e).length ? '跑完了，有问题：' + Object.values(e).join('；') : '每日差事跑完了', 6000); }).catch(function (e) { toast(e.message); }).then(function () { t.disabled = false; t.textContent = '现在跑一次每日差事'; }); }
   else if (t.dataset.go) goSec(t.dataset.go);
   else if (t.dataset.reveal) { var i = $('#' + t.dataset.reveal); i.type = i.type === 'password' ? 'text' : 'password'; }

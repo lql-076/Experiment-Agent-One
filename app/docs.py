@@ -56,7 +56,7 @@ ROUTES = {
     "/api/checks": "上次整备自检的结果",
     "/api/checks/run": "重新自检全部",
     "/api/checks/{k}/run": "重新检测一项（带 quick=1 时和整体自检一样快查，自检窗口 14 项同时发；卡片上单独点的会查得更深）",
-    "/api/actions/{name}": "整备和设置里的按钮动作（启动模型、绑定 QQ、发测试提醒、查余额、查模型列表、跑每日差事、问 DeepSeek 怎么修……）",
+    "/api/actions/{name}": "整备和设置里的按钮动作（启动模型、绑定 QQ、发测试提醒、查余额、查模型列表、测联网搜索、跑每日差事、问 DeepSeek 怎么修……）",
     "/api/reminders": "提醒列表 / 新建提醒",
     "/api/reminders/{rid}": "改 / 删一条提醒",
     "/api/reminders/{rid}/fire": "现在试发一条提醒",

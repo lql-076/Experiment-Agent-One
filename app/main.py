@@ -12,12 +12,12 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import (agent, checks, db, deepseek, docs, events, exam, feed, growth, hw, memory, monitor, nightly, paths, reminders, reports, router,
-               safety, settings, setup)
+from . import (agent, checks, db, deepseek, docs, events, exam, feed, growth, hw, memory, monitor, nightly, paths, reminders, reports,
+               router, safety, settings, setup, websearch)
 from .models import M
 from .qq import BOT
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 PORT = 8765
 _bg = []
 
@@ -499,6 +499,19 @@ async def action(name: str, body: dict = Body(default={})):
             if b.get("err"):
                 return {"msg": "没查到：" + b["err"]}
             return {"msg": f"余额 {deepseek.money(b['total'], b['currency'])}", "balance": b}
+        if name == "search_test":
+            q = (body.get("q") or "DeepSeek 搜索 API").strip()
+            t0 = time.time()
+            try:
+                res = await websearch.search(q, count=5, purpose="search_test")
+            except deepseek.NoKey:
+                raise HTTPException(400, "先填好 DeepSeek Key 并点「保存」") from None
+            except Exception as e:
+                raise HTTPException(400, f"没搜成：{str(e)[:120]}") from None
+            top = res[0] if res else {}
+            return {"msg": f"能用：搜「{q}」{len(res)} 条，用时 {time.time() - t0:.1f} 秒" + (f"；第一条：{(top.get('title') or '')[:30]}" if top else "（这次没有结果，不收钱）"),
+                    "results": [{"title": r.get("title"), "url": r.get("url"), "site": r.get("site_name"), "date": r.get("date")} for r in res[:5]],
+                    "search": websearch.stats()}
         if name == "ds_models":
             try:
                 m = await deepseek.list_models()

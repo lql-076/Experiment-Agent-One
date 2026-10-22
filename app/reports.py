@@ -2,7 +2,7 @@
 import time
 from datetime import datetime, timedelta
 
-from . import checks, db, deepseek, growth, notify, reminders, router, settings, setup
+from . import checks, db, deepseek, growth, notify, reminders, router, settings, setup, websearch
 from .events import recent
 from .models import M
 from .qq import BOT
@@ -144,7 +144,7 @@ async def state():
     ready = sum(1 for k in live if (res.get(k) or {}).get("st") == "ok")
     ms = await M.status()
     return {"ts": time.time(), "today": sp, "today_total": tot, "local_pct": round(sp["local"] / tot * 100) if tot else 0,
-            "cost_month": round(deepseek.month_cost_cny(), 2), "balance": _bal(), "setup": setup.brief(),
+            "cost_month": round(deepseek.month_cost_cny(), 2), "balance": _bal(), "search": websearch.stats(), "setup": setup.brief(),
             "asks_pending": db.one("SELECT COUNT(*) n FROM asks WHERE status='pending'")["n"],
             "next": reminders.next_info(), "cards": notify.cards(), "train_ask": growth.pending(),
             "prep": {"ready": ready, "total": len(live), "miss": sum(1 for k in live if (res.get(k) or {}).get("st") == "miss"), "ts": ck.get("ts")},

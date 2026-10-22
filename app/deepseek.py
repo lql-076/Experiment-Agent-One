@@ -6,6 +6,8 @@
 - 不设每月上限：余额用官方接口 /user/balance 查（每 10 分钟一次，调用过后 1 分钟内再查一次）。
   余额不够时官方返回 402，这里会报"余额不足"。
 - 隐私内容不准发：调用时 private=True 会直接拒绝。
+- 可以带工具（tools，OpenAI 格式）：联网搜索就是这样接的（app/websearch.py）。模型要调工具时，返回里有 tool_calls 和
+  原样的 message（思考模式下带 reasoning_content，同一轮里要原样传回去）。
 """
 import time
 from datetime import datetime, timezone
@@ -58,7 +60,7 @@ def _key() -> str:
 
 
 async def chat(messages, *, thinking=False, max_tokens=1200, json_mode=False, purpose="chat",
-               private=False, event_id=None, temperature=None, timeout=90):
+               private=False, event_id=None, temperature=None, timeout=90, tools=None):
     if private:
         raise PrivacyBlocked("隐私内容不发给 DeepSeek")
     s = settings.S
@@ -66,12 +68,26 @@ async def chat(messages, *, thinking=False, max_tokens=1200, json_mode=False, pu
             "thinking": {"type": "enabled" if thinking else "disabled"}}
     if json_mode:
         body["response_format"] = {"type": "json_object"}
+    if tools:
+        body["tools"] = tools
     if temperature is not None and not thinking:
         body["temperature"] = temperature
     t0 = time.time()
-    async with httpx.AsyncClient(timeout=timeout) as c:
-        r = await c.post(s["dsBase"].rstrip("/") + "/chat/completions", json=body,
-                         headers={"Authorization": f"Bearer {_key()}"})
+    for _ in range(3):
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            r = await c.post(s["dsBase"].rstrip("/") + "/chat/completions", json=body,
+                             headers={"Authorization": f"Bearer {_key()}"})
+        # 带工具时官方要求思考模式把 reasoning_content 原样传回；万一哪条历史消息没带上被拒（400），
+        # 先改成不思考再试，还不行就不带工具直接答——不让一条消息卡死
+        if r.status_code == 400 and body.get("tools"):
+            if body["thinking"]["type"] == "enabled":
+                body["thinking"] = {"type": "disabled"}
+                body["max_tokens"] = max_tokens
+                thinking = False
+            else:
+                body.pop("tools")
+            continue
+        break
     if r.status_code == 402:
         _bal["dirty"] = True
         raise NoBalance("DeepSeek 余额不足，充值后就能继续")
@@ -88,8 +104,14 @@ async def chat(messages, *, thinking=False, max_tokens=1200, json_mode=False, pu
     usd = (miss * float(s["priceIn"]) + hit * float(s["priceHit"]) + out * float(s["priceOut"])) / 1e6 * x
     db.insert("costs", {"ts": time.time(), "model": j.get("model", s["dsModel"]), "tin": miss, "thit": hit,
                         "tout": out, "usd": usd, "purpose": purpose, "event_id": event_id})
+    calls = msg.get("tool_calls") or []
+    keep = {"role": "assistant", "content": msg.get("content") or ""}
+    if calls:
+        keep["tool_calls"] = calls
+    if msg.get("reasoning_content"):
+        keep["reasoning_content"] = msg["reasoning_content"]
     return {"text": (msg.get("content") or "").strip(), "usd": usd, "cny": usd * float(s["usdCny"]),
-            "latency": time.time() - t0, "model": j.get("model")}
+            "latency": time.time() - t0, "model": j.get("model"), "tool_calls": calls, "message": keep, "thinking": thinking}
 
 
 async def balance():

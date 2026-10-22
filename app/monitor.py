@@ -12,7 +12,7 @@ import sys
 import time
 from datetime import datetime
 
-from . import db, deepseek, feed, paths, settings, setup
+from . import db, deepseek, feed, paths, settings, setup, websearch
 from .models import M
 from .qq import BOT
 
@@ -152,7 +152,7 @@ async def services():
     calls = db.one("SELECT COUNT(*) n FROM costs WHERE ts>?", (time.time() - 86400,))["n"]
     if settings.get_secret("dsKey"):
         out.append({"k": "ds", "name": "DeepSeek", "st": "bad" if b.get("err") else "ok",
-                    "detail": f"余额 {deepseek.money(b.get('total'), b.get('currency', 'CNY'))} · 24 小时内调用 {calls} 次 · 最近一次 {_ago(last['ts'] if last else 0)}"
+                    "detail": f"余额 {deepseek.money(b.get('total'), b.get('currency', 'CNY'))} · 24 小时内调用 {calls} 次（其中联网 {websearch.stats()['day']['n']} 次） · 最近一次 {_ago(last['ts'] if last else 0)}"
                               + (f"（{last['purpose']}）" if last else "")})
     else:
         out.append({"k": "ds", "name": "DeepSeek", "st": "off", "detail": "还没填 Key"})

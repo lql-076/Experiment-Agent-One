@@ -143,7 +143,10 @@ var SECTIONS = [
     { k: 'dsModel', l: '模型', t: 'model', d: 'deepseek-flash', h: '点「获取模型列表」，用你的 Key 查官方现在能用哪些模型，再从下拉框里选；列表里没有的也可以手动填' },
     { k: 'dsLow', l: '余额低于多少时提醒你', t: 'number', u: '元', d: 2, h: '只是提醒，不会停用。余额不够时 DeepSeek 自己会拒绝调用' },
     { k: 'dsThinking', l: '思考模式', t: 'select', d: 'auto', o: [['auto', '自动：难题才开（默认）'], ['off', '一直关（最省钱）'], ['on', '一直开']] },
-    { k: 'dsBase', l: '接口地址', d: 'https://api.deepseek.com' },
+    { k: 'searchOn', l: '联网搜索', t: 'toggle', d: true, h: '交给 DeepSeek 的事，它可以自己决定要不要上网搜、读哪几个网页（DeepSeek 自研搜索引擎，同一个 Key）。隐私的事永远不搜' },
+    { k: 'searchDaily', l: '每天最多搜几次', t: 'number', u: '次', d: 200, h: '搜一次、读一个网页各算一次，每次约 5 厘钱（没结果不收钱）。到了上限当天就不再搜，凭已有知识回答' },
+    { k: 'searchRounds', l: '一个问题最多查几轮', t: 'number', u: '轮', d: 4, h: '一轮里可以同时搜几个词、读几个网页。一般 1~2 轮就够了' },
+    { k: 'dsBase', l: '接口地址', d: 'https://api.deepseek.com', h: '联网搜索也走这个地址（/v1/tools/search、/v1/tools/fetch）' },
     { note: '花了多少钱是按官方价格自动估算的（闲时、忙时自动区分），不用你填。准确的数字以上面的余额为准。' },
     { k: 'claudeTpl', l: '找 Claude 时的提示词开头', t: 'textarea', d: '我在搭一个自己的本地 agent。下面是遇到的问题和相关背景，请帮我分析。聊完请输出一份简短的 Markdown 总结，方便我带回给 agent 学习。' }
   ] },

@@ -93,10 +93,43 @@ async def so(r: Request):
 ds = FastAPI()
 
 
+SEARCHES = []
+LAST = {}
+
+
+@ds.get("/__last")
+def ds_last():
+    """测试用：最近一次对话请求（看系统提示词里带了什么）和搜过的词。"""
+    return {"chat": LAST.get("chat"), "searches": SEARCHES[-10:]}
+
+
 @ds.post("/chat/completions")
 async def dsc(r: Request):
     j = await r.json()
-    u = j["messages"][-1]["content"]
+    LAST["chat"] = j
+    msgs = j["messages"]
+    u = msgs[-1].get("content") or ""
+    usage = {"prompt_tokens": 400, "prompt_cache_hit_tokens": 100, "prompt_cache_miss_tokens": 300, "completion_tokens": 120}
+    # 带工具时模仿 DeepSeek：问"最新"的先搜，搜完读第一条，再回答
+    if j.get("tools"):
+        asked = next((m.get("content") or "" for m in reversed(msgs) if m.get("role") == "user"), "")
+        think = (j.get("thinking") or {}).get("type") == "enabled"
+        # 模仿官方：思考模式带工具时，之前带 tool_calls 的那条必须把 reasoning_content 原样传回，否则 400
+        if think and ("坏历史" in asked or any(m.get("role") == "assistant" and m.get("tool_calls") and not m.get("reasoning_content") for m in msgs)):
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"error": {"message": "reasoning_content must be passed back", "type": "invalid_request_error"}}, status_code=400)
+        tools_used = [m for m in msgs if m.get("role") == "tool"]
+        want = any(x in asked for x in ("最新", "最近", "价格", "新闻", "发布", "更新", "搜"))
+        if want and not tools_used:
+            call = {"id": "call_s1", "type": "function", "function": {"name": "web_search", "arguments": json.dumps({"query": asked[:30], "count": 5}, ensure_ascii=False)}}
+            return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [call], **({"reasoning_content": "先搜一下"} if think else {})}}], "usage": usage}
+        if want and len(tools_used) == 1:
+            url = (__import__("re").search(r"https?://\S+", tools_used[0]["content"]) or [None])[0]
+            call = {"id": "call_f1", "type": "function", "function": {"name": "web_fetch", "arguments": json.dumps({"url": url})}}
+            return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [call], **({"reasoning_content": "再读一页"} if think else {})}}], "usage": usage}
+        if tools_used:
+            txt = f"（DeepSeek 联网）查到了：关于「{asked[:20]}」，最新版本是 1.2.3。"
+            return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": txt}}], "usage": usage}
     if j.get("response_format"):
         if "可选修法" in u:
             txt = json.dumps({"why": "要管理员权限" if "硬件监控" in u else "看着是网络超时", "fix": "manual" if "硬件监控" in u else "retry",
@@ -110,6 +143,28 @@ async def dsc(r: Request):
         txt = f"（DeepSeek）关于「{u[:24]}」的回答。"
     return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"content": txt}}],
             "usage": {"prompt_tokens": 400, "prompt_cache_hit_tokens": 100, "prompt_cache_miss_tokens": 300, "completion_tokens": 120}}
+
+
+@ds.post("/v1/tools/search")
+async def ds_search(r: Request):
+    j = await r.json()
+    SEARCHES.append(j)
+    q = j.get("query", "")
+    if "没结果" in q:
+        return {"results": []}
+    n = min(int(j.get("count") or 10), 5)
+    return {"results": [{"rerank_score": 2.1 - i * 0.2, "title": f"{q[:12]} · 结果 {i + 1}", "url": f"https://example.com/news/{i + 1}",
+                         "snippet": "短摘要", "summary": f"这是关于「{q[:20]}」的第 {i + 1} 条结果的长摘要。", "content": "",
+                         "site_name": "示例网站", "site_icon": "", "date": "2026-10-20T08:00:00Z", "authority": 3} for i in range(n)]}
+
+
+@ds.post("/v1/tools/fetch")
+async def ds_fetch(r: Request):
+    j = await r.json()
+    if "blocked" in j.get("url", ""):
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": {"message": "no content", "type": "not_found"}}, status_code=404)
+    return {"title": "示例网页", "content": "# 示例网页\n\n最新版本是 1.2.3，发布于 2026-10-20。"}
 
 
 @ds.get("/models")

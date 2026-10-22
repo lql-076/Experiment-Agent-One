@@ -25,6 +25,7 @@ DEFAULTS = {
     # 云端
     "dsBase": "https://api.deepseek.com", "dsModel": "deepseek-flash", "dsLow": 2, "usdCny": 7.2,
     "priceIn": 0.15, "priceHit": 0.003, "priceOut": 0.60, "peakX": 2, "dsThinking": "auto",
+    "searchOn": True, "searchDaily": 200, "searchRounds": 4,
     "claudeTpl": "我在搭一个自己的本地 agent。下面是遇到的问题和相关背景，请帮我分析。聊完请输出一份简短的 Markdown 总结，方便我带回给 agent 学习。",
     # QQ
     "qqEnabled": True, "qqAppId": "", "qqUser": "", "qqSandbox": True,

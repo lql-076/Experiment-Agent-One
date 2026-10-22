@@ -11,6 +11,7 @@ memory\\
 找相关记忆用嵌入模型（本地），只在这个文件夹里找。
 """
 import hashlib
+import re
 import shutil
 import subprocess
 import time
@@ -149,6 +150,33 @@ def undo(change_id: int) -> str:
 
 
 # ---------------- 找相关记忆 ----------------
+DOC_TAG = "@说明/"          # 说明书的段落也切块放进 chunks 表，file 前面加这个标记，和记忆分开找
+ABOUT = re.compile(r"你(能|会|可以|怎么|是怎么|有哪些|有什么|的(功能|设置|界面|提醒|记忆|规矩|安全线))|怎么(用|设置|设|改|关|开|打开|装|绑定|退出)|"
+                   r"在哪(里)?(改|设|看|找|开|关)|设置里|界面上|侧栏|整备|一键补齐|免打扰|让路|决策脑|小脑|每日差事|安全线|"
+                   r"操作手册|说明书|说明页|后台页|报告页|常驻屏|主题|风格|开机自启|硬件监控|游戏帧数|找 ?Claude|联网搜索|agent|Agent")
+
+
+def about_agent(text: str) -> bool:
+    """这句话是不是在问 agent 自己（能做什么、怎么用、在哪设置）。是的话回答前先查说明书。"""
+    return bool(ABOUT.search(text or ""))
+
+
+def _doc_files():
+    """给 agent 自己读的说明书：操作手册 + docs/AI文档 里的全部（架构说明、当前结构）。"""
+    d = paths.ROOT / "docs"
+    fs = [d / "操作手册.md"] + sorted((d / "AI文档").rglob("*.md"))
+    return [(f, DOC_TAG + f.relative_to(d).as_posix()) for f in fs if f.exists()]
+
+
+def _split(rel, text):
+    out = []
+    for part in [x.strip() for x in text.split("\n\n") if len(x.strip()) > 6]:
+        for i in range(0, len(part), 400):
+            piece = part[i:i + 400]
+            out.append((hashlib.sha1((rel + piece).encode()).hexdigest(), rel, piece))
+    return out
+
+
 def _chunks():
     out = []
     for p in root().rglob("*.md"):
@@ -159,30 +187,36 @@ def _chunks():
             text = p.read_text("utf-8")
         except Exception:
             continue
-        for part in [x.strip() for x in text.split("\n\n") if len(x.strip()) > 6]:
-            for i in range(0, len(part), 400):
-                piece = part[i:i + 400]
-                out.append((hashlib.sha1((rel + piece).encode()).hexdigest(), rel, piece))
+        out += _split(rel, text)
+    for f, rel in _doc_files():
+        try:
+            out += _split(rel, f.read_text("utf-8"))
+        except Exception:
+            continue
     return out
 
 
 async def index():
-    """给记忆文件切块、算向量（只算新增的）。"""
+    """给记忆文件和说明书切块、算向量（只算新增的，每批 64 段，一次没算完下次接着算）。"""
     cs = _chunks()
     have = {r["hash"] for r in db.q("SELECT hash FROM chunks")}
     new = [c for c in cs if c[0] not in have]
-    if new:
-        vecs = await M.embed([c[2] for c in new], instruct=False)
+    done = 0
+    for i in range(0, len(new), 64):
+        part = new[i:i + 64]
+        vecs = await M.embed([c[2] for c in part], instruct=False)
         if not vecs:
-            return 0
-        for (h, rel, piece), v in zip(new, vecs):
+            return done
+        for (h, rel, piece), v in zip(part, vecs):
+            priv = 0 if rel.startswith(DOC_TAG) else int(privacy.check(piece)[0])     # 说明书是公开的，里面举例提到"吃药"不算隐私
             db.run("INSERT OR REPLACE INTO chunks(hash,file,text,private,vec,mtime) VALUES(?,?,?,?,?,?)",
-                   (h, rel, piece, int(privacy.check(piece)[0]), np.asarray(v, dtype=np.float32).tobytes(), time.time()))
+                   (h, rel, piece, priv, np.asarray(v, dtype=np.float32).tobytes(), time.time()))
+        done += len(part)
     keep = {c[0] for c in cs}
     for r in db.q("SELECT hash FROM chunks"):
         if r["hash"] not in keep:
             db.run("DELETE FROM chunks WHERE hash=?", (r["hash"],))
-    return len(new)
+    return done
 
 
 CLAUDE_DIRS = ("总结",)
@@ -197,7 +231,7 @@ def is_claude(rel: str) -> bool:
 async def search(qvec, k=4, allow_private=True):
     if qvec is None:
         return []
-    rows = db.q("SELECT file,text,private,vec FROM chunks")
+    rows = db.q("SELECT file,text,private,vec FROM chunks WHERE file NOT LIKE ?", (DOC_TAG + "%",))
     if not rows:
         return []
     mat = np.stack([np.frombuffer(r["vec"], dtype=np.float32) for r in rows])
@@ -215,4 +249,37 @@ async def search(qvec, k=4, allow_private=True):
         out.append({"file": r["file"], "text": r["text"], "sim": float(sims[i]), "claude": is_claude(r["file"])})
         if len(out) >= k:
             break
+    return out
+
+
+async def search_docs(qvec, text="", k=3, floor=0.35):
+    """从说明书里找和这句话最相关的几段（问到 agent 自己时用）。
+    嵌入模型没开时，退回按关键词数重合的字找，保证说明书总能查到点东西。"""
+    rows = db.q("SELECT file,text,vec FROM chunks WHERE file LIKE ?", (DOC_TAG + "%",))
+    if qvec is not None and rows:
+        mat = np.stack([np.frombuffer(r["vec"], dtype=np.float32) for r in rows])
+        if mat.shape[1] == len(qvec):
+            sims = mat @ np.asarray(qvec, dtype=np.float32)
+            out = []
+            for i in np.argsort(-sims)[:k]:
+                if sims[i] < floor:
+                    break
+                out.append({"file": rows[i]["file"], "text": rows[i]["text"], "sim": float(sims[i])})
+            if out:
+                return out
+    grams = {text[i:i + 2] for i in range(len(text) - 1)} - {"你的", "怎么", "什么", "一下", "可以", "我的", "在哪"}
+    if not grams:
+        return []
+    pool = [(f, s) for _, f, s in _split_all_docs()]
+    scored = sorted(((sum(g in s for g in grams), f, s) for f, s in pool), key=lambda x: -x[0])
+    return [{"file": f, "text": s, "sim": 0.0} for n, f, s in scored[:k] if n >= 2]
+
+
+def _split_all_docs():
+    out = []
+    for f, rel in _doc_files():
+        try:
+            out += _split(rel, f.read_text("utf-8"))
+        except Exception:
+            continue
     return out
