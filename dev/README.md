@@ -29,7 +29,7 @@
    - `app/main.py` 的 `VERSION` 改成新版本号。
    - 新加的接口要在 `app/docs.py` 的 `ROUTES` 里写一句说明。不写的话，自动生成的「当前结构」会标「还没写说明」。
 3. **跑回归：** `dev/check.sh` 全部通过。
-4. **提交：** `git commit`（说明写中文），然后 `git tag vX.Y.Z`，最后 `git push && git push --tags`。
+4. **提交：** `git commit`，说明写中文、第一行以版本号开头（比如 `v1.4.2：……`），然后 `git push`。Claude 的沙箱推不了标签，要打标签或发 Release，作者在 GitHub 网页上点。
 5. **打包：** `python dev/pack.py Agent-vX.Y.Z.zip`，包会放在 `dist/` 里。发给作者，作者解压到原来的 Agent 文件夹，选「替换」。
 6. **跟作者交代：** 中文，简短。说清楚改了什么，哪些只能在 Windows 上实测（见下面）。
 
