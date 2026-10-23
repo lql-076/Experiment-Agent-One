@@ -50,6 +50,7 @@
 - 硬件监控助手的开关：`app/hwctl.py`（计划任务提权、ShellExecute runas、`/quit`）
 - 没有黑窗口的启动：`app/launch.py`（pythonw、起不来弹框）、`启动.bat`
 - CPU 实时频率：PDH 性能计数器（`app/hw.py` 的 `_CpuPerf`）
+- Obsidian：Windows 路径（E 盘只读按 `E:` 开头判断）、真实的库（中文文件名、很多篇）、真实嵌入模型的检索效果
 - 内存信息：WMI
 - 硬件传感器：LibreHardwareMonitor
 - 真实下载：PyTorch、模型、Kev 权重
@@ -74,6 +75,7 @@
 | `test_train.py` | "样本攒够了先问你要不要训练"这条流程 |
 | `test_osd.py` | 游戏内显示：显示什么、什么时候显示（Win32 和 tkinter 部分沙箱里跑不了） |
 | `test_fps.py` | 用假的 ETW 事件测游戏帧数统计，以及游戏加加、播放器这些不当成游戏 |
+| `test_obsidian.py` | 接 Obsidian（两个假库，一个只读）：只读的库不写、私人笔记不出本机、回答前查笔记、DeepSeek 的查笔记工具、存到笔记和撤销、每日整理、记忆搬进库（自己起一个假模型服务算向量，测完停掉） |
 | `test_checks.py` | 整备 14 项都查得完、没有"检测出错"；一键补齐 6 步按自检结果标「已就绪 / 自动启动中 / 要补」 |
 | `test_kev.py` | Kev 权重在不在本机：没有、LoRA 缺底座、都在、有半截文件 |
 | `test_route.py` | 第三条路「更强的模型」：指定去向、不接受时并进 DeepSeek、换它重做、隐私的事要确认才发出本机 |

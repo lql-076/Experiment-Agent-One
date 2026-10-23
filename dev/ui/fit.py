@@ -10,7 +10,7 @@ from playwright.sync_api import sync_playwright
 from common import launch
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "dev/.run/shots"
-SCROLL_OK = {"prep"}          # 整备：作者要上下滚动的老样子（v1.8.1）
+SCROLL_OK = {"prep", "obsidian", "remind"}   # 整备、Obsidian 笔记、提醒列表：要动手操作的页，可以上下滚（v1.8.1 起）
 LISTS = "#chatLog, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2"
 JS = """(lists) => { const out = []; document.querySelectorAll('#content *, #content').forEach(el => {
   if (!el.offsetParent && el.id !== 'content') return;

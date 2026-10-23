@@ -77,6 +77,7 @@ function sectionBody(sec) {
   if (sec.custom === 'cloud') h += '<div class="balrow">' + balanceHTML() + searchHTML() + '</div>';
   if (sec.custom === 'osd') h += osdHTML() + '<div id="fpsSeen">' + fpsSeenHTML() + '</div>';
   if (sec.custom === 'hw') h += '<div id="hwCtl">' + hwCtlHTML() + '</div>';
+  if (sec.custom === 'obsidian') h += obsHTML();
   if (sec.custom === 'growth') h += '<div class="btnrow" style="margin-bottom:1.5rem"><button class="btn" id="nightNow"' + (useLive() ? '' : ' disabled') + '>现在跑一次每日差事</button></div>';
   return h + '<div class="fields">' + sec.fields.map(fieldHTML).join('') + '</div>';
 }

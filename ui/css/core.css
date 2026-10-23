@@ -1127,7 +1127,7 @@ html[data-orient="portrait"] .side-body{padding:.25rem 1rem 1rem}
 .agm-s .ag-hl{font-size:.875rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .agm-s .ag-legend{grid-template-columns:repeat(auto-fill,minmax(4.5rem,1fr));gap:.2rem .5rem}
 .agm-s .lgd{font-size:.75rem}
-.agm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(6.25rem,1fr));grid-auto-rows:minmax(5.25rem,1fr);gap:.625rem;flex:1}
+.agm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(5.75rem,1fr));grid-auto-rows:minmax(4.5rem,1fr);gap:.5rem;flex:1}
 .agcard .ag-list,.ag-mini{flex:1;min-height:0;display:flex;flex-direction:column}
 .agm{display:flex;flex-direction:column;align-items:center;gap:.2rem;min-width:0;padding:.45rem .15rem .4rem;border-radius:var(--rs);color:inherit;font:inherit;border:1px solid color-mix(in srgb,var(--sc) 20%,transparent);background:color-mix(in srgb,var(--sc) 6%,transparent);transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease)}
 .agm:hover{border-color:color-mix(in srgb,var(--sc) 55%,transparent);background:color-mix(in srgb,var(--sc) 12%,transparent)}
@@ -1171,3 +1171,21 @@ html[data-orient="portrait"] .osd-top{grid-template-columns:minmax(0,24rem) minm
 
 .fix-hint{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.6rem}
 .fix-hint a.btn{text-decoration:none;display:inline-flex;align-items:center}
+/* ===== 设置 › Obsidian 笔记（ui/js/obsidian.js） ===== */
+#obsBox{display:flex;flex-direction:column;gap:1rem;margin-bottom:1.75rem;max-width:72rem}
+#obsBox .balbox{margin:0;max-width:none}
+.obs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,24rem),1fr));gap:1rem}
+.obs-card{display:flex;flex-direction:column;gap:.55rem;padding:1rem 1.1rem;border:1px solid var(--cardb);border-radius:var(--r);background:var(--card)}
+.obs-card.ro{border-color:color-mix(in srgb,var(--c-neu) 35%,var(--cardb))}
+.obs-top{display:flex;align-items:center;gap:.6rem}
+.obs-name{flex:1;font-weight:600;font-size:1rem}
+.obs-tag{flex:none;padding:.1rem .55rem;border-radius:1rem;font-size:.75rem;border:1px solid var(--line2)}
+.obs-tag.ro{color:var(--c-neu);border-color:color-mix(in srgb,var(--c-neu) 45%,transparent)}
+.obs-tag.rw{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,transparent)}
+.obs-card .inp.mono{font-family:var(--mono);font-size:.8125rem}
+.obs-card .obs-ro{margin:0;padding:.35rem 0}
+.obs-chips{display:flex;flex-wrap:wrap;gap:.35rem}
+.obs-chips .chip[aria-pressed="true"]{border-color:var(--c-neu);color:var(--text);background:color-mix(in srgb,var(--c-neu) 14%,transparent)}
+.obs-add{border-style:dashed}
+.obs-line{font-size:.8125rem;color:var(--text2);margin-top:.35rem}
+.obs-mem-note{margin-top:-.5rem}

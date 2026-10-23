@@ -38,6 +38,8 @@ DEFAULTS = {
     "qqEnabled": True, "qqAppId": "", "qqUser": "", "qqSandbox": True,
     # 记忆
     "memDir": "", "useGit": True, "logDays": 90,
+    # Obsidian 笔记（app/obsidian.py）：obsVaults 是几个库 [{"id","name","path","ro","private":[私人文件夹]}]
+    "obsOn": True, "obsVaults": [], "obsInbox": "Agent 收件箱", "obsRead": True, "obsWrite": True, "obsTidy": True,
     # 分流旋钮
     "take": 60, "fresh": 40, "clLine": 50, "daily": 3, "quiet": False,
     "privLocal": True, "privWords": "", "voteEmbed": 50, "voteAuto": True,
@@ -97,6 +99,12 @@ def update(changes: dict) -> dict:
         try:
             if isinstance(d, bool):
                 v = bool(v)
+            elif isinstance(d, list):
+                if not isinstance(v, list):
+                    continue
+                if k == "obsVaults":
+                    from .obsidian import clean_vaults
+                    v = clean_vaults(v)
             elif isinstance(d, int) and not isinstance(d, bool):
                 v = int(float(v)) if v != "" else d
             elif isinstance(d, float):

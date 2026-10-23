@@ -2,7 +2,9 @@
 其余的过决策脑两票，交给本地小脑 / DeepSeek / 建议你带提示词去问更强的模型；每一步都写进事件日志。
 你也可以推翻决策脑：force 指定去向（界面上「换它重做」），redo_of 记下是哪一条重做的。
 交给 DeepSeek 的，带上联网搜索工具（app/websearch.py），要不要搜由它自己定；问到 agent 自己怎么用的，
-先从说明书（docs/操作手册.md、docs/AI文档）里找相关段落一起给模型。"""
+先从说明书（docs/操作手册.md、docs/AI文档）里找相关段落一起给模型。
+接了 Obsidian 的（app/obsidian.py）：回答前先查笔记；私人笔记只给本地小脑（用到私人笔记的事改交本地）；
+DeepSeek 还能自己用「查笔记、读笔记」两个工具（只给非私人的）。「存到笔记：……」直接写进库里的 Agent 收件箱。"""
 import asyncio
 import contextlib
 import json
@@ -10,7 +12,7 @@ import re
 import time
 from collections import defaultdict, deque
 
-from . import db, deepseek, events, growth, memory, notify, paths, privacy, reminders, router, safety, settings, websearch
+from . import db, deepseek, events, growth, memory, notify, obsidian, paths, privacy, reminders, router, safety, settings, websearch
 from .models import M
 from .qq import BOT
 
@@ -43,7 +45,7 @@ def plain(t: str) -> str:
     return t.replace("```", "")
 
 
-def _build(text, user, snips, allow_private, docs=None, src="ui"):
+def _build(text, user, snips, allow_private, docs=None, src="ui", notes=None):
     d = time.localtime()
     sys = memory.persona() + f"\n现在是 {d.tm_year} 年 {d.tm_mon} 月 {d.tm_mday} 日 {d.tm_hour:02d}:{d.tm_min:02d}（星期{'一二三四五六日'[d.tm_wday]}）。" + (QQ_PLAIN if src == "qq" else "")
     if snips:
@@ -51,6 +53,9 @@ def _build(text, user, snips, allow_private, docs=None, src="ui"):
     if docs:
         sys += ("\n\n下面是你自己（这个 agent）的说明书里和这条消息相关的段落。回答关于你自己能做什么、怎么用、在哪设置的问题时，以它为准，"
                 "说清楚在界面哪里点：\n" + "\n".join(f"- 〔{m['file'].replace('@说明/', '')}〕{m['text']}" for m in docs))
+    if notes:
+        sys += ("\n\n下面是他自己 Obsidian 笔记里和这条消息相关的段落（〔库名/路径 · 标题〕开头）。问到他写过、记过的东西，以笔记为准，"
+                "不要自己编；用到了哪篇，在回答最后一行写「笔记：《篇名》」。用不上就别提：\n" + obsidian.fmt_hits(notes))
     return [{"role": "system", "content": sys}] + _history(user, allow_private) + [{"role": "user", "content": text}]
 
 
@@ -77,7 +82,7 @@ def _save_sample(e_text, reply, label, eid, private, claude_ctx=False, web=False
 
 
 def _quick(job, *a, **k):
-    eid = _quick(job, *a, **k)
+    eid = _quick_event(*a, **k)
     if job is not None:
         job["eid"] = eid
     return eid
@@ -110,6 +115,15 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
         reply = await reminders.create_from_text(text)
         eid = _quick(job, text, src, "设提醒", "认出了时间和事情，由程序直接建提醒，不经过模型（先斩后奏，写进报告）。", reply, is_priv_kw,
                            [["收到", SRC_LABEL.get(src, src)], ["认出提醒", "时间 + 事情"], ["新建提醒", "先斩后奏"], ["回复", "已回复"]])
+        return events.get(eid)
+
+    # 2.5 存到 Obsidian？（「存到笔记：……」「把刚才的回答存到笔记」）
+    sv = None if force else obsidian.save_command(text)
+    if sv is not None:
+        reply = await _save_note(sv, user, src)
+        eid = _quick(job, text, src, "存笔记", "你说了存到笔记，直接写进 Obsidian 库的「Agent 收件箱」（不经过模型，先斩后奏，能撤销）。", reply, is_priv_kw,
+                     [["收到", SRC_LABEL.get(src, src)], ["认出「存到笔记」", "不经过模型"], ["写笔记", obsidian.inbox_name()], ["回复", "已回复"]])
+        HIST[user].extend([("user", text, is_priv_kw, t0), ("assistant", reply, is_priv_kw, time.time())])
         return events.get(eid)
 
     # 3. 让我记东西？
@@ -165,8 +179,22 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
             steps.append(["查了说明书", f"{len(docs)} 段 · " + "、".join(sorted({d['file'].replace('@说明/', '').split('/')[-1].replace('.md', '') for d in docs}))[:40]])
             prog("查了说明书，正在回答……")
 
+    # 查 Obsidian 笔记（和找记忆用同一个向量）
+    notes = []
+    if obsidian.on() and settings.S.get("obsRead", True):
+        with contextlib.suppress(Exception):
+            notes = await obsidian.search(qvec, text, k=4, allow_private=True)
+    if notes:
+        steps.append(["查了笔记", f"{len(notes)} 段 · {obsidian.titles(notes)}"[:60]])
+        prog("查了笔记，正在回答……")
+    priv_notes = [n for n in notes if n["private"]]
+
     is_local = dec["brain"] is not None
-    if is_local and not dec["private"] and settings.S.get("searchOn", True) and websearch.wants_fresh(text) and not docs:
+    if priv_notes and not is_local and dec["route"] in ("ds", "local") and not fz and M.ai_ready() and not M.yielding:
+        # 用到了私人笔记：改交本地小脑（私人笔记不出本机）
+        is_local, route, dec["brain_name"], dec["lora"] = True, "local", dec.get("brain_name") or "本地通用", None
+        why_extra = f"（用到了私人笔记{obsidian.titles(priv_notes)}，只在本地处理）"
+    if is_local and not dec["private"] and not priv_notes and settings.S.get("searchOn", True) and websearch.wants_fresh(text) and not docs:
         route, is_local = "ds", False
         why_extra = "（看着要查最新信息，本地小脑上不了网，改交 DeepSeek 联网搜）"
     if is_local and M.yielding and not dec["private"]:
@@ -182,13 +210,13 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
         try:
             snips = await memory.search(qvec, allow_private=True)
             prog(f"{dec['brain_name']}正在回答……")
-            out = await M.chat(_build(text, user, snips, True, docs, src), lora=dec["lora"], max_new_tokens=400)
+            out = await M.chat(_build(text, user, snips, True, docs, src, notes), lora=dec["lora"], max_new_tokens=400)
             reply = out["text"]
             steps.append(["本地处理", f"{dec['brain_name']} · {out['tokens']} 个 token · {out['tok_per_s']}/秒"])
             if snips:
                 steps.append(["用了记忆", f"{len(snips)} 段"])
         except Exception as e:
-            if dec["private"]:
+            if dec["private"] or (priv_notes and why_extra.startswith("（用到了私人笔记")):
                 reply = f"本地模型还没准备好（{str(e)[:60]}）。这件事涉及隐私，不发给云端，等本地模型装好后我再处理。"
                 db.update("events", eid, {"status": "queued", "result": f"本地模型不可用：{e}", "reply": reply,
                                           "steps": steps + [["排队", "本地模型不可用"]]})
@@ -202,13 +230,17 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
             mode = settings.S["dsThinking"]
             thinking = mode == "on" or (mode == "auto" and (dec.get("hard", dec["p"].get("cl", 0)) > 0.25 or len(text) > 150))
             snips = await memory.search(qvec, allow_private=False)
-            msgs = _build(text, user, snips, False, docs, src)
+            pub_notes = [n for n in notes if not n["private"]]
+            if priv_notes:
+                steps.append(["私人笔记没发出去", f"{len(priv_notes)} 段只给本地小脑"])
+            msgs = _build(text, user, snips, False, docs, src, pub_notes)
+            note_tools = obsidian.tools_on()
             prog("交给 DeepSeek，正在想……")
             purpose = "neu" if dec["neu"] else "chat"
             web = None
-            if settings.S.get("searchOn", True) and not dec["private"]:
+            if (settings.S.get("searchOn", True) or note_tools) and not dec["private"]:
                 web = await websearch.answer_with_tools(msgs, thinking=thinking, event_id=eid, purpose=purpose, user_text=text, steps=steps,
-                                                        progress=prog)
+                                                        progress=prog, web=bool(settings.S.get("searchOn", True)), notes=note_tools)
                 out = {"text": web["text"], "cny": web["cny"]}
             else:
                 if confirmed:
@@ -244,6 +276,25 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
                               "why": dec["why"] + why_extra + " " + dec["vote_line"] + "。"})
     HIST[user].extend([("user", text, dec["private"], t0), ("assistant", reply, dec["private"], time.time())])
     return events.get(eid)
+
+
+async def _save_note(sv, user, src):
+    """「存到笔记」：写进 Obsidian 库的 Agent 收件箱。没写内容、说的是「刚才的回答」，就存上一条回复。"""
+    body, use_last = sv
+    if use_last and not body:
+        last = next((c for role, c, _p, _t in reversed(HIST[user]) if role == "assistant"), "")
+        body = last
+    if not body.strip():
+        return "要存什么？在「存到笔记：」后面写内容；或者先问我一句，再说「把刚才的回答存到笔记」。"
+    if not obsidian.on():
+        return "还没接 Obsidian 库：设置 › Obsidian 笔记 里加一个库。"
+    title = re.sub(r"\s+", " ", body.strip().splitlines()[0])[:24]
+    try:
+        done, info = await obsidian.write("", f"{time.strftime('%Y-%m-%d %H%M')} {title}", obsidian.note_text(title, body, SRC_LABEL.get(src, src)),
+                                          "你让我存进笔记")
+    except PermissionError as e:
+        return f"没存：{e}"
+    return f"存好了：{info}（在 Obsidian 里能看到，不想要可以在 报告 › 改动 里撤销）" if done else "要写笔记，已放进「等你决定」。"
 
 
 async def _claude_prompt(text, private, eid):

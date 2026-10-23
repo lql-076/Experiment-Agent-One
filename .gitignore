@@ -1,8 +1,9 @@
 # ── 每个人自己的东西：永远不上传 ──
 # 设置、密钥（DPAPI 加密）、数据库、日志、窗口位置
 data/
-# 记忆、技能、提示词、人设、Claude 带回的总结
+# 记忆、技能、提示词、人设、Claude 带回的总结（搬进 Obsidian 库后，原来的文件夹改名成 memory.已搬走-日期）
 memory/
+memory.*/
 # 慢成长的样本（来自你的聊天）
 training/*
 !training/README.md

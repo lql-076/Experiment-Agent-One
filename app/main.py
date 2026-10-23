@@ -14,12 +14,12 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import (agent, agentstate, checks, db, deepseek, docs, events, exam, feed, growth, hw, hwctl, memory, monitor, nightly, osd,
-               paths, reminders, reports, router, safety, settings, setup, websearch)
+from . import (agent, agentstate, checks, db, deepseek, docs, events, exam, feed, growth, hw, hwctl, memory, monitor, nightly, obsidian,
+               osd, paths, reminders, reports, router, safety, settings, setup, websearch)
 from .models import M
 from .qq import BOT
 
-VERSION = "1.8.2"
+VERSION = "1.9.0"
 PORT = 8765
 _bg = []
 
@@ -98,6 +98,9 @@ async def housekeeping():
             if n % 2 == 1:
                 osd.ctl().tick()                      # 游戏内显示：设置里开了就拉起小框，关了就停
             hwctl.tick(n)                             # 硬件监控助手：开关开着、没在跑就拉起来（不弹管理员确认）
+            if (obsidian.DIRTY["on"] or n % 30 == 20) and not obsidian._busy["on"]:     # Obsidian：每分钟看一眼笔记改没改
+                obsidian.DIRTY["on"] = False
+                asyncio.get_event_loop().create_task(obsidian.refresh())
         except Exception as e:
             print("后台照看出错：", e)
         n += 1
@@ -450,6 +453,49 @@ def docs_read(rel: str):
 
 
 # ---------------- 硬件监控助手（设置 › 硬件监控 的开关） ----------------
+# ---------------- Obsidian 笔记 ----------------
+@app.get("/api/obsidian")
+def obs_status():
+    return obsidian.status()
+
+
+@app.post("/api/obsidian/check")
+def obs_check(body: dict = Body(...)):
+    return obsidian.check_path(body.get("path", ""))
+
+
+@app.post("/api/obsidian/reindex")
+async def obs_reindex():
+    return {**(await obsidian.reindex()), "status": obsidian.status()}
+
+
+@app.post("/api/obsidian/refresh")
+async def obs_refresh():
+    return {**(await obsidian.refresh()), "status": obsidian.status()}
+
+
+@app.post("/api/obsidian/tidy")
+async def obs_tidy():
+    return await obsidian.tidy()
+
+
+@app.post("/api/obsidian/move-memory")
+async def obs_move_memory(body: dict = Body(...)):
+    try:
+        msg = await asyncio.to_thread(obsidian.move_memory, body.get("vault", ""))
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    with contextlib.suppress(Exception):
+        await memory.index()
+    return {"msg": msg, "status": obsidian.status()}
+
+
+@app.get("/api/obsidian/search")
+async def obs_search(q: str, private: int = 1):
+    qv = await M.embed([q], instruct=obsidian.NOTE_INSTRUCT)
+    return {"hits": await obsidian.search(qv[0] if qv else None, q, k=6, allow_private=bool(private))}
+
+
 @app.get("/api/hw/helper")
 async def hw_helper_state():
     return dict(hwctl.state(), running=await hwctl.running())

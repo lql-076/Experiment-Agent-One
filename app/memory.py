@@ -138,6 +138,13 @@ def undo(change_id: int) -> str:
         db.update("changes", change_id, {"undone": 1})
         safety.log("undo", {"change": change_id, "reminder": rid}, "user")
         return "已撤销：这个提醒删掉了"
+    if (c["commit_id"] or "").startswith("note:"):           # Agent 往 Obsidian 收件箱写的笔记：挪进「已撤销」，不删
+        from . import obsidian
+        msg = obsidian.undo(c["commit_id"])
+        if msg.startswith("已撤销"):
+            db.update("changes", change_id, {"undone": 1})
+            safety.log("undo", {"change": change_id, "note": c["commit_id"]}, "user")
+        return msg
     if c["commit_id"]:
         r = _git("revert", "--no-edit", c["commit_id"])
         if r.returncode != 0:
@@ -153,7 +160,7 @@ def undo(change_id: int) -> str:
 DOC_TAG = "@说明/"          # 说明书的段落也切块放进 chunks 表，file 前面加这个标记，和记忆分开找
 ABOUT = re.compile(r"你(能|会|可以|怎么|是怎么|有哪些|有什么|的(功能|设置|界面|提醒|记忆|规矩|安全线))|怎么(用|设置|设|改|关|开|打开|装|绑定|退出)|"
                    r"在哪(里)?(改|设|看|找|开|关)|设置里|界面上|侧栏|整备|一键补齐|免打扰|让路|决策脑|小脑|每日差事|安全线|"
-                   r"操作手册|说明书|说明页|后台页|报告页|常驻屏|主题|风格|开机自启|硬件监控|游戏帧数|找 ?Claude|更强的模型|联网搜索|agent|Agent")
+                   r"操作手册|说明书|说明页|后台页|报告页|常驻屏|主题|风格|开机自启|硬件监控|游戏帧数|找 ?Claude|更强的模型|联网搜索|Obsidian|obsidian|笔记库|存到笔记|收件箱|agent|Agent")
 
 
 def about_agent(text: str) -> bool:

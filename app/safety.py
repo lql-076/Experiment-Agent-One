@@ -19,6 +19,7 @@ TIERS = {
     "reminder.create": ("auto", True,  "新增、修改定时任务"),
     "reminder.update": ("auto", True,  "新增、修改定时任务"),
     "prompt.update":   ("auto", True,  "调整自己的提示词"),
+    "note.write":      ("auto", False, "往 Obsidian 的「Agent 收件箱」写笔记（不改你自己的笔记）"),
     "file.delete":     ("ask",  False, "删除任何文件"),
     "reminder.delete": ("ask",  False, "删除任何文件"),
     "tool.add":        ("ask",  False, "给自己加新工具或新权限"),

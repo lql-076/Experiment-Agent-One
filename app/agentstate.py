@@ -11,8 +11,27 @@ m = 有数的项给界面画进度环：{"p": 0~1 或没有, "txt": "64/200"}
 """
 import time
 
-from . import db, deepseek, memory, monitor, paths, router, settings, websearch
+from . import db, deepseek, memory, monitor, obsidian, paths, router, settings, websearch
 from .models import M
+
+
+def _obs_row():
+    o = obsidian.status()
+    go = {"label": "去接", "sec": "obsidian"}
+    if not o["vaults"]:
+        return _row("obsidian", "Obsidian 笔记", "off", "还没接库：设置 › Obsidian 笔记 里加", go)
+    if not o["on"]:
+        return _row("obsidian", "Obsidian 笔记", "off", "设置里关掉了", {"label": "去打开", "sec": "obsidian"})
+    gone = [v["name"] for v in o["vaults"] if not v["exists"]]
+    if gone:
+        return _row("obsidian", "Obsidian 笔记", "bad", f"找不到「{'、'.join(gone)}」的文件夹", {"label": "去看看", "sec": "obsidian"})
+    n = sum(v["notes"] for v in o["vaults"])
+    p = sum(v["privNotes"] for v in o["vaults"])
+    w = sum(v["waiting"] for v in o["vaults"])
+    d = f"{len(o['vaults'])} 个库 · {n} 篇" + (f" · 私人 {p} 篇只在本地" if p else "") + (f" · 写到「{o['inboxVault']}/{o['inbox']}」" if o["inboxVault"] else " · 都是只读")
+    if w and not o["embedOn"]:
+        return _row("obsidian", "Obsidian 笔记", "warn", f"{w} 段等嵌入模型算向量，先按字面找 · " + d, m={"txt": f"{n} 篇"})
+    return _row("obsidian", "Obsidian 笔记", "ok", d, m={"txt": f"{n} 篇"})
 
 
 def _row(k, name, st, detail, act=None, sub=None, m=None):
@@ -100,6 +119,9 @@ async def view():
                           m=_m(min(top, need), need, f"最多 {top} / {need}") if cats else None))
     elif sub:
         brain.append(_row("cats", "正在攒样本的新类别", "idle", f"{len(cats)} 类", sub=sub, m=_m(min(top, need), need, f"最多 {top} / {need}")))
+
+    # Obsidian 笔记
+    brain.append(_obs_row())
 
     # ---------- 云端 ----------
     cloud = []
