@@ -1,6 +1,7 @@
-"""一页内容一屏放下（作者的规矩：同一页里的信息不靠鼠标滚轮翻）。
+"""一页内容一屏放下（作者的规矩：闲下来"一眼看"的页，信息不靠鼠标滚轮翻）。
 每个页面、每个设置分区，横屏 1680×1000 和竖屏 1080×1860 都看一遍：除了本来就是长列表的地方
 （聊天记录、事件列表、后台日志、说明文档、报告里的两张清单、事件的回复正文），别的地方都不该出现滚动。
+要动手操作的页可以滚（作者说的：用它时手本来就在鼠标上），列在 SCROLL_OK 里，不查。
 用法：python dev/ui/fit.py 截图文件夹（要先 dev/serve.sh start）"""
 import sys
 
@@ -9,6 +10,7 @@ from playwright.sync_api import sync_playwright
 from common import launch
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "dev/.run/shots"
+SCROLL_OK = {"prep"}          # 整备：作者要上下滚动的老样子（v1.8.1）
 LISTS = "#chatLog, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2"
 JS = """(lists) => { const out = []; document.querySelectorAll('#content *, #content').forEach(el => {
   if (!el.offsetParent && el.id !== 'content') return;
@@ -28,7 +30,7 @@ with sync_playwright() as pw:
         p.wait_for_function("!S.checking", timeout=30000)
         p.evaluate("var b=document.getElementById('boot'); if (b.classList.contains('on')) b.click()")
         targets = [("view", v) for v in ("chat", "home", "events", "monitor", "brains", "reports")]
-        targets += [("sec", s) for s in p.evaluate("SECTIONS.map(function (s) { return s.id; })")]
+        targets += [("sec", s) for s in p.evaluate("SECTIONS.map(function (s) { return s.id; })") if s not in SCROLL_OK]
         for kind, k in targets:
             p.evaluate(f"goView('{k}')" if kind == "view" else f"S.sec='{k}'; renderSettings(); goView('settings')")
             p.wait_for_timeout(900)

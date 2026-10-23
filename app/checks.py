@@ -134,12 +134,21 @@ async def c_kev():
         return wait("已在设置里关掉 Kev，决策脑只用语义路由一票")
     if await M.kev_ready():
         return ok("Kev 服务在线（127.0.0.1:%s）" % settings.S["kevPort"])
+    have = M.kev_weights()
     if M.kevp.alive():
-        return wait("Kev 正在启动（第一次会下载约 2GB 权重，要等一会）", action="start_kev")
-    return wait("按需启动：用到时自动启动；第一次启动会下载约 2GB 权重", action="start_kev", place=paths.show(paths.HF_CACHE))
+        return wait("Kev 正在启动" + ("" if have else "（第一次要下载约 2GB 权重，要等一会）"), action="start_kev")
+    if have:
+        return ok("权重已下载 · 闲着，用到才启动（不会再下载）", place=paths.show(paths.HF_CACHE))
+    return wait("权重还没下载：点「一键补齐」或「现在启动 Kev」，经 hf-mirror 下载约 2GB（只下一次）", action="start_kev", place=paths.show(paths.HF_CACHE))
 
 
 async def c_hwmon():
+    from . import hwctl
+    if settings.S.get("hwOn") and hwctl.ST["busy"]:      # 开关开着、正在拉起：等它一会儿再查
+        for _ in range(12):
+            if not hwctl.ST["busy"]:
+                break
+            await asyncio.sleep(1)
     try:
         async with httpx.AsyncClient(timeout=1.5) as c:
             r = await c.get(settings.S["hwUrl"])
@@ -147,8 +156,10 @@ async def c_hwmon():
         d = parse_lhm(r.json())
         if (d.get("cpu") or {}).get("temp") is not None:
             return ok(f"传感器可读 · CPU {d['cpu']['temp']:.0f}°C")
-        return wait("数据能读到，但没有 CPU 温度：装一下 PawnIO 驱动，并确认是管理员身份运行")
+        return wait("助手在运行，但读不到 CPU 温度：装一下 PawnIO 驱动（pawnio.eu），装完重启电脑", running=True)
     except Exception:
+        if settings.S.get("hwOn"):
+            return wait("开关开着，助手正在启动或没起来" + (f"：{hwctl.ST['msg']}" if hwctl.ST.get("msg") else "") + "（每半分钟自动再拉一次）")
         return miss("硬件监控助手没开：设置 › 硬件监控 打开（第一次弹一次管理员确认）")
 
 
@@ -204,6 +215,34 @@ async def c_memory():
 CHECKS = {"driver": c_driver, "python": c_python, "git": c_git, "aienv": c_aienv, "base": c_base, "embed": c_embed,
           "models": c_models, "kev": c_kev, "hwmon": c_hwmon, "ds": c_ds, "qq": c_qq, "qqbind": c_qqbind, "qqpush": c_qqpush,
           "memory": c_memory}
+
+
+LIVE = ("models", "kev", "hwmon", "qq")
+
+
+async def refresh_live() -> bool:
+    """会自己变的几项（模型服务、Kev、硬件监控助手、QQ）：启动后它们陆续起来，后台每半分钟重查一次写回自检结果，
+    整备上跟着变，不用你点重新自检。状态变了返回 True（界面据此刷新）。"""
+    last = db.kv_get("checks")
+    if not last or not last.get("res"):
+        return False
+    changed = False
+    for k in LIVE:
+        try:
+            r = await asyncio.wait_for(CHECKS[k](), 15)
+        except Exception:
+            continue
+        old = last["res"].get(k) or {}
+        if old.get("st") != r.get("st"):
+            changed = True
+        last["res"][k] = r
+    cur = db.kv_get("checks") or {}
+    if cur.get("ts", 0) > last.get("ts", 0):          # 查的这会儿你点了重新自检：以你那次为准
+        return False
+    if changed:
+        last["ts"] = time.time()
+    db.kv_set("checks", last)
+    return changed
 
 
 async def run_all():

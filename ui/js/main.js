@@ -15,8 +15,17 @@ function poll() {
     var hs = JSON.stringify([st.today, st.next && st.next.id, st.next && st.next.ts, st.asks_pending, st.prep.ready, st.cost_month, st.balance, st.setup, sig.slice(0, 60), st.agent && st.agent.head, st.agent && (st.agent.groups || []).map(function (g) { return g.items.map(function (i) { return i.st + (i.m ? i.m.txt : ''); }).join(); }).join('|')]);
     if (hs !== D.sig.home) { D.sig.home = hs; if (S.view === 'home') renderHome(true); else D.homeDirty = true; }
     renderCards(st.cards); syncStatus(); syncBadges(); fillResidentText();
+    // 后台每隔一会儿重查会自己变的几项（模型服务、Kev、硬件监控助手、QQ）：变了就把整备和一键补齐刷新一下，不用点重新自检
+    var pts = st.prep && st.prep.ts; if (pts && D.prepTs && pts !== D.prepTs && !S.checking) refreshChecks(); if (pts && !S.checking) D.prepTs = pts;
     var cand = st.qq.candidate; if (cand && S.check.qqbind && S.check.qqbind.st === 'miss') { S.check.qqbind = { st: 'wait', d: '收到一条消息「' + cand.text.slice(0, 16) + '」，是你发的就点「是我」', action: 'qq_bind', extra: { openid: cand.openid } }; updatePrepUI('qqbind'); }
   }).catch(function () { D.offline = true; D.state = null; syncStatus(); }).then(function () { pollBusy = false; });
+}
+function refreshChecks() {
+  return api('GET', '/api/checks', null, 8000).then(function (j) {
+    var res = (j.last || {}).res || {}; if (j.places) PLACES = j.places;
+    LIVE_CHECKS.forEach(function (c) { var r = res[c.k]; if (r && JSON.stringify(r) !== JSON.stringify(S.check[c.k])) { S.check[c.k] = r; updatePrepUI(c.k); } });
+    if ($('#setupCard')) setupPoll();
+  }, function () {});
 }
 function loadServer() {
   return api('GET', '/api/settings', null, 4000).then(function (j) {

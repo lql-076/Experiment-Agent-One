@@ -19,7 +19,7 @@ from . import (agent, agentstate, checks, db, deepseek, docs, events, exam, feed
 from .models import M
 from .qq import BOT
 
-VERSION = "1.8.0"
+VERSION = "1.8.1"
 PORT = 8765
 _bg = []
 
@@ -104,6 +104,17 @@ async def housekeeping():
         await asyncio.sleep(2)
 
 
+async def live_checks():
+    """会自己变的几项（模型服务、Kev、硬件监控助手、QQ）：启动后头两分钟每 10 秒、之后每 30 秒重查一次，
+    写回自检结果，整备和「一键补齐」的每一步跟着变（界面轮询 /api/state 看到 prep.ts 变了就刷新）。"""
+    n = 0
+    while True:
+        await asyncio.sleep(10 if n < 12 else 30)
+        n += 1
+        with contextlib.suppress(Exception):
+            await checks.refresh_live()
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app):
     monitor.tee_console()
@@ -127,7 +138,7 @@ async def lifespan(app):
             print("本地模型服务没起来：", e)
     if settings.S["qqEnabled"] and BOT.configured():
         BOT.start()
-    for fn in (reminders.loop, nightly.loop, housekeeping):
+    for fn in (reminders.loop, nightly.loop, housekeeping, live_checks):
         _bg.append(asyncio.get_event_loop().create_task(fn()))
     if os.environ.get("AGENT_OPEN_UI") == "1":
         _bg.append(asyncio.get_event_loop().create_task(_open_later()))

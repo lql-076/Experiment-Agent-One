@@ -19,7 +19,8 @@ import urllib.request
 
 ITEMS = [("fps", "帧数"), ("low1", "1% 低帧"), ("cpu", "CPU"), ("gpu", "显卡"), ("vram", "显存"), ("ram", "内存"), ("power", "整机功耗"), ("time", "时间")]
 DEFAULTS = {"osdOn": False, "osdWhen": "game", "osdItems": "fps,low1,cpu,gpu,vram,power", "osdPos": "tl", "osdMargin": 16,
-            "osdScreen": 0, "osdSize": "m", "osdOpacity": 80, "osdHotkey": "ctrl+alt+f10"}
+            "osdLayout": "v", "osdScreen": 0, "osdSize": "m", "osdOpacity": 80, "osdHotkey": "ctrl+alt+f10"}
+POS = ("tl", "tc", "tr", "bl", "bc", "br")          # 左上、顶部居中、右上、左下、底部居中、右下
 COLORS = {"fps": "#5fe0b0", "low1": "#ffd166", "cpu": "#3fc6ff", "gpu": "#b49bff", "vram": "#ff8fc0", "ram": "#8fe3a5",
           "power": "#ffb547", "time": "#e8eaf0", "hot": "#ff5d5d", "label": "#9aa4b2"}
 HOTKEYS = {"ctrl+alt+f10": (0x0001 | 0x0002, 0x79), "ctrl+shift+f10": (0x0002 | 0x0004, 0x79), "alt+f12": (0x0001, 0x7B), "off": None}
@@ -65,6 +66,15 @@ def lines(cfg: dict, hw: dict):
         elif k == "time":
             out.append(("时间", time.strftime("%H:%M"), COLORS["time"]))
     return out
+
+
+def place(pos: str, screen, w: int, h: int, m: int):
+    """小框左上角放哪：screen = (左, 上, 右, 下)，w / h 是小框大小，m 是离屏幕边多远。"""
+    L, T, R, B = screen
+    pos = pos if pos in POS else "tl"
+    x = L + m if pos[1] == "l" else R - w - m if pos[1] == "r" else L + (R - L - w) // 2
+    y = T + m if pos[0] == "t" else B - h - m
+    return x, y
 
 
 def visible(cfg: dict, hw: dict, hidden: bool) -> bool:
@@ -209,7 +219,8 @@ def run(port=8765):
         show = visible(cfg, hw, shared["hidden"])
         ls = lines(cfg, hw)
         size = SIZES.get(cfg.get("osdSize"), 12)
-        sig = (tuple(ls), size)
+        horiz = cfg.get("osdLayout") == "h"
+        sig = (tuple(ls), size, horiz)
         if sig != last["sig"]:
             last["sig"] = sig
             for w in rows:
@@ -218,16 +229,18 @@ def run(port=8765):
             for i, (name, val, color) in enumerate(ls):
                 a = tk.Label(box, text=name, fg=COLORS["label"], bg=bg, font=("Microsoft YaHei UI", size - 1), anchor="w")
                 b = tk.Label(box, text=val, fg=color, bg=bg, font=("Consolas", size, "bold"), anchor="e")
-                a.grid(row=i, column=0, sticky="w", padx=(0, 12))
-                b.grid(row=i, column=1, sticky="e")
+                if horiz:                                                # 横着一行：名字 数值  名字 数值 ……
+                    a.grid(row=0, column=2 * i, sticky="w", padx=(0 if i == 0 else size + 4, 5))
+                    b.grid(row=0, column=2 * i + 1, sticky="w")
+                else:                                                    # 竖着一列：名字靠左，数值靠右
+                    a.grid(row=i, column=0, sticky="w", padx=(0, 12))
+                    b.grid(row=i, column=1, sticky="e")
                 rows.extend([a, b])
         root.update_idletasks()
         mons = monitors()
         L, T, R, B = mons[min(int(cfg.get("osdScreen") or 0), len(mons) - 1)]
         w, h, m = root.winfo_reqwidth(), root.winfo_reqheight(), int(cfg.get("osdMargin") or 16)
-        pos = cfg.get("osdPos", "tl")
-        x = L + m if pos in ("tl", "bl") else R - w - m
-        y = T + m if pos in ("tl", "tr") else B - h - m
+        x, y = place(cfg.get("osdPos", "tl"), (L, T, R, B), w, h, m)
         geo = f"+{x}+{y}"
         if geo != last["geo"]:
             last["geo"] = geo

@@ -28,6 +28,7 @@ DEFAULTS = {
     "searchOn": True, "searchDaily": 200, "searchRounds": 4,
     # 游戏内显示（app/osd.py）
     "osdOn": False, "osdWhen": "game", "osdItems": "fps,low1,cpu,gpu,vram,power", "osdPos": "tl", "osdMargin": 16,
+    "osdLayout": "v",                 # v 竖着一列 / h 横着一行（放屏幕顶部居中不挡小地图）
     "osdScreen": 0, "osdSize": "m", "osdOpacity": 80, "osdHotkey": "ctrl+alt+f10",
     # 第三条路「更强的模型」：特别难的事写好提示词，你自己带去问你能用的最强的 AI（网页 Claude、ChatGPT、Kimi……都行）。
     # strongOn=False：不用这条路，这类事也交给 DeepSeek。strongMode 现在只有 manual（你去问）；api（自动调接口）以后加

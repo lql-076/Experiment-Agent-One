@@ -27,7 +27,7 @@ STEPS = [
     {"k": "aienv", "t": "本地模型环境", "d": "显卡版 PyTorch、Transformers、PEFT、Kev，约 3GB"},
     {"k": "models", "t": "底座和嵌入模型", "d": "从魔搭下载，约 6GB，断了会接着下"},
     {"k": "start", "t": "启动本地模型服务", "d": "加载嵌入模型，约占 1.2GB 显存"},
-    {"k": "kev", "t": "Kev 的权重", "d": "经 hf-mirror 下载约 2GB"},
+    {"k": "kev", "t": "Kev 的权重", "d": "经 hf-mirror 下载约 2GB，只下一次"},
     {"k": "hwmon", "t": "硬件监控助手", "d": "会弹一次管理员确认，点「是」"},
 ]
 NEEDS = {"start": ["aienv", "models"], "kev": ["aienv"]}
@@ -72,7 +72,51 @@ def _clean(p):
     return {k: v for k, v in p.items() if not k.startswith("_")} if p else None
 
 
+READY_INFO = {"git": "Git 有了", "aienv": "环境装好了", "models": "模型文件都在", "start": "模型服务在线",
+              "kev": "权重已下载，用到才启动", "hwmon": "助手在运行"}
+
+
+def _ready(k, res):
+    """对照自检结果：这一步是不是已经好了（"ready"）、正在自动起（"auto"）、还是真缺东西（"wait"）。"""
+    st = lambda x: (res.get(x) or {}).get("st")      # noqa: E731
+    if k == "models":
+        ok = st("base") == "ok" and st("embed") == "ok"
+    elif k == "start":
+        ok = st("models") == "ok"
+    elif k == "kev":
+        ok = settings.S["kevMode"] == "off" or st("kev") == "ok"
+    elif k == "hwmon":
+        ok = st("hwmon") == "ok" or bool((res.get("hwmon") or {}).get("running"))
+    else:
+        ok = st(k) == "ok"
+    if ok:
+        return "ready", ("Kev 在设置里关掉了" if k == "kev" and settings.S["kevMode"] == "off" else READY_INFO[k])
+    if k == "start" and M.ai_ready() and st("aienv") == "ok" and st("base") == "ok" and st("embed") == "ok":
+        return "auto", "启动时自动拉起，正在加载嵌入模型"
+    if k == "hwmon" and settings.S.get("hwOn"):
+        return "auto", "开关开着，正在自动拉起（不弹确认）"
+    return "wait", ""
+
+
+def refresh_ready():
+    """没在一键补齐时，按最近的自检结果给每一步标状态：已经好了的标「已就绪」，正在自动起的标「自动启动中」，
+    只有真缺东西（要下载、要你确认一次）的留着「等待」。所以每次启动不用你点一键补齐再过一遍。"""
+    if JOB["running"]:
+        return
+    res = (db.kv_get("checks") or {}).get("res") or {}
+    if not res:
+        return
+    for s in STEPS:
+        cur = JOB["steps"][s["k"]]
+        if cur["st"] == "ok":                          # 这次一键补齐装好的，留着它的说明和用时
+            continue
+        st, info = _ready(s["k"], res)
+        if st == "ready" or cur["st"] in ("wait", "ready", "auto"):
+            cur.update(st=st, info=info)
+
+
 def status():
+    refresh_ready()
     return {"running": JOB["running"], "started": JOB["started"], "finished": JOB["finished"], "cur": JOB["cur"], "line": JOB["line"][-160:],
             "steps": [{**s, **{x: JOB["steps"][s["k"]][x] for x in ("st", "info", "why", "tell", "tries", "t0", "t1")}, "prog": _clean(JOB["steps"][s["k"]]["prog"]),
                        "tail": JOB["steps"][s["k"]]["tail"][-6:], "log": paths.show(paths.LOGS / f"setup_{s['k']}.log")} for s in STEPS],
@@ -511,6 +555,8 @@ async def s_start(opts):
 async def s_kev(opts):
     if settings.S["kevMode"] == "off":
         return True, "设置里关掉了 Kev，跳过"
+    if M.kev_weights():
+        return True, "权重已下载，用到才启动"
     _say("kev", "启动 Kev。第一次会经 hf-mirror 下载它的底座（约 1.7GB），放在 models\\hf-cache")
     try:
         stop = asyncio.Event()
@@ -536,7 +582,7 @@ async def s_kev(opts):
 
 async def s_hwmon(opts):
     r = await checks.c_hwmon()
-    if r["st"] != "miss":
+    if r["st"] == "ok" or r.get("running"):
         return True, r["d"]
     if not paths.IS_WIN:
         return True, "不是 Windows，跳过"
@@ -564,9 +610,10 @@ async def already(k):
         h = await M.health(fresh=True)
         return bool(h and h.get("embed_loaded"))
     if k == "kev":
-        return settings.S["kevMode"] == "off" or await M.kev_ready()
+        return settings.S["kevMode"] == "off" or M.kev_weights() or await M.kev_ready()
     if k == "hwmon":
-        return (await checks.c_hwmon())["st"] != "miss"
+        r = await checks.c_hwmon()
+        return r["st"] == "ok" or bool(r.get("running"))
     return False
 
 

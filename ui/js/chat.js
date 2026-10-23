@@ -61,7 +61,7 @@ function renderChat() {
   var live = useLive();
   v.innerHTML = '<div class="chatv' + (CHAT.dashMin ? ' dash-min' : '') + '"><div class="chat-main">' +
     '<div class="chat-log" id="chatLog"></div>' +
-    '<form class="composer" id="composer"><textarea id="cIn" rows="1" title="Enter 发送，Shift + Enter 换行" placeholder="' + (live ? '和它说点什么……（Enter 发送）' : '演示模式：启动.bat 打开后能聊') + '"' + (live ? '' : ' disabled') + '></textarea>' +
+    '<form class="composer" id="composer"><textarea id="cIn" rows="1" title="Enter 发送，Shift + Enter 换行" placeholder="' + (live ? '和它说点什么……' : '演示模式：启动.bat 打开后能聊') + '"' + (live ? '' : ' disabled') + '></textarea>' +
     '<button class="btn primary" type="submit" id="cSend"' + (live ? '' : ' disabled') + '>发送</button></form></div>' +
     '<aside class="chat-side" id="chatSide"><div class="side-head"><div class="seg" role="tablist"><button data-ctab="status" aria-pressed="' + (CHAT.tab === 'status') + '">Agent 状态</button>' +
     '<button data-ctab="event" aria-pressed="' + (CHAT.tab === 'event') + '">这条怎么处理的</button></div><span class="dash-sum" id="dashSum"></span><button class="side-toggle" id="sideToggle" aria-label="收起或展开状态">' + (CHAT.dashMin ? '展开 ▾' : '收起 ▴') + '</button></div>' +
@@ -263,10 +263,10 @@ function agGroupsHTML(groups, C) {
     return '<div class="ag-col" style="grid-column:span ' + c.span + '">' + c.groups.map(function (g) { return agGroup(g, c.span); }).join('') + '</div>';
   }).join('') + '</div>';
 }
-function agCols() {                                   // 右边有多宽就分几列（每列至少 15rem）
+function agCols() {                                   // 右边有多宽就分几列（每列至少 16rem）
   var b = $('#sideBody'), rem = parseFloat(getComputedStyle(root).fontSize) || 16;
   var w = b && b.clientWidth ? b.clientWidth - 2 * rem : 0;
-  return w ? Math.max(1, Math.min(5, Math.floor(w / (15 * rem)))) : 4;
+  return w ? Math.max(1, Math.min(5, Math.floor(w / (16 * rem)))) : 4;
 }
 function agentHTML() {
   var a = agentData();
@@ -277,12 +277,16 @@ function agentHTML() {
     '<div class="ag-btns">' + (c.bad ? '<button class="btn mini primary" data-go-sec="prep">去补齐</button>' : '') + '<button class="btn mini" data-recheck="1">重新自检</button></div></div></div>' +
     agFlow(a) + '</div>' + agKpis(a) + agGroupsHTML(a.groups || [], agCols()) + '</div>';
 }
-/* 一屏放不下就收紧：先藏每项的那句话（停在上面还能看到），再缩健康环、链路图和大数字的小字 */
+/* 一屏放下，而且放得下就尽量松：从最松的一级（字大、留白多、每项的话显示两行）开始试，
+   放不下再一级一级收紧——最紧时藏掉每项的那句话（停在上面还能看到）、缩健康环和大数字的小字 */
+var AG_LV = [['roomy', 'roomy2'], ['roomy'], [], ['dense'], ['dense', 'dense2']];
 function agFit() {
   var b = $('#sideBody'), d = b && b.querySelector('.ag-dash'); if (!d || !b.clientHeight) return;
-  d.classList.remove('dense', 'dense2');
-  if (b.scrollHeight > b.clientHeight + 2) d.classList.add('dense');
-  if (b.scrollHeight > b.clientHeight + 2) d.classList.add('dense2');
+  for (var i = 0; i < AG_LV.length; i++) {
+    d.classList.remove('roomy', 'roomy2', 'dense', 'dense2');
+    AG_LV[i].forEach(function (c) { d.classList.add(c); });
+    if (b.scrollHeight <= b.clientHeight + 2) break;
+  }
 }
 var SIDE_RO = window.ResizeObserver ? new ResizeObserver(function () {
   if (CHAT.tab !== 'status') return;

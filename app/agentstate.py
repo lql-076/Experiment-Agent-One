@@ -15,12 +15,6 @@ from . import db, deepseek, memory, monitor, paths, router, settings, websearch
 from .models import M
 
 
-def _kev_weights() -> bool:
-    name = "models--" + settings.S.get("kevRun", "jaredpalmer/kev-0.8b").replace("/", "--")
-    snap = paths.HF_CACHE / "hub" / name / "snapshots"
-    return snap.is_dir() and any(snap.iterdir())
-
-
 def _row(k, name, st, detail, act=None, sub=None, m=None):
     r = {"k": k, "name": name, "st": st, "detail": detail}
     if act:
@@ -73,7 +67,7 @@ async def view():
         brain.append(_row("kev", "Kev（决策脑第二票）", "warn", kev.get("detail", "正在启动")))
     elif not env_ok:
         brain.append(_row("kev", "Kev（决策脑第二票）", "bad", "还没装：要先装本地模型环境，再下载约 2GB 权重", PREP))
-    elif _kev_weights():
+    elif M.kev_weights():
         brain.append(_row("kev", "Kev（决策脑第二票）", "idle", "已下载 · 闲着，用到才启动"))
     else:
         brain.append(_row("kev", "Kev（决策脑第二票）", "bad", "权重还没下载（约 2GB）", PREP))

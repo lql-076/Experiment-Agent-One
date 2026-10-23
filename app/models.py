@@ -67,6 +67,8 @@ class Manager:
         self._health_ts = 0.0
         self._kev_ok = False
         self._kev_ts = 0.0
+        self._kev_offline = False        # 这次是不是"不联网"启动的（权重都在本机）
+        self._kev_seen = False           # 这次启动后有没有真正在线过
 
     # ---------- 路径 ----------
     @property
@@ -194,16 +196,66 @@ class Manager:
         except Exception:
             ok = False
         self._kev_ok, self._kev_ts = ok, time.time()
+        if ok and not self._kev_seen:
+            self._kev_seen = True
+            from . import db
+            if db.kv_get("kev_ok") != self.s["kevRun"]:
+                db.kv_set("kev_ok", self.s["kevRun"])      # 完整启动过一次：底座和头都在本机了，以后不联网启动
         return ok
 
     def kev_installed(self):
         return (self.kev_dir() / "kev" / "serve.py").exists() and self.ai_ready()
 
+    def kev_weights(self) -> bool:
+        """Kev 的权重在不在本机（models\\hf-cache\\hub）：Kev 的快照在；它要是 LoRA，底座的快照也要在；
+        没有下了一半的 .incomplete 文件。"""
+        run = str(self.s.get("kevRun") or "")
+        if os.path.isdir(run):
+            return True
+        hub = paths.HF_CACHE / "hub"
+
+        def snaps(repo):
+            d = hub / ("models--" + repo.split("@")[0].replace("/", "--")) / "snapshots"
+            return [x for x in d.iterdir() if x.is_dir()] if d.is_dir() else []
+
+        def has_weights(dirs):
+            return any(f.suffix in (".pt", ".safetensors") for x in dirs for f in x.iterdir())
+
+        try:
+            mine = snaps(run)
+            if not has_weights(mine):
+                return False
+            for x in mine:
+                ac = x / "adapter_config.json"
+                if ac.exists():
+                    import json
+                    base = json.loads(ac.read_text(encoding="utf-8")).get("base_model_name_or_path") or ""
+                    if base and not os.path.isdir(base) and not any((y / "config.json").exists() for y in snaps(base)):
+                        return False
+                    if base and not os.path.isdir(base) and not has_weights(snaps(base)):
+                        return False
+            return not any(hub.glob("models--*/blobs/*.incomplete"))
+        except (OSError, ValueError):
+            return False
+
+    def kev_cached(self) -> bool:
+        """成功启动过一次、权重还在：以后启动不联网（HF_HUB_OFFLINE），不会再去下载。"""
+        from . import db
+        return db.kv_get("kev_ok") == self.s["kevRun"] and self.kev_weights()
+
     def start_kev(self):
         if not self.kev_installed():
             raise RuntimeError("Kev 还没装好（运行 安装本地模型环境.bat）")
+        if self._kev_offline and not self._kev_seen:
+            # 上次不联网启动、没起来（本机的文件不全）：这次联网，缺什么补什么
+            from . import db
+            db.kv_set("kev_ok", None)
         cmd = [self.aipy(), "-m", "kev.serve", "--run", self.s["kevRun"], "--port", self.s["kevPort"], "--device", "cuda"]
-        self.kevp.start(cmd, self.kev_dir(), self.env())
+        env = self.env()
+        self._kev_offline, self._kev_seen = self.kev_cached(), False
+        if self._kev_offline:
+            env.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
+        self.kevp.start(cmd, self.kev_dir(), env)
 
     async def ensure_kev(self, wait=False, timeout=600):
         if self.s["kevMode"] == "off":
@@ -220,6 +272,9 @@ class Manager:
             if await self.kev_ready():
                 return True
             if not self.kevp.alive():
+                if self._kev_offline and not self._kev_seen:
+                    self.start_kev()                    # 不联网没起来：联网再起一次（缺的文件补上）
+                    continue
                 raise RuntimeError("Kev 启动失败：\n" + self.kevp.tail())
         return False
 

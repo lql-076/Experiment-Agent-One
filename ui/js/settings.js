@@ -107,9 +107,9 @@ function osdLines() {
   return out;
 }
 function osdBoxHTML() {
-  var size = { s: .62, m: .72, l: .88 }[S.set.osdSize] || .72;
-  return '<div class="osd-box pos-' + (S.set.osdPos || 'tl') + '" style="--m:' + Math.round((+S.set.osdMargin || 16) / 4) + 'px;--a:' + ((+S.set.osdOpacity || 80) / 100) + ';font-size:' + size + 'rem">' +
-    osdLines().map(function (l) { return '<span class="ol">' + esc(l[0]) + '</span><b style="color:' + l[2] + '">' + esc(l[1]) + '</b>'; }).join('') + '</div>';
+  var h = S.set.osdLayout === 'h', size = ({ s: .62, m: .72, l: .88 }[S.set.osdSize] || .72) * (h ? .82 : 1);
+  return '<div class="osd-box pos-' + (S.set.osdPos || 'tl') + (h ? ' lay-h' : '') + '" style="--m:' + Math.round((+S.set.osdMargin || 16) / 4) + 'px;--a:' + ((+S.set.osdOpacity || 80) / 100) + ';font-size:' + size.toFixed(3) + 'rem">' +
+    osdLines().map(function (l) { var x = '<span class="ol">' + esc(l[0]) + '</span><b style="color:' + l[2] + '">' + esc(l[1]) + '</b>'; return h ? '<span class="op">' + x + '</span>' : x; }).join('') + '</div>';
 }
 function osdHTML() {
   var on = osdItems();
@@ -118,7 +118,13 @@ function osdHTML() {
       return '<button class="chip" data-osd-item="' + it[0] + '" aria-pressed="' + (on.indexOf(it[0]) >= 0) + '">' + it[1] + '</button>';
     }).join('') + '</div><p class="help">预览里的数字是现在的真实读数' + (liveHW() ? '' : '（演示）') + '。帧数要在玩游戏、并且「硬件监控助手」开着时才有。</p></div></div>';
 }
-function osdPreview() { var p = $('#osdPrev'); if (!p) return; var b = p.querySelector('.osd-box'); if (b) b.outerHTML = osdBoxHTML(); }
+function osdPreview() { var p = $('#osdPrev'); if (!p) return; var b = p.querySelector('.osd-box'); if (b) b.outerHTML = osdBoxHTML(); osdFitPrev(); }
+/* 横着一行在预览的小画面里放不下时，按比例缩小字（游戏里是一整行，预览也画成一整行） */
+function osdFitPrev() {
+  var p = $('#osdPrev'), b = p && p.querySelector('.osd-box.lay-h'); if (!b || !p.clientWidth) return;
+  var room = p.clientWidth - 16, w = b.scrollWidth;
+  if (w > room) b.style.fontSize = (parseFloat(b.style.fontSize) * room / w).toFixed(3) + 'rem';
+}
 setInterval(function () {
   if (S.view !== 'settings') return;
   if (S.sec === 'osd') { osdPreview(); var f = $('#fpsSeen'), x = fpsSeenHTML(); if (f && f.innerHTML !== x) f.innerHTML = x; }
@@ -175,13 +181,14 @@ function renderSettings() {
   $('#sbody').innerHTML = sectionBody(secById(S.sec));
   if (S.sec === 'remind') fetchReminders();
   if (S.sec === 'prep') setupPoll();
+  if (S.sec === 'osd') requestAnimationFrame(osdFitPrev);
 }
 function goSec(id) {
   if (S.sec === id) return;
   S.sec = id; S.resetArm = false;
   $$('.sitem').forEach(function (b) { b.setAttribute('aria-current', b.dataset.sec === id); });
   var b = $('#sbody');
-  var fill = function () { b.innerHTML = sectionBody(secById(id)); b.scrollTop = 0; if (id === 'remind') fetchReminders(); if (id === 'prep') setupPoll(); };
+  var fill = function () { b.innerHTML = sectionBody(secById(id)); b.scrollTop = 0; if (id === 'remind') fetchReminders(); if (id === 'prep') setupPoll(); if (id === 'osd') requestAnimationFrame(osdFitPrev); };
   if (S.set.motion === 'off') { fill(); return; }
   b.style.transition = 'opacity .14s ease'; b.style.opacity = '0';
   setTimeout(function () { fill(); replay(b); b.style.opacity = ''; }, 140);
