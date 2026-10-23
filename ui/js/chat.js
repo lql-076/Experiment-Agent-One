@@ -263,10 +263,10 @@ function agGroupsHTML(groups, C) {
     return '<div class="ag-col" style="grid-column:span ' + c.span + '">' + c.groups.map(function (g) { return agGroup(g, c.span); }).join('') + '</div>';
   }).join('') + '</div>';
 }
-function agCols() {                                   // 右边有多宽就分几列（每列至少 16rem）
+function agCols(minRem) {                             // 右边有多宽就分几列（每列至少 16rem；收紧时 13rem、11rem）
   var b = $('#sideBody'), rem = parseFloat(getComputedStyle(root).fontSize) || 16;
   var w = b && b.clientWidth ? b.clientWidth - 2 * rem : 0;
-  return w ? Math.max(1, Math.min(5, Math.floor(w / (16 * rem)))) : 4;
+  return w ? Math.max(1, Math.min(6, Math.floor(w / ((minRem || 16) * rem)))) : 4;
 }
 function agentHTML() {
   var a = agentData();
@@ -278,20 +278,40 @@ function agentHTML() {
     agFlow(a) + '</div>' + agKpis(a) + agGroupsHTML(a.groups || [], agCols()) + '</div>';
 }
 /* 一屏放下，而且放得下就尽量松：从最松的一级（字大、留白多、每项的话显示两行）开始试，
-   放不下再一级一级收紧——最紧时藏掉每项的那句话（停在上面还能看到）、缩健康环和大数字的小字 */
-var AG_LV = [['roomy', 'roomy2'], ['roomy'], [], ['dense'], ['dense', 'dense2']];
+   放不下再一级一级收紧——藏掉每项的那句话（停在上面还能看到）、缩健康环和大数字的小字，最后分更多列（每列窄一点）。
+   竖屏（v1.8.2）：状态区的高度跟着内容走，最多占 62%（实在放不下再到 75%），下面留给聊天；不靠滚轮。 */
+var AG_LV = [{ c: ['roomy', 'roomy2'], w: 16 }, { c: ['roomy'], w: 16 }, { c: [], w: 16 }, { c: ['dense'], w: 14 }, { c: ['dense', 'dense2'], w: 13 }, { c: ['dense', 'dense2', 'dense3'], w: 11 }];
+function agLevel(d, lv) {
+  d.classList.remove('roomy', 'roomy2', 'dense', 'dense2', 'dense3');
+  lv.c.forEach(function (c) { d.classList.add(c); });
+  var cols = d.querySelector('.ag-cols'), C = agCols(lv.w), a = agentData();
+  if (cols && a && +cols.dataset.c !== C) cols.outerHTML = agGroupsHTML(a.groups || [], C);
+}
 function agFit() {
   var b = $('#sideBody'), d = b && b.querySelector('.ag-dash'); if (!d || !b.clientHeight) return;
-  for (var i = 0; i < AG_LV.length; i++) {
-    d.classList.remove('roomy', 'roomy2', 'dense', 'dense2');
-    AG_LV[i].forEach(function (c) { d.classList.add(c); });
-    if (b.scrollHeight <= b.clientHeight + 2) break;
+  var cv = $('.chatv'), side = $('.chat-side');
+  var port = root.dataset.orient === 'portrait' && cv && side && !cv.classList.contains('dash-min');
+  if (!port) {
+    if (cv) cv.style.removeProperty('--side-h');
+    for (var i = 0; i < AG_LV.length; i++) { agLevel(d, AG_LV[i]); if (b.scrollHeight <= b.clientHeight + 2) break; }
+    return;
   }
+  var H = cv.clientHeight, cs = getComputedStyle(b), pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  var chrome = side.offsetHeight - b.clientHeight, need = 0, pick = -1;
+  d.style.minHeight = '0';
+  [0.62, 0.75].some(function (f) {
+    for (var j = 0; j < AG_LV.length; j++) {
+      agLevel(d, AG_LV[j]); need = Math.ceil(chrome + pad + d.offsetHeight + 2);
+      if (need <= H * f) { pick = j; return true; }
+    }
+    return false;
+  });
+  d.style.minHeight = '';
+  var h = Math.round(pick < 0 ? H * 0.75 : Math.max(need, H * 0.4));
+  var cur = parseFloat(cv.style.getPropertyValue('--side-h')) || 0;
+  if (Math.abs(cur - h) > 2) cv.style.setProperty('--side-h', h + 'px');
 }
-var SIDE_RO = window.ResizeObserver ? new ResizeObserver(function () {
-  if (CHAT.tab !== 'status') return;
-  var d = $('#sideBody .ag-cols'); if (d && +d.dataset.c !== agCols()) { CHAT.sig = ''; fillSide(); } else agFit();
-}) : null;
+var SIDE_RO = window.ResizeObserver ? new ResizeObserver(function () { if (CHAT.tab === 'status') agFit(); }) : null;
 /* 总览上的小卡片：健康环 + 一格一个图标 */
 function agentMiniHTML() {
   var a = agentData();

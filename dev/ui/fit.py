@@ -40,6 +40,16 @@ with sync_playwright() as pw:
             if over:
                 bad.append(f"{w}×{h} {name}")
                 p.screenshot(path=f"{OUT}/fit-{w}-{k}.png")
+        if h > w:                                      # 竖屏把字调大（设置 › 外观 › 文字大小 130%）：对话页也不该要滚（v1.8.2）
+            for k in ("chat", "home"):
+                p.evaluate(f"S.set.scale=130; applyScale(); goView('{k}')")
+                p.wait_for_timeout(1200)
+                over = p.evaluate(JS, LISTS)
+                print(("  ✓ " if not over else "  ✗ ") + f"{w}×{h} 字 130% {k}" + (f"：要滚 {over}" if over else ""), flush=True)
+                if over:
+                    bad.append(f"{w}×{h} 字 130% {k}")
+                    p.screenshot(path=f"{OUT}/fit-{w}-130-{k}.png")
+            p.evaluate("S.set.scale=100; applyScale()")
         p.close()
     b.close()
 print("JS 报错：", errs or "没有")

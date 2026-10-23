@@ -894,7 +894,8 @@ html[data-orient="portrait"] .chatv.dash-min .dash-sum{display:block}
 .ag-dash{display:flex;flex-direction:column;gap:.75rem;min-height:100%}
 .ag-dash>.ag-cols{flex:1}
 .ag-top{display:grid;grid-template-columns:minmax(0,22rem) minmax(0,1fr);gap:.75rem}
-@container (max-width:52rem){.ag-top{grid-template-columns:minmax(0,1fr)}}
+@container (max-width:52rem){.ag-top{grid-template-columns:minmax(0,17rem) minmax(0,1fr)}}
+@container (max-width:40rem){.ag-top{grid-template-columns:minmax(0,1fr)}}
 .ag-health,.ag-flow,.ag-grp{border:1px solid var(--cardb);border-radius:var(--r);background:var(--card)}
 .ag-health{display:flex;align-items:center;gap:1.1rem;padding:.85rem 1.1rem;background:radial-gradient(120% 130% at 0% 0%,color-mix(in srgb,var(--sc) 15%,transparent),transparent 62%),var(--card)}
 .hring{position:relative;width:7.5rem;aspect-ratio:1;flex:none}
@@ -1017,7 +1018,7 @@ button.kp:hover{border-color:color-mix(in srgb,var(--sc) 55%,transparent);transf
 .at .ab{width:2.625rem;height:2.625rem}.at .ab .ab-i{width:1.25rem;height:1.25rem}.at .ab-st{width:.95rem;height:.95rem}
 .at-b{display:flex;flex-direction:column;gap:.05rem;min-width:0}
 .at-h{display:flex;align-items:baseline;gap:.35rem;min-width:0}
-.at-n{flex:none;max-width:70%;font-size:.875rem;font-weight:650;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.at-n{flex:0 1 auto;min-width:2.5rem;max-width:70%;font-size:.875rem;font-weight:650;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .at-h em{flex:1;min-width:0;font-style:normal;font-size:.6875rem;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .at-h em+.at-tag,.at-h em+.at-act{margin-left:0}
 .at-tag{margin-left:auto;flex:none;align-self:center;padding:0 .4rem;border-radius:1rem;font-size:.625rem;line-height:1.5;color:var(--sc);background:color-mix(in srgb,var(--sc) 14%,transparent);border:1px solid color-mix(in srgb,var(--sc) 35%,transparent)}
@@ -1045,6 +1046,19 @@ button.kp:hover{border-color:color-mix(in srgb,var(--sc) 55%,transparent);transf
 .ag-dash.dense2 .fn-t small{display:none}
 .ag-dash.dense2 .fl-lane{padding-top:.4rem}
 .ag-dash.dense2{gap:.6rem}
+.ag-dash.dense2 .at-tag{display:none}
+.ag-dash.dense2 .ag-health{gap:.75rem}.ag-dash.dense2 .ag-legend{grid-template-columns:repeat(auto-fill,minmax(4.25rem,1fr));gap:.2rem .5rem}.ag-dash.dense2 .lgd{font-size:.75rem}
+/* 最紧（竖屏、字调得很大时）：提醒那条专线、大数字的标题也收掉，每项更矮 */
+.ag-dash.dense3{gap:.45rem}
+.ag-dash.dense3 :is(.ag-cols,.ag-col){gap:.4rem}
+.ag-dash.dense3 .fl-lane{display:none}.ag-dash.dense3 .fl-grid{min-height:5.5rem}.ag-dash.dense3 .ag-flow{padding:.45rem .7rem .5rem;gap:.3rem}
+.ag-dash.dense3 .fn{padding:.3rem .8rem .3rem .45rem}.ag-dash.dense3 .fn-r{padding:.2rem .8rem .2rem .4rem}
+.ag-dash.dense3 .hring{width:5rem}.ag-dash.dense3 .hr-c b{font-size:1.5rem}.ag-dash.dense3 .hr-c span{display:none}.ag-dash.dense3 .ag-health{padding:.5rem .8rem}
+.ag-dash.dense3 .ag-hl{font-size:.9375rem}
+.ag-dash.dense3 .kp{padding:.4rem .6rem .45rem .7rem}.ag-dash.dense3 .kp-ic{width:1.75rem;height:1.75rem}.ag-dash.dense3 .kp-ic svg{width:1.125rem;height:1.125rem}.ag-dash.dense3 .kp-v{font-size:1.125rem}.ag-dash.dense3 .kp-bar{margin-top:.2rem}
+.ag-dash.dense3 .ag-grp{padding:.4rem .45rem .45rem}.ag-dash.dense3 .ag-grp>header{margin-bottom:.3rem}.ag-dash.dense3 .ag-tiles{gap:.25rem}
+.ag-dash.dense3 .at{padding:.2rem .35rem;gap:.4rem}.ag-dash.dense3 .at .ab{width:1.875rem;height:1.875rem}.ag-dash.dense3 .at .ab .ab-i{width:1rem;height:1rem}.ag-dash.dense3 .at .ab-st{width:.75rem;height:.75rem}
+.ag-dash.dense3 .at-n{font-size:.8125rem}.ag-dash.dense3 .at-m{margin-top:0}
 /* v1.8.1 放得下就松一点、字大一点（作者嫌密密麻麻）：agFit 从最松的 roomy2 开始试，放不下再一级一级收紧 */
 .ag-dash.roomy,.ag-dash.roomy2{gap:1rem}
 .roomy :is(.ag-cols,.ag-col){gap:1rem}
@@ -1097,7 +1111,7 @@ html:is([data-perf="on"],[data-motion="reduced"]) .fl-svg path.on{filter:none}
 .chatv .chip[aria-pressed="true"]{border-color:var(--accent);color:var(--text)}
 html[data-orient="portrait"] .chatv{display:flex;flex-direction:column}
 html[data-orient="portrait"] .chat-main{flex:1;min-height:0;border-right:0}
-html[data-orient="portrait"] .chat-side{order:-1;flex:none;height:58%;overflow:hidden;border-bottom:1px solid var(--line);transition:height .3s var(--ease)}
+html[data-orient="portrait"] .chat-side{order:-1;flex:none;height:var(--side-h,58%);overflow:hidden;border-bottom:1px solid var(--line);transition:height .3s var(--ease)}
 html[data-orient="portrait"] .chatv.dash-min .chat-side{height:3.5rem}
 html[data-orient="portrait"] .side-toggle{display:block}
 html[data-orient="portrait"] .side-head{padding:.6rem 1rem}
