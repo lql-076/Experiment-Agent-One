@@ -41,12 +41,6 @@ CREATE TABLE IF NOT EXISTS categories(
 CREATE TABLE IF NOT EXISTS chunks(
   hash TEXT PRIMARY KEY, file TEXT, text TEXT, private INTEGER DEFAULT 0, vec BLOB, mtime REAL);
 CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);
-CREATE TABLE IF NOT EXISTS notes(
-  vault TEXT, path TEXT, mtime REAL, size INTEGER, title TEXT, fmpriv INTEGER DEFAULT 0, private INTEGER DEFAULT 0,
-  links TEXT, PRIMARY KEY(vault, path));
-CREATE TABLE IF NOT EXISTS note_chunks(
-  hash TEXT PRIMARY KEY, vault TEXT, path TEXT, heading TEXT, text TEXT, private INTEGER DEFAULT 0, vec BLOB);
-CREATE INDEX IF NOT EXISTS nc_note ON note_chunks(vault, path);
 """
 
 

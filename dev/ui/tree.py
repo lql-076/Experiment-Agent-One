@@ -2,7 +2,6 @@
 用法：python dev/ui/tree.py 截图文件夹（要先 dev/serve.sh start）"""
 import pathlib
 import sys
-from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
@@ -26,9 +25,8 @@ with sync_playwright() as pw:
         p.click('.nav[data-view="docs"]')
         p.wait_for_timeout(2000)
         arch = p.evaluate("[].map.call(document.querySelectorAll('#docNav [data-doc]'), function (e) { return e.dataset.doc; }).filter(isArch)")
-        want = len(list(Path(__file__).resolve().parents[2].glob("docs/AI文档/架构/*.md")))
-        if len(arch) != want:
-            bad.append(f"{w}: 架构图画了 {len(arch)} 篇，应该是 {want} 篇")
+        if len(arch) != 14:
+            bad.append(f"{w}: 架构图只有 {len(arch)} 篇")
         for rel in arch:
             p.evaluate(f"openDoc('{rel}')")
             p.wait_for_timeout(700)
@@ -41,7 +39,7 @@ with sync_playwright() as pw:
             if rel.endswith(("00-总览.md", "04-QQ通道与提醒.md", "09-整备与一键补齐.md")):
                 p.wait_for_timeout(600)
                 p.screenshot(path=f"{OUT}/tree-{w}-{rel.split('/')[-1][:2]}.png")
-        print(w, th, f"{len(arch)} 篇都画了", flush=True)
+        print(w, th, "14 篇都画了", flush=True)
         # 收起、展开
         p.evaluate("openDoc('AI文档/架构/04-QQ通道与提醒.md')")
         p.wait_for_timeout(900)

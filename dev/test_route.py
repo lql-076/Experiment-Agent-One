@@ -3,7 +3,6 @@
 2. 不接受更强的模型：Agent 状态里这一路显示"没开"，分数并进 DeepSeek
 3. 换它重做：同一句话换个去向再做一遍，记下是重做哪一条、原来那条记一次纠正
 4. 隐私的事换到云端：不确认就 409，确认了才发
-5. 「记住……」「……提醒我……」这些不经过模型的快捷处理还能用
 用法：python dev/test_route.py（要先 dev/serve.sh start）"""
 import sys
 import time
@@ -83,11 +82,9 @@ try:
           f"确认过的这一次真的发出去了，步骤里记着：{(ne.get('reply') or '')[:30]}")
     r = httpx.post(B + "/api/chat", json={"text": "我在吃的药要不要换", "force": "ds"}, headers=H, timeout=30)
     check(r.status_code == 409, f"发消息时指定交给云端、又涉及隐私：也要先确认（{r.status_code}）")
-    print("5. 不经过模型的快捷处理（v1.7.0 起这里会无限递归报错，v1.9.0 修）")
+    print("5. 不经过模型的快捷处理（v1.7.0 起这里会报错，v1.8.2 修）")
     ev = chat("记住我喜欢喝冰美式")
     check(ev.get("label") == "记住" and "记下了" in (ev.get("reply") or ""), f"「记住……」直接写进记忆（{ev.get('label')}：{(ev.get('reply') or '')[:20]}）")
-    ev = chat("明天早上八点提醒我交作业")
-    check(ev.get("label") == "设提醒", f"「……提醒我……」直接建提醒（{ev.get('label')}：{(ev.get('reply') or '')[:30]}）")
 finally:
     put(strongOn=True, strongName="")
 

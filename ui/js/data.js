@@ -166,17 +166,9 @@ var SECTIONS = [
     { note: '单聊主动消息官方允许，每人每天上限 1000 条；但你在 QQ 里可以关掉"允许主动发送"，这时提醒会改成电脑弹窗 + 界面卡片。你 55 分钟内说过话的话，提醒会用被动回复，最稳。' }
   ] },
   { id: 'memory', name: '记忆与文件', desc: '记忆、技能、提示词都是中文 Markdown，你随时能打开看、改。agent 只能读写这个文件夹。', fields: [
-    { k: 'memDir', l: 'agent 自己的文件夹', place: 'memory', h: '想放进 Obsidian 库：到 设置 › Obsidian 笔记 点「把记忆搬进……」，会自动复制过去' },
+    { k: 'memDir', l: 'agent 自己的文件夹', place: 'memory', h: '想放进 Obsidian 库就填库里的一个子文件夹，比如 D:\\Obsidian\\我的库\\agent' },
     { k: 'useGit', l: '用 git 记录每次改动（可一键撤销）', t: 'toggle', d: true },
     { k: 'logDays', l: '日志保留天数', t: 'number', u: '天', d: 90 }
-  ] },
-  { id: 'obsidian', name: 'Obsidian 笔记', desc: '接上你的 Obsidian 库：问到你写过、记过的东西先查笔记；「存到笔记：……」写进库里的 Agent 收件箱；每天帮你整理（只列建议，不改你的笔记）。私人文件夹里的只给本地小脑。', custom: 'obsidian', fields: [
-    { k: 'obsOn', l: '接 Obsidian', t: 'toggle', d: true, h: '关掉就当没接：不查、不写、不整理（库的设置留着）' },
-    { k: 'obsRead', l: '回答前先查笔记', t: 'toggle', d: true, h: '本地小脑能看全部；DeepSeek 只看非私人的，它还能自己再查、读整篇' },
-    { k: 'obsWrite', l: '往库里写（只写「Agent 收件箱」）', t: 'toggle', d: true, h: '「存到笔记：……」、每日整理的结果写在这里；不改你自己的笔记；写错了能在 报告 › 改动 里撤销（挪进「已撤销」，不删）' },
-    { k: 'obsInbox', l: '收件箱文件夹叫什么', ph: 'Agent 收件箱' },
-    { k: 'obsTidy', l: '每日整理时查前后矛盾', t: 'toggle', d: true, h: '像的两段交给模型看有没有对不上的（非私人的交 DeepSeek，花钱很少；私人的交本地小脑）。可以加的链接不花钱，一直会列' },
-    { note: '规矩（写死，改不了）：只读的库一个字都不写，E 盘的库一律只读；索引存在 Agent 自己的 data 文件夹，不往库里放任何东西；私人笔记不发出本机、不进训练数据。' }
   ] },
   { id: 'routing', name: '分流旋钮', desc: '决策脑每次给四个去向打分，这几条线决定交给谁。', fields: [
     { k: 'take', l: '本地小脑接手线', t: 'range', min: 5, max: 95, step: 5, u: '%', d: 60, h: '本地小脑的把握低于这条线，就交给 DeepSeek' },

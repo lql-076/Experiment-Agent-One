@@ -5,7 +5,6 @@
 3. 整理记忆：收件箱里的内容合并进记忆文件（隐私内容留在收件箱，等本地小脑整理）
 4. 周日起草周报：每条结论必须带事件编号，程序核对编号存在才保留
 5. 出题造样本：给攒样本中的新类别生成相似的变体，真实样本至少占 25%
-6. 整理 Obsidian 笔记（app/obsidian.py）：今天聊了什么、可能矛盾的地方、可以加的链接，写进库里的「Agent 收件箱/每日」，不改你的笔记
 """
 import asyncio
 import json
@@ -163,26 +162,15 @@ async def ingest_summary(rel: str):
     return "已保存为参考资料（只在本地检索，不进训练集）" + (f"，新增 {n} 段索引" if n else "")
 
 
-NAMES = {"teacher": ("给判断打标签", "条"), "categories": ("给新类别分组起名", "组"), "memory": ("整理记忆", "条"), "synthetic": ("出题造样本", "条"),
-         "obsidian": ("整理 Obsidian 笔记", "条建议")}
-
-
-async def obsidian_tidy():
-    """每日整理笔记：今天聊了什么、可能矛盾的地方、可以加的链接，写进收件箱「每日」文件夹（不改你的笔记）。"""
-    from . import obsidian
-    if not obsidian.on():
-        return 0
-    r = await obsidian.tidy()
-    return r.get("links", 0) + r.get("conflicts", 0) or (1 if r.get("written") else 0)
+NAMES = {"teacher": ("给判断打标签", "条"), "categories": ("给新类别分组起名", "组"), "memory": ("整理记忆", "条"), "synthetic": ("出题造样本", "条")}
 
 
 async def run_all():
     from . import feed
     res, errs = {}, {}
     t0 = time.time()
-    feed.add("开始每日差事：打标签、给新类别起名、整理记忆、造样本、整理笔记（用 DeepSeek，花钱很少）", "head", job="每日差事")
-    for name, fn in (("teacher", teacher_labels), ("categories", name_categories), ("memory", consolidate_memory), ("synthetic", synthesize),
-                     ("obsidian", obsidian_tidy)):
+    feed.add("开始每日差事：打标签、给新类别起名、整理记忆、造样本（用 DeepSeek，花钱很少）", "head", job="每日差事")
+    for name, fn in (("teacher", teacher_labels), ("categories", name_categories), ("memory", consolidate_memory), ("synthetic", synthesize)):
         label, unit = NAMES[name]
         feed.add(label + "……", "info", job="每日差事", step=label)
         try:

@@ -23,7 +23,6 @@ step "说明页树状图" "$PY" dev/ui/tree.py dev/.run/shots
 step "重新自检窗口 · 连后端" "$PY" dev/ui/recheck.py dev/.run/shots
 step "整备自检和一键补齐的状态" "$PY" dev/test_checks.py
 step "联网搜索和查说明书" "$PY" dev/test_search.py
-step "接 Obsidian（两个假库）" "$PY" dev/test_obsidian.py
 step "更强的模型和换它重做" "$PY" dev/test_route.py
 step "设置里的联网搜索" "$PY" dev/ui/search.py dev/.run/shots
 step "对话页、Agent 状态、游戏内显示设置" "$PY" dev/ui/chat.py dev/.run/shots

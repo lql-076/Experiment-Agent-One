@@ -98,16 +98,15 @@ var AGI = {
   pad: '<path d="M7.2 7.5h9.6a4.6 4.6 0 0 1 4.5 5.5l-.7 3.7a2.6 2.6 0 0 1-4.6 1.1L14.4 16H9.6L8 17.8a2.6 2.6 0 0 1-4.6-1.1L2.7 13a4.6 4.6 0 0 1 4.5-5.5z"/><path d="M8 10.3v3.4M6.3 12h3.4"/><path d="M15.3 11h.01M17.4 13h.01" stroke-width="2.4"/>',
   hourglass: '<path d="M7 3.5h10M7 20.5h10M8 3.5v3.2a4 4 0 0 0 1.6 3.2L12 12l2.4-2.1A4 4 0 0 0 16 6.7V3.5M8 20.5v-3.2a4 4 0 0 1 1.6-3.2L12 12l2.4 2.1a4 4 0 0 1 1.6 3.2v3.2"/>',
   book: '<path d="M12 6.5c-2-1.6-4.6-2-8-1.8v13.5c3.4-.2 6 .2 8 1.8 2-1.6 4.6-2 8-1.8V4.7c-3.4-.2-6 .2-8 1.8z"/><path d="M12 6.5v13.5"/>',
-  notes: '<path d="M12 2.8l7.2 4.6v9.2L12 21.2l-7.2-4.6V7.4z"/><path d="M12 2.8v8.6l7.2 5.2M12 11.4l-7.2 5.2"/>',
   coin: '<circle cx="12" cy="12" r="8"/><path d="M9 9.5h6M9 13h6M12 9.5V17"/>',
   tool: '<path d="M14.5 5.5a4 4 0 0 0 4.9 4.9l-8.6 8.6a2 2 0 0 1-2.8-2.8l8.6-8.6"/>',
   screen: '<rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/><path d="M9 20h6M12 16v4"/>',
   antenna: '<circle cx="12" cy="11" r="2"/><path d="M12 13v7.5M9 20.5h6M8.2 7.2a5.4 5.4 0 0 0 0 7.6M15.8 7.2a5.4 5.4 0 0 1 0 7.6M5.4 4.4a9.3 9.3 0 0 0 0 13.2M18.6 4.4a9.3 9.3 0 0 1 0 13.2"/>',
   layers: '<path d="M12 3.5l8.5 4.5-8.5 4.5L3.5 8z"/><path d="M3.5 12l8.5 4.5 8.5-4.5M3.5 16l8.5 4.5 8.5-4.5"/>'
 };
-var AG_ICON = { embed: 'route', kev: 'vote', base: 'chip', lora: 'brain', loras: 'sprout', cats: 'sprout', ds: 'cloud', search: 'web', claude: 'prompt', qq: 'msg', remind: 'bell', obsidian: 'notes',
+var AG_ICON = { embed: 'route', kev: 'vote', base: 'chip', lora: 'brain', loras: 'sprout', cats: 'sprout', ds: 'cloud', search: 'web', claude: 'prompt', qq: 'msg', remind: 'bell',
   backend: 'server', model: 'gpu', hw: 'pulse', nightly: 'moon', osd: 'pad', queue: 'hourglass', memory: 'book' };
-var AG_SHORT = { embed: '语义路由', kev: 'Kev', base: '底座', loras: '小脑', cats: '新类别', ds: 'DeepSeek', search: '联网搜索', claude: '更强的模型', qq: 'QQ', remind: '提醒', obsidian: 'Obsidian',
+var AG_SHORT = { embed: '语义路由', kev: 'Kev', base: '底座', loras: '小脑', cats: '新类别', ds: 'DeepSeek', search: '联网搜索', claude: '更强的模型', qq: 'QQ', remind: '提醒',
   backend: '后端', model: '模型服务', hw: '硬件监控', nightly: '每日差事', osd: '游戏内显示', queue: '排队', memory: '记忆' };
 var AG_GROUP_ICON = { '大脑': 'brain', '云端': 'cloud', '通道': 'antenna', '后台': 'layers' };
 var ST_ORDER = ['ok', 'idle', 'warn', 'bad', 'off'];
@@ -132,8 +131,7 @@ var AGENT_DEMO = { head: '缺：Kev、底座', count: { ok: 9, idle: 1, warn: 1,
     { k: 'kev', name: 'Kev（决策脑第二票）', st: 'bad', detail: '权重还没下载（约 2GB）', act: { label: '去补齐', sec: 'prep' } },
     { k: 'base', name: '本地通用（底座 MiniCPM5-2B）', st: 'bad', detail: '还没下载：本地小脑用不了，隐私的事只能排队', act: { label: '去补齐', sec: 'prep' } },
     { k: 'loras', name: '训练出来的小脑', st: 'off', detail: '还没有 · 某类事攒够样本、你同意后才训练 · 正在攒 2 类', m: { p: .43, txt: '最多 86 / 200' },
-      sub: [{ k: 'cat:宠物', name: '宠物', st: 'idle', detail: '攒样本中 86 / 200', m: { p: .43, txt: '86 / 200' } }, { k: 'cat:做饭', name: '做饭', st: 'idle', detail: '攒样本中 37 / 200', m: { p: .185, txt: '37 / 200' } }] },
-    { k: 'obsidian', name: 'Obsidian 笔记', st: 'ok', detail: '2 个库 · 150 篇 · 私人 6 篇只在本地 · 写到「资料库/Agent 收件箱」', m: { txt: '150 篇' } }] },
+      sub: [{ k: 'cat:宠物', name: '宠物', st: 'idle', detail: '攒样本中 86 / 200', m: { p: .43, txt: '86 / 200' } }, { k: 'cat:做饭', name: '做饭', st: 'idle', detail: '攒样本中 37 / 200', m: { p: .185, txt: '37 / 200' } }] }] },
   { name: '云端', items: [{ k: 'ds', name: 'DeepSeek', st: 'ok', detail: 'Key 正常 · 余额 ¥8.59 · 模型 deepseek-flash', m: { p: .95, txt: '¥8.59' } },
     { k: 'search', name: '联网搜索', st: 'ok', detail: '开着 · 今天 7 / 200 次', m: { p: .035, txt: '7 / 200' } }, { k: 'claude', name: '更强的模型', st: 'ok', detail: '特别复杂的事写好提示词，你自己去问（网页 Claude、ChatGPT……）' }] },
   { name: '通道', items: [{ k: 'qq', name: 'QQ', st: 'warn', detail: '在线 · 还没绑定你的 QQ', act: { label: '去补齐', sec: 'prep' } }, { k: 'remind', name: '提醒', st: 'ok', detail: '开着 3 条 · 下一个 22:00 吃药', m: { txt: '22:00' } }] },

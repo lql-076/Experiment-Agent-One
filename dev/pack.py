@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FORBID = ("data/", "memory/", "memory.", "ai-env/", ".venv/", "tools/cache/", "tools/tmp/", "models/hf-cache/", "models/ms-cache/")
+FORBID = ("data/", "memory/", "ai-env/", ".venv/", "tools/cache/", "tools/tmp/", "models/hf-cache/", "models/ms-cache/")
 FORBID_EXT = (".db", ".bin", ".safetensors", ".gguf", ".whl", ".pt", ".pth", ".env", ".jsonl")
 
 

@@ -18,7 +18,7 @@ from datetime import datetime
 
 import httpx
 
-from . import db, deepseek, obsidian, privacy, settings
+from . import db, deepseek, privacy, settings
 
 PRICE_USD = 0.75 / 1000          # 每次成功请求
 WEEK = "一二三四五六日"
@@ -157,31 +157,19 @@ def system_hint() -> str:
             "回答用中文、简短直接；用到了网上的信息，在最后列出来源（标题 + 链接，最多 3 条）。")
 
 
-NOTES_HINT = ("你还可以用 search_notes 在他自己的 Obsidian 笔记里找、用 read_note 读整篇。问到他写过、记过的东西（小说设定、人物、大纲、计划……）"
-              "先查笔记，以笔记为准，不要自己编；用到了哪篇，在回答最后一行写「笔记：《篇名》」。私人笔记不会给你，查不到就说没查到。")
-
-
-async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text, steps, progress=None, web=True, notes=False):
-    """让 DeepSeek 带着工具回答：web 联网搜索、读网页；notes 查他的 Obsidian 笔记（只给非私人的）。
-    返回 {"text","cny","searched","fetched","sources","notes"}；steps 里追加每一步。progress(文字)：处理到哪一步了（对话页实时显示）。"""
+async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text, steps, progress=None):
+    """让 DeepSeek 带着搜索工具回答。返回 {"text","cny","searched","fetched","sources"}；steps 里追加每一步。
+    progress(文字)：处理到哪一步了（对话页实时显示）。"""
     say = progress or (lambda _m: None)
     s = settings.S
     rounds = max(1, int(s.get("searchRounds", 4)))
     msgs = list(messages)
-    msgs[0] = {"role": "system", "content": msgs[0]["content"] + "\n\n" + (system_hint() if web else "") + ("\n" + NOTES_HINT if notes else "")}
-    total, searched, fetched, sources, n_res, used_notes = 0.0, 0, 0, [], 1, []
-
-    async def qvec(q):
-        from .models import M
-        v = await M.embed([q], instruct=obsidian.NOTE_INSTRUCT)
-        return v[0] if v else None
-
+    msgs[0] = {"role": "system", "content": msgs[0]["content"] + "\n\n" + system_hint()}
+    total, searched, fetched, sources, n_res = 0.0, 0, 0, [], 1
     for rnd in range(rounds + 1):
-        give = web and rnd < rounds and today_count() < int(s.get("searchDaily", 200))
-        tools = (TOOLS if give else []) + (obsidian.TOOLS if notes and rnd < rounds else [])
-        given = {t["function"]["name"] for t in tools}
+        give = rnd < rounds and today_count() < int(s.get("searchDaily", 200))
         say("DeepSeek 正在想……" if rnd == 0 else "DeepSeek 正在看查到的内容……")
-        out = await deepseek.chat(msgs, thinking=thinking, event_id=event_id, purpose=purpose, tools=tools or None,
+        out = await deepseek.chat(msgs, thinking=thinking, event_id=event_id, purpose=purpose, tools=TOOLS if give else None,
                                   max_tokens=1600)
         total += out["cny"]
         thinking = out.get("thinking", thinking)          # 被官方拒了改成不思考的话，后面几轮也不思考
@@ -192,7 +180,7 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
                 steps.append(["联网搜索", f"查了 {rounds} 轮，到上限了，用已有的结果回答"])
             if sources and not re.search(r"https?://", text):
                 text += "\n\n来源：\n" + "\n".join(f"{i + 1}. {x['title'][:40]} {x['url']}" for i, x in enumerate(sources[:3]))
-            return {"text": text, "cny": total, "searched": searched, "fetched": fetched, "sources": sources, "notes": used_notes}
+            return {"text": text, "cny": total, "searched": searched, "fetched": fetched, "sources": sources}
         msgs.append(out["message"])
         for call in calls:
             fn = (call.get("function") or {})
@@ -203,9 +191,7 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
                 args = {}
             t0 = time.time()
             try:
-                if name not in given:
-                    content = f"这一轮没有 {name} 这个工具，用已有的信息回答。"
-                elif name == "web_search":
+                if name == "web_search":
                     say(f"正在联网搜索「{str(args.get('query', ''))[:40]}」……")
                     res = await search(args.get("query", ""), args.get("count") or 8, ori=user_text, event_id=event_id, purpose=purpose)
                     searched += 1
@@ -229,15 +215,6 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
                     else:
                         content = "这个网页读不到内容（网站拦了或者没有正文），换一个结果。"
                         steps.append(["读网页", f"没读到 · {_site(args.get('url'))}"])
-                elif name in ("search_notes", "read_note") and notes:
-                    say("正在查你的笔记……" if name == "search_notes" else "正在读笔记……")
-                    content, hits = await obsidian.tool_call(name, args, qvec)
-                    if name == "search_notes":
-                        used_notes += [h["title"] for h in hits]
-                        steps.append(["查笔记", f"「{str(args.get('query', ''))[:30]}」· {len(hits)} 段" + (f" · {obsidian.titles(hits)}" if hits else "")])
-                    else:
-                        used_notes.append(str(args.get("ref", "")).split("/")[-1].replace(".md", ""))
-                        steps.append(["读笔记", str(args.get("ref", ""))[:50]])
                 else:
                     content = f"没有这个工具：{name}"
             except SearchBlocked as e:
@@ -252,8 +229,7 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
                 content = f"这次没查成：{str(e)[:120]}"
                 steps.append(["联网搜索", f"出错：{str(e)[:50]}"])
             msgs.append({"role": "tool", "tool_call_id": call.get("id") or "", "content": content})
-    return {"text": "查了很多轮还没得出结论，换个问法再问我一次吧。", "cny": total, "searched": searched, "fetched": fetched, "sources": sources,
-            "notes": used_notes}
+    return {"text": "查了很多轮还没得出结论，换个问法再问我一次吧。", "cny": total, "searched": searched, "fetched": fetched, "sources": sources}
 
 
 FRESH = re.compile(r"最新|新闻|热搜|今天.*(发生|新闻|比赛|消息)|价格|多少钱|报价|汇率|股价|天气|比分|赛程|发布了|出了没|更新了|"

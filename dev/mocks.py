@@ -119,19 +119,11 @@ async def dsc(r: Request):
             from fastapi.responses import JSONResponse
             return JSONResponse({"error": {"message": "reasoning_content must be passed back", "type": "invalid_request_error"}}, status_code=400)
         tools_used = [m for m in msgs if m.get("role") == "tool"]
-        names = [t["function"]["name"] for t in j["tools"]]
-        # 问笔记里的设定：先用 search_notes 查，再按查到的回答
-        if "search_notes" in names and any(x in asked for x in ("设定", "笔记里")) and not tools_used:
-            call = {"id": "call_n1", "type": "function", "function": {"name": "search_notes", "arguments": json.dumps({"query": asked[:20]}, ensure_ascii=False)}}
-            return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [call], **({"reasoning_content": "查笔记"} if think else {})}}], "usage": usage}
-        if tools_used and (tools_used[-1].get("content") or "").startswith(("〔", "笔记里没找到")):
-            txt = "（DeepSeek 笔记）" + tools_used[-1]["content"][:60].replace("\n", " ")
-            return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": txt}}], "usage": usage}
         want = any(x in asked for x in ("最新", "最近", "价格", "新闻", "发布", "更新", "搜"))
-        if want and not tools_used and "web_search" in names:
+        if want and not tools_used:
             call = {"id": "call_s1", "type": "function", "function": {"name": "web_search", "arguments": json.dumps({"query": asked[:30], "count": 5}, ensure_ascii=False)}}
             return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [call], **({"reasoning_content": "先搜一下"} if think else {})}}], "usage": usage}
-        if want and len(tools_used) == 1 and "web_fetch" in names:
+        if want and len(tools_used) == 1:
             url = (__import__("re").search(r"https?://\S+", tools_used[0]["content"]) or [None])[0]
             call = {"id": "call_f1", "type": "function", "function": {"name": "web_fetch", "arguments": json.dumps({"url": url})}}
             return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [call], **({"reasoning_content": "再读一页"} if think else {})}}], "usage": usage}
@@ -142,9 +134,6 @@ async def dsc(r: Request):
         if "可选修法" in u:
             txt = json.dumps({"why": "要管理员权限" if "硬件监控" in u else "看着是网络超时", "fix": "manual" if "硬件监控" in u else "retry",
                               "tell": "在弹出的窗口里点「是」" if "硬件监控" in u else ""}, ensure_ascii=False)
-        elif "前后矛盾" in u:
-            bad = "三阶" in u and "四阶" in u
-            txt = json.dumps({"conflict": bad, "why": "主角的等级一处写三阶、一处写四阶" if bad else ""}, ensure_ascii=False)
         elif "labels" in u or "分流器" in u:
             ids = [int(x) for x in __import__("re").findall(r'"id": (\d+)', u)]
             txt = json.dumps({"labels": [{"id": i, "label": "ds"} for i in ids]})
