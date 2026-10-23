@@ -887,7 +887,7 @@ html[data-motion="reduced"] .tree-wrap.in:not(.settled) .tn{animation:none}
 .side-toggle{display:none;border:0;background:transparent;color:var(--text3);font-size:.8125rem}
 .dash-sum{display:none;margin-left:auto}
 html[data-orient="portrait"] .chatv.dash-min .dash-sum{display:block}
-.side-body{flex:1;overflow:auto;padding:.2rem 1.5rem 1rem;container-type:inline-size}
+.side-body{flex:1;overflow:auto;padding:.2rem 1.5rem 1rem;container-type:inline-size;scrollbar-gutter:stable}
 .st-ok{--sc:var(--ok)}.st-idle{--sc:var(--c-ds)}.st-warn{--sc:var(--c-neu)}.st-bad{--sc:var(--bad)}.st-off{--sc:var(--text3)}
 
 /* --- Agent 状态仪表盘：健康环 + 链路图 / 一排大数字 / 按组的图标卡片 --- */

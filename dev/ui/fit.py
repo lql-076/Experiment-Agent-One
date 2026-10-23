@@ -49,6 +49,19 @@ with sync_playwright() as pw:
                 if over:
                     bad.append(f"{w}×{h} 字 130% {k}")
                     p.screenshot(path=f"{OUT}/fit-{w}-130-{k}.png")
+            # 竖屏对话页不能来回闪（v1.8.3）：模仿 Windows 占宽度的滚动条，连看 2 秒，布局（紧凑档、列数、状态区高度）不能变
+            p.add_style_tag(content="::-webkit-scrollbar{width:17px;height:17px}")
+            for sc in (100, 115, 130):
+                p.evaluate(f"S.set.scale={sc}; applyScale(); goView('chat')")
+                p.wait_for_timeout(1500)
+                seen = p.evaluate("""() => new Promise(r => { var out = []; var t = setInterval(function () {
+                    var d = $('#sideBody .ag-dash'), c = $('#sideBody .ag-cols'), cv = $('.chatv');
+                    out.push((d ? d.className : '') + '|' + (c ? c.dataset.c : '') + '|' + cv.style.getPropertyValue('--side-h'));
+                    if (out.length >= 20) { clearInterval(t); r(out); } }, 100); })""")
+                ok = len(set(seen)) == 1
+                print(("  ✓ " if ok else "  ✗ ") + f"{w}×{h} 字 {sc}% 对话页不来回闪" + ("" if ok else f"：{sorted(set(seen))}"), flush=True)
+                if not ok:
+                    bad.append(f"{w}×{h} 字 {sc}% 对话页来回闪")
             p.evaluate("S.set.scale=100; applyScale()")
         p.close()
     b.close()

@@ -264,8 +264,9 @@ function agGroupsHTML(groups, C) {
   }).join('') + '</div>';
 }
 function agCols(minRem) {                             // 右边有多宽就分几列（每列至少 16rem；收紧时 13rem、11rem）
+  // 宽度按整块算（含滚动条那一条）：滚动条出现、消失时列数不跟着变，不然会 4 列 → 出滚动条 → 3 列 → 滚动条没了 → 4 列……来回闪（v1.8.3 修）
   var b = $('#sideBody'), rem = parseFloat(getComputedStyle(root).fontSize) || 16;
-  var w = b && b.clientWidth ? b.clientWidth - 2 * rem : 0;
+  var w = b ? Math.round(b.getBoundingClientRect().width) - 2 * rem : 0;
   return w ? Math.max(1, Math.min(6, Math.floor(w / ((minRem || 16) * rem)))) : 4;
 }
 function agentHTML() {
@@ -287,10 +288,15 @@ function agLevel(d, lv) {
   var cols = d.querySelector('.ag-cols'), C = agCols(lv.w), a = agentData();
   if (cols && a && +cols.dataset.c !== C) cols.outerHTML = agGroupsHTML(a.groups || [], C);
 }
+var AG_FIT = { key: '', ver: 0 };
 function agFit() {
   var b = $('#sideBody'), d = b && b.querySelector('.ag-dash'); if (!d || !b.clientHeight) return;
   var cv = $('.chatv'), side = $('.chat-side');
   var port = root.dataset.orient === 'portrait' && cv && side && !cv.classList.contains('dash-min');
+  // 窗口大小和内容都没变就不重算：算完改了状态区高度（竖屏），会再触发一次 ResizeObserver，不让它自己跟自己来回改
+  var key = [port ? 'p' : 'l', Math.round(b.getBoundingClientRect().width), port ? cv.clientHeight : b.clientHeight, root.style.fontSize, AG_FIT.ver].join('|');
+  if (key === AG_FIT.key) return;
+  AG_FIT.key = key;
   if (!port) {
     if (cv) cv.style.removeProperty('--side-h');
     for (var i = 0; i < AG_LV.length; i++) { agLevel(d, AG_LV[i]); if (b.scrollHeight <= b.clientHeight + 2) break; }
@@ -355,7 +361,7 @@ function fillSide() {
   if (ds) ds.innerHTML = a ? agLegend(a.count || {}, true) : '';
   var html = CHAT.tab === 'event' ? eventSideHTML(findChatEv(CHAT.sel)) : agentHTML();
   if (html === CHAT.sig) return;                     // 没变就不重画（链路图的流动线、闪烁不会每 5 秒跳一下）
-  CHAT.sig = html; b.innerHTML = html;
+  CHAT.sig = html; b.innerHTML = html; AG_FIT.ver++;
   drawFlows(b); agFit();
   if (SIDE_RO && !b.dataset.ro) { b.dataset.ro = 1; SIDE_RO.observe(b); }
 }
