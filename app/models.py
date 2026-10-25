@@ -2,7 +2,8 @@
 
 - 只启动、只关闭自己开的进程（按进程号），绝不按名字杀进程。
 - 嵌入模型常驻；底座由模型服务自己闲置卸载；Kev 按需启动，闲置后关掉。
-- 让路模式：显卡被别的程序（游戏、画图）占满时，不再加载底座，非隐私的活交给 DeepSeek。
+- 让路：按显存算。别的程序（游戏、画图）占的显存多了，先卸底座和 Kev，还不够再卸嵌入模型；
+  显存空出来几分钟再装回嵌入模型（底座还是用到才装）。让路期间非隐私的活交给 DeepSeek，隐私的排队。
 """
 import asyncio
 import os
@@ -10,6 +11,7 @@ import subprocess
 import time
 
 import httpx
+import psutil
 
 from . import paths, settings
 
@@ -52,16 +54,29 @@ class Proc:
             return ""
 
 
+def yield_want(total, used, ours, reserve, need, game=False):
+    """该让到哪一级。room = 显卡总显存 − 别的程序占的 − 预留，是我们最多能用的。
+    嵌入模型都放不下 → 2；底座 + 嵌入 + Kev 放不下，或者在玩游戏 → 1；放得下 → 0。返回 (级别, 别的程序占的 GB)。"""
+    others = max(0.0, used - ours)
+    room = total - others - reserve
+    if room < need["embed"]:
+        return 2, others
+    if game or room < need["embed"] + need["base"] + need["kev"]:
+        return 1, others
+    return 0, others
+
+
 class Manager:
     def __init__(self):
         self.server = Proc("model_server")
         self.kevp = Proc("kev")
         self.last_kev = 0.0
         self.busy_until = 0.0
-        self.yielding = False
+        self.yield_level = 0             # 让路：0 不让 / 1 底座、Kev 不装 / 2 嵌入模型也卸，显存全让出来
         self.yield_reason = ""
-        self._hot = 0
-        self._cold_since = 0.0
+        self.vram_info = {}
+        self._up = 0
+        self._down_since = 0.0
         self._lock = asyncio.Lock()
         self._health = None
         self._health_ts = 0.0
@@ -152,7 +167,9 @@ class Manager:
             self.start_server()
 
     async def embed(self, texts, instruct=True):
-        """拿不到就返回 None（服务没起来时不阻塞）。"""
+        """拿不到就返回 None（服务没起来、或者显存全让出来了时不阻塞，也不把嵌入模型装回去）。"""
+        if self.yield_level >= 2:
+            return None
         h = await self.health()
         if not h or not h.get("cuda"):
             return None
@@ -280,7 +297,7 @@ class Manager:
 
     async def kev(self, state, questions):
         """Kev 没准备好就返回 None，并在后台启动它（下次就能用）。"""
-        if self.s["kevMode"] == "off":
+        if self.s["kevMode"] == "off" or self.yielding:
             return None
         if not await self.kev_ready():
             try:
@@ -298,38 +315,130 @@ class Manager:
         except Exception:
             return None
 
-    # ---------- 定时照看 ----------
+    # ---------- 让路：按显存 ----------
+    @property
+    def yielding(self):
+        """让路中（底座、Kev 不装）：本地的活交 DeepSeek，隐私的排队。"""
+        return self.yield_level >= 1
+
+    def need(self):
+        """各部分大概要多少显存（GB），算"放不放得下"用。"""
+        q = self.s["baseQuant"]
+        return {"embed": 1.3, "base": {"4bit": 2.2, "8bit": 3.2}.get(q, 5.5), "kev": 0.0 if self.s["kevMode"] == "off" else 2.0}
+
+    def own_pids(self):
+        pids = set()
+        for pr in (self.server, self.kevp):
+            if pr.alive():
+                pids.add(pr.p.pid)
+                try:                                   # Windows 上虚拟环境的 python.exe 会再起一个真正干活的子进程
+                    pids.update(c.pid for c in psutil.Process(pr.p.pid).children(recursive=True))
+                except Exception:
+                    pass
+        return pids
+
+    def own_vram(self):
+        """我们自己（模型服务 + Kev）现在占了多少显存（GB）。
+        Windows 上按每个程序的专用显存算（和任务管理器"详细信息"一样准）；读不到时估：模型服务报的 + 0.5 GB 运行环境，Kev 开着按 2 GB。"""
+        from . import hw
+        v = hw.vram_of(self.own_pids())
+        if v is not None:
+            return v
+        est, h = 0.0, self._health
+        if h:
+            vr = h.get("vram") or {}
+            est += (vr.get("reserved_gb") or vr.get("alloc_gb") or 0) + 0.5
+        if self.kevp.alive() or self._kev_ok:
+            est += 2.0
+        return est
+
     def tick(self, hw):
-        """每次采样硬件后调用：处理让路模式和 Kev 闲置关闭。"""
+        """每次采样硬件后调用（约 2 秒一次）：Kev 闲置关闭；按显存让路。
+        让路分两级：1 = 底座、Kev 不装（已装的卸掉）；2 = 嵌入模型也卸掉，显存全让出来。
+        - 要让得更多：连续 3 次（约 6 秒）都这么判才动手；正在用本地模型回答你时，答完再让。
+        - 要退回来：连续 yieldCool 分钟（默认 3）都放得下（多留 0.5 GB 余量，免得来回切）才退；从 2 级退回时把嵌入模型装回去。
+          底座还是用到才装，不提前装。"""
         s = self.s
         if s["kevMode"] == "ondemand" and self.kevp.alive() and self.last_kev and time.time() - self.last_kev > float(s["idleUnload"]) * 60:
             self.kevp.stop()
-        load = (hw or {}).get("gpu", {}).get("load")
-        if not s["yieldAuto"] or load is None:
-            self.yielding = False
+        g = (hw or {}).get("gpu") or {}
+        used, total = g.get("vram"), g.get("vramTotal")
+        if not s["yieldAuto"] or used is None or not total:
+            if self.yield_level:
+                self._set_level(0, "")
+            self._up, self._down_since = 0, 0.0
             return
-        if time.time() < self.busy_until:     # 自己在用显卡，不算
+        f = (hw or {}).get("fps") or {}
+        game = (f.get("proc") or "游戏") if f.get("fps") and f.get("fg", True) else ""
+        ours, need, reserve = self.own_vram(), self.need(), float(s.get("yieldVram", 2))
+        want, others = yield_want(total, used, ours, reserve, need, bool(game))
+        self.vram_info = {"total": round(total, 1), "used": round(used, 1), "ours": round(ours, 1), "others": round(others, 1),
+                          "reserve": reserve, "want": want}
+        why = (lambda w: "" if not w else
+               f"别的程序占了 {others:.1f} GB 显存，显存全让出来" if w >= 2 else
+               f"在玩游戏（{game.replace('.exe', '')}），不装底座和 Kev" if game else
+               f"别的程序占了 {others:.1f} GB 显存，不装底座和 Kev")
+        if want > self.yield_level:
+            self._down_since = 0.0
+            if time.time() < self.busy_until:     # 正在用本地模型回答你：答完再让
+                return
+            self._up += 1
+            if self._up >= 3:
+                self._up = 0
+                self._set_level(want, why(want))
             return
-        if load >= float(s["yieldGpuLoad"]):
-            self._hot += 1
-            self._cold_since = 0
-            if self._hot >= 3 and not self.yielding:
-                self.yielding = True
-                self.yield_reason = f"显卡占用 {load:.0f}%（游戏或画图）"
-                asyncio.get_event_loop().create_task(self.unload("base"))
+        self._up = 0
+        if want < self.yield_level:
+            w2, _ = yield_want(total, used, ours, reserve + 0.5, need, bool(game))
+            if w2 >= self.yield_level:
+                self._down_since = 0.0
+            else:
+                self._down_since = self._down_since or time.time()
+                if time.time() - self._down_since >= float(s.get("yieldCool", 3)) * 60:
+                    self._down_since = 0.0
+                    self._set_level(w2, why(w2))
+                    return
         else:
-            self._hot = 0
-            if self.yielding:
-                self._cold_since = self._cold_since or time.time()
-                if time.time() - self._cold_since > 60:
-                    self.yielding = False
-                    self.yield_reason = ""
+            self._down_since = 0.0
+        if self.yield_level:
+            self.yield_reason = why(self.yield_level)
+
+    def _set_level(self, new, reason):
+        old = self.yield_level
+        self.yield_level, self.yield_reason = new, (reason if new else "")
+        loop = asyncio.get_event_loop()
+        if new >= 1 and old < 1:
+            loop.create_task(self.unload("base"))
+            if self.kevp.alive():
+                self.kevp.stop()
+        if new >= 2 and old < 2:
+            loop.create_task(self.unload("embed"))
+        if old >= 2 and new < 2:
+            loop.create_task(self.load("embed"))
+        try:
+            from . import feed
+            if new > old:
+                feed.add(f"显存让路：{reason}" + ("。本地的活先交 DeepSeek，隐私的排队" if old == 0 else ""), "warn", job="显存让路")
+            elif new == 0:
+                feed.add("显存空出来了，让路结束" + ("，嵌入模型装回去了" if old >= 2 else ""), "ok", job="显存让路")
+            else:
+                feed.add(f"显存空出来一些，嵌入模型装回去了（{reason}）", "info", job="显存让路")
+        except Exception:
+            pass
+
+    async def load(self, what):
+        try:
+            async with httpx.AsyncClient(timeout=120) as c:
+                await c.post(self.url("/load"), json={"what": what})
+        except Exception:
+            pass
 
     async def status(self):
         h = await self.health(max_age=12)
         return {"ai_env": self.ai_ready(), "server": bool(h), "server_proc": self.server.alive(), "health": h,
                 "kev_installed": self.kev_installed(), "kev_proc": self.kevp.alive(), "kev_ready": await self.kev_ready(max_age=12),
-                "kev_mode": self.s["kevMode"], "yielding": self.yielding, "yield_reason": self.yield_reason}
+                "kev_mode": self.s["kevMode"], "yielding": self.yielding, "yield_level": self.yield_level,
+                "yield_reason": self.yield_reason, "vram": self.vram_info}
 
     def stop_all(self):
         self.server.stop()

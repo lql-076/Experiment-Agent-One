@@ -15,6 +15,7 @@ from .models import M, NOWIN
 from .qq import BOT
 
 _ai_cache = {"ts": 0, "res": None}
+_ai_job = {"task": None}
 
 
 def _run(cmd, timeout=15):
@@ -68,21 +69,50 @@ async def c_git():
     return ok(out + ("（便携版，在 tools\\git）" if str(paths.TOOLS) in exe else ""))
 
 
+def run(d, **kw):
+    return {"st": "run", "d": d, **kw}
+
+
 async def c_aienv(force=False):
+    """本地模型环境（显卡版 PyTorch）。
+    模型服务就跑在这个环境里：它在线、能用显卡，就说明环境是好的，直接算就绪。
+    以前每次都另开一个 Python 去加载 PyTorch，刚开机要 20 秒以上，被自检的时限掐断就成了「检测超时」，而且结果没记下来，每次都超时。
+    现在只有模型服务不在线时才另开 Python 查：放在后台跑、不被时限打断，没查完显示「检测中」，查完记下来。"""
+    place = paths.show(paths.AI_ENV)
     if not M.ai_ready():
-        return miss("还没装本地模型环境", place=paths.show(paths.AI_ENV))
+        return miss("还没装本地模型环境", place=place)
+    h = await M.health(max_age=10)
+    if h and h.get("torch"):
+        if not h.get("cuda"):
+            res = miss(f"PyTorch {h['torch']} 用不了显卡（装成了 CPU 版？），重新运行 安装本地模型环境.bat", place=place)
+        else:
+            res = ok(f"PyTorch {h['torch']} · CUDA {h.get('cuda_version')} · 模型服务正在用它跑", place=place)
+        _ai_cache.update(ts=time.time(), res=res)
+        return res
     if not force and _ai_cache["res"] and time.time() - _ai_cache["ts"] < 600:
         return _ai_cache["res"]
+    if M.server.alive():
+        return run("模型服务正在启动，起来了就算好", place=place)
+    t = _ai_job.get("task")
+    if t is None or t.done():
+        t = _ai_job["task"] = asyncio.create_task(_aienv_probe(place))
+    try:
+        return await asyncio.wait_for(asyncio.shield(t), 12)
+    except asyncio.TimeoutError:
+        return run("正在检查（刚开机第一次加载 PyTorch 要几十秒）", place=place)
+
+
+async def _aienv_probe(place):
     code, out = await asyncio.to_thread(_run, [str(M.aipy()), "-c",
-                                               "import torch,transformers,peft;print(torch.__version__,torch.cuda.is_available(),torch.version.cuda,transformers.__version__,peft.__version__)"], 120)
+                                               "import torch,transformers,peft;print(torch.__version__,torch.cuda.is_available(),torch.version.cuda,transformers.__version__,peft.__version__)"], 240)
     if code != 0:
-        res = miss("环境装了但导入失败：" + out[-160:], place=paths.show(paths.AI_ENV))
+        res = miss(("加载 PyTorch 4 分钟都没反应" if code == -2 else "环境装了但导入失败：" + out[-160:]), place=place)
     else:
         tv, cuda, cv, trv, pv = out.split()[-5:]
         if cuda != "True":
-            res = miss(f"PyTorch {tv} 用不了显卡（装成了 CPU 版？），重新运行 安装本地模型环境.bat", place=paths.show(paths.AI_ENV))
+            res = miss(f"PyTorch {tv} 用不了显卡（装成了 CPU 版？），重新运行 安装本地模型环境.bat", place=place)
         else:
-            res = ok(f"PyTorch {tv} · CUDA {cv} · Transformers {trv} · PEFT {pv}", place=paths.show(paths.AI_ENV))
+            res = ok(f"PyTorch {tv} · CUDA {cv} · Transformers {trv} · PEFT {pv}", place=place)
     _ai_cache.update(ts=time.time(), res=res)
     return res
 
@@ -217,11 +247,11 @@ CHECKS = {"driver": c_driver, "python": c_python, "git": c_git, "aienv": c_aienv
           "memory": c_memory}
 
 
-LIVE = ("models", "kev", "hwmon", "qq")
+LIVE = ("aienv", "models", "kev", "hwmon", "qq")
 
 
 async def refresh_live() -> bool:
-    """会自己变的几项（模型服务、Kev、硬件监控助手、QQ）：启动后它们陆续起来，后台每半分钟重查一次写回自检结果，
+    """会自己变的几项（本地模型环境、模型服务、Kev、硬件监控助手、QQ）：启动后它们陆续起来，后台每半分钟重查一次写回自检结果，
     整备上跟着变，不用你点重新自检。状态变了返回 True（界面据此刷新）。"""
     last = db.kv_get("checks")
     if not last or not last.get("res"):

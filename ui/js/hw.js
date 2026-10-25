@@ -5,9 +5,9 @@ var HW = { src: 'demo', ok: true,
   gpu: { name: 'RTX 5060 Ti', load: 0, clock: 0, temp: 0, power: 0, vram: 0, vramTotal: 16, vramPct: 0 },
   ram: { load: 0, used: 0, total: 32, freq: 3600 },
   sys: { power: 0 },
-  disks: [{ n: 'NVMe 固态', temp: 0 }, { n: '机械盘 1', temp: 0 }, { n: '机械盘 2', temp: 0 }] };
+  disks: [{ n: 'F: NVMe 固态 1', temp: 0 }, { n: 'C: E: NVMe 固态 2', temp: 0 }, { n: 'D: 机械盘 1', temp: 0 }, { n: 'H: 机械盘 2', temp: 0 }] };
 var HIST = { cpu: [], gpu: [], ram: [], vram: [], pw: [], fps: [] }, HN = 60;
-var sim = { cpu: 10, gpu: 5, game: 0, cpuT: 42, gpuT: 37, ram: 11.4, n0: 40, n1: 34, n2: 33 };
+var sim = { cpu: 10, gpu: 5, game: 0, cpuT: 42, gpuT: 37, ram: 11.4, n0: 40, n1: 45, n2: 34, n3: 33 };
 function calcSys() {
   var cp = HW.cpu.power || 0, gp = HW.gpu.power || 0, other = +S.set.sysOther || 0, eff = (+S.set.psuEff || 89) / 100;
   HW.sys.power = (cp + gp + other) / eff;
@@ -19,13 +19,13 @@ function simStep() {
   sim.cpu += (cT - sim.cpu) * 0.5; sim.gpu += (gT - sim.gpu) * 0.45;
   sim.cpuT += ((40 + sim.cpu * 0.42) - sim.cpuT) * 0.25; sim.gpuT += ((35 + sim.gpu * 0.36) - sim.gpuT) * 0.18;
   sim.ram += ((sim.game ? 15.5 : 11.2) + rnd(-0.3, 0.3) - sim.ram) * 0.15;
-  sim.n0 += ((39 + sim.cpu * 0.08) + rnd(-.3, .3) - sim.n0) * 0.1; sim.n1 += (34 + rnd(-.2, .2) - sim.n1) * 0.05; sim.n2 += (33 + rnd(-.2, .2) - sim.n2) * 0.05;
+  sim.n0 += ((39 + sim.cpu * 0.08) + rnd(-.3, .3) - sim.n0) * 0.1; sim.n1 += (45 + rnd(-.2, .2) - sim.n1) * 0.05; sim.n2 += (34 + rnd(-.2, .2) - sim.n2) * 0.05; sim.n3 += (33 + rnd(-.2, .2) - sim.n3) * 0.05;
   HW.cpu = { name: 'Ryzen 5 5600', load: sim.cpu, clock: 3.55 + Math.min(1, sim.cpu / 35) * 0.85 + rnd(-.05, .05), temp: sim.cpuT, power: 20 + sim.cpu * 0.85 };
   HW.gpu = { name: 'RTX 5060 Ti', load: sim.gpu, clock: sim.gpu > 20 ? rnd(2650, 2850) : rnd(210, 620), temp: sim.gpuT, power: 14 + sim.gpu * 1.55,
     vram: 3.6 + (sim.game ? 5.2 : 0) + rnd(-.05, .05), vramTotal: 16 };
   HW.gpu.vramPct = HW.gpu.vram / HW.gpu.vramTotal * 100;
   HW.ram = { used: sim.ram, total: 32, load: sim.ram / 32 * 100, freq: 3600, desc: '32 GB DDR4 · 2 条' };
-  HW.disks = [{ n: 'NVMe 固态', temp: sim.n0 }, { n: '机械盘 1', temp: sim.n1 }, { n: '机械盘 2', temp: sim.n2 }];
+  HW.disks = [{ n: 'F: NVMe 固态 1', temp: sim.n0 }, { n: 'C: E: NVMe 固态 2', temp: sim.n1 }, { n: 'D: 机械盘 1', temp: sim.n2 }, { n: 'H: 机械盘 2', temp: sim.n3 }];
   HW.fps = sim.game ? { fps: Math.round(rnd(128, 144)), low1: +rnd(86, 101).toFixed(1), proc: 'Palworld-Win64-Shipping.exe' } : null;
   calcSys(); HW.src = 'demo'; HW.ok = true;
 }
@@ -53,6 +53,7 @@ function renderHW() {
     var dec = f === 'f1' ? 1 : f === 'f2' ? 2 : 0, suf = f === 'temp' ? '°C' : '';
     if (res && el.hasAttribute('data-tw')) tweenTo(el, +(+v).toFixed(dec), dec, suf); else el.textContent = (+v).toFixed(dec) + suf;
   });
+  $$('[data-hwtxt]').forEach(function (el) { var t = getPath(el.dataset.hwtxt); el.textContent = t == null ? '' : t; });   // 文字：比如「GPU · 视频编码」
   $$('[data-hwbar]').forEach(function (el) { var v = getPath(el.dataset.hwbar) || 0, mx = +(el.dataset.max || 100); el.style.transform = 'scaleX(' + Math.max(0, Math.min(1, v / mx)).toFixed(3) + ')'; });
   // 游戏帧数：有游戏在跑才显示（常驻页的 FPS 块、顶栏的 FPS）
   var f = HW.fps, ft = $('#rtFps'), mf = $('#mFps');

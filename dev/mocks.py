@@ -191,7 +191,9 @@ def data():
         n("Powers", kids=[n("Package", value=f"{random.uniform(25, 60):.1f} W")])])
     disk = n("Samsung 980 1TB", "images_icon/hdd.png", [n("Temperatures", kids=[n("Temperature", value="41.0 °C")])])
     disk2 = n("ST2000DM008", "images_icon/hdd.png", [n("Temperatures", kids=[n("Temperature", value="34.0 °C")])])
-    return n("Sensor", kids=[n("PC", kids=[cpu, disk, disk2])])
+    disk3 = n("Lexar SSD NM710 500GB", "images_icon/hdd.png", [n("Temperatures", kids=[n("Temperature", value="47.0 °C")])])
+    disk4 = n("WDC WD1003BYX-01Y7B1", "images_icon/hdd.png", [n("Temperatures", kids=[n("Temperature", value="36.0 °C")])])
+    return n("Sensor", kids=[n("PC", kids=[cpu, disk, disk2, disk3, disk4])])     # 4 块盘：查"有几块列几块"
 
 
 def serve(app, port):

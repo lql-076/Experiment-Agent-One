@@ -91,7 +91,9 @@ def _ready(k, res):
         ok = st(k) == "ok"
     if ok:
         return "ready", ("Kev 在设置里关掉了" if k == "kev" and settings.S["kevMode"] == "off" else READY_INFO[k])
-    if k == "start" and M.ai_ready() and st("aienv") == "ok" and st("base") == "ok" and st("embed") == "ok":
+    if k == "aienv" and st("aienv") == "run":
+        return "auto", (res.get("aienv") or {}).get("d") or "正在检查"
+    if k == "start" and M.ai_ready() and st("aienv") in ("ok", "run") and st("base") == "ok" and st("embed") == "ok":
         return "auto", "启动时自动拉起，正在加载嵌入模型"
     if k == "hwmon" and settings.S.get("hwOn"):
         return "auto", "开关开着，正在自动拉起（不弹确认）"

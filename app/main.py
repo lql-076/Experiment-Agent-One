@@ -19,7 +19,7 @@ from . import (agent, agentstate, checks, db, deepseek, docs, events, exam, feed
 from .models import M
 from .qq import BOT
 
-VERSION = "1.8.3"
+VERSION = "1.8.4"
 PORT = 8765
 _bg = []
 
@@ -68,7 +68,7 @@ async def housekeeping():
                 feed.add("本地模型服务没在运行，自动启动它", "info", job="本地模型服务")
                 with contextlib.suppress(Exception):
                     M.start_server()
-            if n % 30 == 7 and settings.S["kevMode"] == "resident" and M.kev_installed() and not M.kevp.alive():
+            if n % 30 == 7 and settings.S["kevMode"] == "resident" and M.kev_installed() and not M.kevp.alive() and not M.yielding:
                 with contextlib.suppress(Exception):
                     M.start_kev()
             data = await hw.sample()
@@ -105,7 +105,7 @@ async def housekeeping():
 
 
 async def live_checks():
-    """会自己变的几项（模型服务、Kev、硬件监控助手、QQ）：启动后头两分钟每 10 秒、之后每 30 秒重查一次，
+    """会自己变的几项（本地模型环境、模型服务、Kev、硬件监控助手、QQ）：启动后头两分钟每 10 秒、之后每 30 秒重查一次，
     写回自检结果，整备和「一键补齐」的每一步跟着变（界面轮询 /api/state 看到 prep.ts 变了就刷新）。"""
     n = 0
     while True:

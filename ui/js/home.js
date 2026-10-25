@@ -18,7 +18,7 @@ function renderHome(quiet) {
     '<button class="hc stag" data-go-sec="remind" style="grid-area:remind;--i:3"><div class="hc-h"><span class="label">下一个提醒</span><span class="hc-go">管理 →</span></div><div class="kpi-row"><div><div class="big num" id="remAt">' + (n ? esc(n.at) : '--:--') + '</div><div class="cap" style="margin-top:.4rem"><span id="remLeft"></span></div></div><div class="mini-ring">' + donutHTML(80, 14, 1, '', 'remRing') + '</div></div></button>' +
     '<button class="hc stag" data-go-res="1" style="grid-area:hw;--i:5"><div class="hc-h"><span class="label">电脑状态</span><span class="hc-go">进入常驻 →</span></div><div class="hwmini">' +
       '<div class="hwm" style="--tc:var(--h1)"><span class="cap">CPU</span><div class="big num">' + hw('cpu.load') + '<small>%</small></div>' + sparkHTML('cpu', 100) + '</div>' +
-      '<div class="hwm" style="--tc:var(--h2)"><span class="cap">GPU</span><div class="big num">' + hw('gpu.load') + '<small>%</small></div>' + sparkHTML('gpu', 100) + '</div>' +
+      '<div class="hwm" style="--tc:var(--h2)"><span class="cap">GPU<span data-hwtxt="gpu.topTxt"></span></span><div class="big num">' + hw('gpu.load') + '<small>%</small></div>' + sparkHTML('gpu', 100) + '</div>' +
       '<div class="hwm" style="--tc:var(--h5)"><span class="cap">整机（估算）</span><div class="big num">' + hw('sys.power') + '<small>W</small></div>' + sparkHTML('pw', 350) + '</div>' +
     '</div></button>' +
     '<div class="hc stag lift" style="grid-area:recent;--i:6"><div class="hc-h"><span class="label">最近事件</span><button class="linkbtn" data-go-view="events">全部 →</button></div><div class="rec">' +

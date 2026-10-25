@@ -28,6 +28,7 @@ step "设置里的联网搜索" "$PY" dev/ui/search.py dev/.run/shots
 step "对话页、Agent 状态、游戏内显示设置" "$PY" dev/ui/chat.py dev/.run/shots
 step "一页一屏放下（不靠滚轮）" "$PY" dev/ui/fit.py dev/.run/shots
 step "Kev 权重在不在本机" "$PY" dev/test_kev.py
+step "硬件读数、显存让路、硬盘、本地模型环境自检" "$PY" dev/test_hw.py
 step "游戏帧数统计" "$PY" dev/test_fps.py
 step "游戏内显示的逻辑" "$PY" dev/test_osd.py
 "$DEV/serve.sh" stop

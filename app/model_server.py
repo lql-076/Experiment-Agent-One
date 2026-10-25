@@ -53,7 +53,8 @@ def vram():
     if not torch.cuda.is_available():
         return {}
     free, total = torch.cuda.mem_get_info()
-    return {"alloc_gb": round(torch.cuda.memory_allocated() / 2**30, 2), "free_gb": round(free / 2**30, 2),
+    return {"alloc_gb": round(torch.cuda.memory_allocated() / 2**30, 2), "reserved_gb": round(torch.cuda.memory_reserved() / 2**30, 2),
+            "free_gb": round(free / 2**30, 2),
             "total_gb": round(total / 2**30, 2)}
 
 

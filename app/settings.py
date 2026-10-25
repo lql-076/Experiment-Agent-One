@@ -21,7 +21,7 @@ DEFAULTS = {
     "baseDir": "", "embedDir": "", "loraDir": "", "kevDir": "", "aiPython": "",
     "modelPort": 8090, "kevPort": 8091, "baseQuant": "4bit", "idleUnload": 15,
     "kevMode": "ondemand", "kevRun": "jaredpalmer/kev-0.8b", "hfMirror": True,
-    "yieldAuto": True, "yieldGpuLoad": 60, "gpuOnly": True,
+    "yieldAuto": True, "yieldVram": 2.0, "yieldCool": 3, "gpuOnly": True,   # 让路：给别的程序留几 GB 显存、空出来几分钟再装回
     # 云端
     "dsBase": "https://api.deepseek.com", "dsModel": "deepseek-flash", "dsLow": 2, "usdCny": 7.2,
     "priceIn": 0.15, "priceHit": 0.003, "priceOut": 0.60, "peakX": 2, "dsThinking": "auto",

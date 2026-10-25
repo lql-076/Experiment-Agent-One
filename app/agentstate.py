@@ -48,9 +48,11 @@ async def view():
 
     # ---------- 大脑 ----------
     brain = []
-    env_ok = ck("aienv") == "ok"
+    env_ok = ck("aienv") in ("ok", "run")          # run：正在查（环境是装了的）
     if h.get("embed_loaded"):
         brain.append(_row("embed", "语义路由（嵌入模型）", "ok", "在线 · 决策脑第一票、找记忆、查说明书都靠它"))
+    elif M.yield_level >= 2:
+        brain.append(_row("embed", "语义路由（嵌入模型）", "idle", "让路中：显存让给别的程序了，空出来会自动装回 · " + M.yield_reason))
     elif ck("embed") == "miss":
         brain.append(_row("embed", "语义路由（嵌入模型）", "bad", "模型文件还没下载：决策脑只能用简单规则，记忆检索用不了", PREP))
     elif not env_ok and ck("aienv"):
@@ -68,7 +70,7 @@ async def view():
     elif not env_ok:
         brain.append(_row("kev", "Kev（决策脑第二票）", "bad", "还没装：要先装本地模型环境，再下载约 2GB 权重", PREP))
     elif M.kev_weights():
-        brain.append(_row("kev", "Kev（决策脑第二票）", "idle", "已下载 · 闲着，用到才启动"))
+        brain.append(_row("kev", "Kev（决策脑第二票）", "idle", "已下载 · " + ("让路中，显存空了再用" if M.yielding else "闲着，用到才启动")))
     else:
         brain.append(_row("kev", "Kev（决策脑第二票）", "bad", "权重还没下载（约 2GB）", PREP))
 

@@ -137,8 +137,9 @@ var SECTIONS = [
     { k: 'idleUnload', l: '底座和 Kev 闲置多久卸载', t: 'number', u: '分钟', d: 15, h: '常驻的只有嵌入模型，其余用到才加载' },
     { k: 'kevMode', l: 'Kev（决策脑第二票）', t: 'select', d: 'ondemand', o: [['ondemand', '用到才启动（默认）'], ['resident', '一直开着（约多占 2GB）'], ['off', '关闭，只用语义路由']] },
     { k: 'hfMirror', l: '下载 Kev 权重走国内镜像 hf-mirror', t: 'toggle', d: true },
-    { k: 'yieldAuto', l: '让路模式：玩游戏、画图时自动让出显卡', t: 'toggle', d: true, h: '显卡占用持续很高时卸载底座，非隐私的活交 DeepSeek，隐私的活排队' },
-    { k: 'yieldGpuLoad', l: '让路的显卡占用线', t: 'range', min: 30, max: 95, step: 5, u: '%', d: 60 },
+    { k: 'yieldAuto', l: '显存让路：别的程序要显存时自动让出来', t: 'toggle', d: true, h: '按显存算：别的程序（游戏、画图）占得多了，先卸底座和 Kev，还不够再卸嵌入模型；认出在玩游戏也先让。空出来几分钟后自动把嵌入模型装回去，底座还是用到才装。让路期间非隐私的活交 DeepSeek，隐私的活排队' },
+    { k: 'yieldVram', l: '给别的程序留多少显存', t: 'range', min: 0.5, max: 6, step: 0.5, u: 'GB', d: 2, h: '剩下的显存少于这个数就开始让' },
+    { k: 'yieldCool', l: '空出来多久再装回去', t: 'range', min: 1, max: 15, step: 1, u: '分钟', d: 3 },
     { k: 'modelPort', l: '模型服务端口', t: 'number', d: 8090, h: '和别的程序撞端口了就改这里' },
     { k: 'kevPort', l: 'Kev 端口', t: 'number', d: 8091 },
     { note: '只用显卡跑模型：检测不到显卡时模型服务直接拒绝工作，不会偷偷用 CPU。这一条固定，改不了。' }
