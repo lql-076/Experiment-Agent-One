@@ -108,18 +108,19 @@ def torch_ok():
     return r.returncode == 0, (r.stdout or r.stderr).strip()
 
 
-def main():
-    if sys.version_info < (3, 12):
-        print("需要 Python 3.12 或更新（Kev 的要求）。先装 Python 3.12，再运行一次。")
-        return 1
+def make_env():
+    """建环境、把 pip 升到最新。安装配音（scripts/install_tts.py）也用这个，只是 ENV、PY 换成 tts-env。"""
     if not PY.exists():
         say(f"创建环境：{ENV}")
         venv.EnvBuilder(with_pip=True).create(ENV)
     say("先把 pip 升到最新（新版才能报下载进度）")
     pip("install", "-U", "pip", *(["-i", PYPI_BACKUP] if MIRROR_FIRST else []), check=False)
-    if pip_raw_ok():
+    if pip_raw_ok() and not PB:
         PB.extend(["--progress-bar", "raw"])
 
+
+def ensure_torch():
+    """装显卡版 PyTorch（装过的跳过）。装好返回 True。"""
     ok, info = torch_ok()
     if ok:
         say(f"显卡版 PyTorch 已经装好：{info}", "✓")
@@ -154,8 +155,17 @@ PyTorch 显卡版没装上。手动下载这个文件：
 （在阿里云镜像 https://mirrors.aliyun.com/pytorch-wheels/cu128/ 页面里搜 {TORCH}+cu128-cp312）
 放到这个文件夹：
     {WHEELS}
-然后再运行一次「安装本地模型环境.bat」。""")
-            return 2
+然后再运行一次（「安装本地模型环境.bat」或「安装配音.bat」）。""")
+    return ok
+
+
+def main():
+    if sys.version_info < (3, 12):
+        print("需要 Python 3.12 或更新（Kev 的要求）。先装 Python 3.12，再运行一次。")
+        return 1
+    make_env()
+    if not ensure_torch():
+        return 2
 
     say("安装 Transformers、PEFT、量化库（约 500MB，从 PyPI）")
     if not pip_any("transformers>=5.17,<6", "peft>=0.21", "accelerate>=1.15", "bitsandbytes>=0.48",

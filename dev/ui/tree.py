@@ -9,6 +9,7 @@ from common import launch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUT = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "dev" / ".run" / "shots")
+N = len(list((ROOT / "docs" / "AI文档" / "架构").glob("*.md")))      # 每篇架构都要画得出来（加了新的一篇不用改这里）
 errs, bad = [], []
 with sync_playwright() as pw:
     b = launch(pw)
@@ -25,8 +26,8 @@ with sync_playwright() as pw:
         p.click('.nav[data-view="docs"]')
         p.wait_for_timeout(2000)
         arch = p.evaluate("[].map.call(document.querySelectorAll('#docNav [data-doc]'), function (e) { return e.dataset.doc; }).filter(isArch)")
-        if len(arch) != 14:
-            bad.append(f"{w}: 架构图只有 {len(arch)} 篇")
+        if len(arch) != N:
+            bad.append(f"{w}: 架构图只有 {len(arch)} 篇（文件夹里有 {N} 篇）")
         for rel in arch:
             p.evaluate(f"openDoc('{rel}')")
             p.wait_for_timeout(700)
@@ -39,7 +40,7 @@ with sync_playwright() as pw:
             if rel.endswith(("00-总览.md", "04-QQ通道与提醒.md", "09-整备与一键补齐.md")):
                 p.wait_for_timeout(600)
                 p.screenshot(path=f"{OUT}/tree-{w}-{rel.split('/')[-1][:2]}.png")
-        print(w, th, "14 篇都画了", flush=True)
+        print(w, th, f"{N} 篇都画了", flush=True)
         # 收起、展开
         p.evaluate("openDoc('AI文档/架构/04-QQ通道与提醒.md')")
         p.wait_for_timeout(900)

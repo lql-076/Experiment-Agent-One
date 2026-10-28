@@ -12,8 +12,8 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FORBID = ("data/", "memory/", "ai-env/", ".venv/", "tools/cache/", "tools/tmp/", "models/hf-cache/", "models/ms-cache/")
-FORBID_EXT = (".db", ".bin", ".safetensors", ".gguf", ".whl", ".pt", ".pth", ".env", ".jsonl")
+FORBID = ("data/", "memory/", "ai-env/", "tts-env/", "配音输出/", ".venv/", "tools/cache/", "tools/tmp/", "models/hf-cache/", "models/ms-cache/")
+FORBID_EXT = (".db", ".bin", ".safetensors", ".gguf", ".whl", ".pt", ".pth", ".env", ".jsonl", ".wav")
 
 
 def files():

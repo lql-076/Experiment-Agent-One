@@ -6,6 +6,7 @@
   osd.log            游戏内显示
   model_server.log   本地模型服务
   kev.log            Kev
+  tts.log            配音服务
   setup_*.log        一键补齐的每一步
   crash.log          后端底层崩溃的记录（正常时只有每次启动的一行）
 """
@@ -23,7 +24,7 @@ T0 = time.time()
 LOG_RE = re.compile(r"^[\w.\-]+\.log$")
 LABEL = {"setup_git.log": "补齐 1 · Git", "setup_aienv.log": "补齐 2 · 模型环境", "setup_models.log": "补齐 3 · 下载模型",
          "setup_start.log": "补齐 4 · 启动服务", "setup_kev.log": "补齐 5 · Kev 权重", "setup_hwmon.log": "补齐 6 · 硬件监控",
-         "backend.log": "后端", "crash.log": "崩溃记录", "model_server.log": "模型服务", "kev.log": "Kev", "hw_helper.log": "硬件监控助手", "osd.log": "游戏内显示"}
+         "backend.log": "后端", "crash.log": "崩溃记录", "model_server.log": "模型服务", "kev.log": "Kev", "tts.log": "配音服务", "hw_helper.log": "硬件监控助手", "osd.log": "游戏内显示"}
 
 
 # ---------- 后端有没有正常退出 ----------
@@ -233,6 +234,16 @@ async def services():
         kst, kd = "off", "用到才启动"
     out.append({"k": "kev", "name": "Kev（决策脑第二票）", "st": kst, "detail": kd, "log": "kev.log",
                 **(_proc_info(M.kevp.p.pid) if M.kevp.alive() else {})})
+    from .tts import T as tts
+    th = tts._h if tts.proc.alive() else None
+    if th:
+        tst, td = "ok", ("在线 · " + ("装着" + {"custom": "预设音色", "design": "描述音色"}.get(th.get("loaded"), "") + "模型" if th.get("loaded") else "模型没装")
+                         + (f" · 注意力 {th['attn']}" if th.get("attn") else "") + (" · 正在生成" if tts.busy() else ""))
+    elif tts.proc.alive():
+        tst, td = "warn", "正在启动"
+    else:
+        tst, td = "off", "用到才启动，闲置 " + str(settings.S.get("ttsIdle", 10)) + " 分钟关掉" if tts.env_ok() else "还没装（双击「安装配音.bat」）"
+    out.append({"k": "tts", "name": "配音服务", "st": tst, "detail": td, "log": "tts.log", **(_proc_info(tts.proc.p.pid) if tts.proc.alive() else {})})
     qs = {"online": "ok", "connecting": "warn", "error": "bad"}.get(BOT.status, "off")
     out.append({"k": "qq", "name": "QQ 通道", "st": qs, "detail": BOT.detail, "log": "backend.log"})
     from . import hw

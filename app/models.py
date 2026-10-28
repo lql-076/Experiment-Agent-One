@@ -1,4 +1,4 @@
-"""模型管家：在主后端里管两个子进程——本地模型服务（嵌入 + 底座 + 小脑）和 Kev。
+"""模型管家：在主后端里管两个子进程——本地模型服务（嵌入 + 底座 + 小脑）和 Kev（配音服务在 app/tts.py 里管，显存一起算）。
 
 - 只启动、只关闭自己开的进程（按进程号），绝不按名字杀进程。
 - 嵌入模型常驻；底座由模型服务自己闲置卸载；Kev 按需启动，闲置后关掉。
@@ -61,6 +61,8 @@ def orphan_kind(cmd, exe, cwd, root):
     ours = any(x == r or x.startswith(r + "\\") or x.startswith(r + "/") for x in (e, w))
     if (r + "\\app\\model_server.py") in c or (r + "/app/model_server.py") in c:
         return "本地模型服务"
+    if (r + "\\app\\tts_server.py") in c or (r + "/app/tts_server.py") in c:
+        return "配音服务"
     if "-m kev.serve" in c and ours:
         return "Kev"
     if "-m app.osd" in c and ours:
@@ -84,6 +86,7 @@ class Manager:
     def __init__(self):
         self.server = Proc("model_server")
         self.kevp = Proc("kev")
+        self.extra = []                  # 别的模块开的、也占显存的子进程（配音服务 app/tts.py）：算显存、退出时一起停
         self.last_kev = 0.0
         self.busy_until = 0.0
         self.yield_level = 0             # 让路：0 不让 / 1 底座、Kev 不装 / 2 嵌入模型也卸，显存全让出来
@@ -342,7 +345,7 @@ class Manager:
 
     def own_pids(self):
         pids = set()
-        for pr in (self.server, self.kevp):
+        for pr in (self.server, self.kevp, *self.extra):
             if pr.alive():
                 pids.add(pr.p.pid)
                 try:                                   # Windows 上虚拟环境的 python.exe 会再起一个真正干活的子进程
@@ -364,6 +367,7 @@ class Manager:
             est += (vr.get("reserved_gb") or vr.get("alloc_gb") or 0) + 0.5
         if self.kevp.alive() or self._kev_ok:
             est += 2.0
+        est += sum(getattr(pr, "vram_est", 0) for pr in self.extra if pr.alive())
         return est
 
     def tick(self, hw):
@@ -478,6 +482,8 @@ class Manager:
     def stop_all(self):
         self.server.stop()
         self.kevp.stop()
+        for pr in self.extra:
+            pr.stop()
 
 
 M = Manager()

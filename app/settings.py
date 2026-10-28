@@ -22,6 +22,8 @@ DEFAULTS = {
     "modelPort": 8090, "kevPort": 8091, "baseQuant": "4bit", "idleUnload": 15,
     "kevMode": "ondemand", "kevRun": "jaredpalmer/kev-0.8b", "hfMirror": True,
     "yieldAuto": True, "yieldVram": 2.0, "yieldCool": 3, "gpuOnly": True,   # 让路：给别的程序留几 GB 显存、空出来几分钟再装回
+    # 配音（app/tts.py）：服务端口、闲置几分钟关掉、句子之间 / 段落之间停几秒、保存到哪（留空 = Agent 文件夹里的「配音输出」）
+    "ttsPort": 8092, "ttsIdle": 10, "ttsGap": 0.35, "ttsParaGap": 0.7, "ttsOut": "", "ttsPython": "",
     # 云端
     "dsBase": "https://api.deepseek.com", "dsModel": "deepseek-flash", "dsLow": 2, "usdCny": 7.2,
     "priceIn": 0.15, "priceHit": 0.003, "priceOut": 0.60, "peakX": 2, "dsThinking": "auto",

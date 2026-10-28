@@ -15,6 +15,11 @@ MODELS_BRAINS = MODELS / "brains"                      # 小脑 LoRA，每个小
 HF_CACHE = MODELS / "hf-cache"                         # Kev 权重的下载缓存
 KEV = ROOT / "kev"                                     # Kev 源码（已随项目打包）
 AI_ENV = ROOT / "ai-env"                               # 本地模型的 Python 环境（安装本地模型环境.bat 生成）
+TTS_ENV = ROOT / "tts-env"                             # 配音的 Python 环境（安装配音.bat 生成；配音要的 Transformers 版本和 ai-env 不一样，分开装）
+MODELS_TTS = MODELS / "tts"                            # 配音模型（魔搭 Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice、-VoiceDesign）
+TTS_MODELS = {"custom": "Qwen3-TTS-12Hz-1.7B-CustomVoice",  # 预设音色 + 一句话控制语气
+              "design": "Qwen3-TTS-12Hz-1.7B-VoiceDesign"}  # 用一段文字描述造音色
+TTS_OUT = ROOT / "配音输出"                             # 保存的配音：每次一个文件夹（不进仓库、不进压缩包）
 MEMORY = ROOT / "memory"                               # agent 自己的文件夹：记忆、技能、提示词
 TRAINING = ROOT / "training"                           # 慢成长用的样本
 TOOLS = ROOT / "tools"
@@ -24,6 +29,10 @@ IS_WIN = sys.platform.startswith("win")
 
 def ai_python() -> Path:
     return AI_ENV / ("Scripts/python.exe" if IS_WIN else "bin/python")
+
+
+def tts_python() -> Path:
+    return TTS_ENV / ("Scripts/python.exe" if IS_WIN else "bin/python")
 
 
 TRAINING_RULES = """# 训练数据的规矩（写死在代码里）

@@ -10,7 +10,13 @@ RUN = DEV / ".run"
 RUN.mkdir(exist_ok=True)
 
 import uvicorn  # noqa: E402
-from app import main, reminders, setup  # noqa: E402
+from app import main, reminders, settings, setup, tts  # noqa: E402
+
+# 配音：沙箱里没有 tts-env、没有显卡、下不了模型。启动命令换成假的配音服务（dev/fake_tts.py），
+# "用到才启动、闲置关掉、让路关掉"还是走真的那一套
+tts.T.py = lambda: Path(sys.executable)
+tts.T.model_ok = lambda kind: True
+tts.T.cmd = lambda: [sys.executable, DEV / "fake_tts.py", "--port", settings.S["ttsPort"]]
 
 
 async def fake(k, opts):

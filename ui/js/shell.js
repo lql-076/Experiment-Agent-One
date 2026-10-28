@@ -104,6 +104,7 @@ function goView(v) {
   if (S.view === v) return;
   closeBrain();
   if (S.view === 'monitor') stopMonitor();
+  if (S.view === 'tts') ttsLeave();
   var usingVT = moving();
   var t = vt(function () {
     S.view = v;
@@ -115,6 +116,7 @@ function goView(v) {
     if (v === 'events') renderEvents();
     if (v === 'monitor') startMonitor();
     if (v === 'docs') renderDocs();
+    if (v === 'tts') { if (TTS.st) renderTTS(); ttsEnter(); }
     if (v === 'chat') { fillChatLog(true); fillSide(); setTimeout(function () { var i = $('#cIn'); if (i && !i.disabled) i.focus(); }, 60); }
     placeInd(usingVT);
   });

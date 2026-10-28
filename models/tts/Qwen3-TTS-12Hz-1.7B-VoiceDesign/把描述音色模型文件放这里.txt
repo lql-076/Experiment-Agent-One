@@ -1,0 +1,4 @@
+把魔搭 Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign 的所有文件放在这个文件夹里（打开这个文件夹直接能看到 config.json 和 speech_tokenizer 文件夹）。
+双击「安装配音.bat」会自动下载到这里。
+下载页：https://www.modelscope.cn/models/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/files
+许可证：Apache 2.0（可以商用）

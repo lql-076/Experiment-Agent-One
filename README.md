@@ -84,6 +84,12 @@
 - 游戏内显示：像游戏加加那样在游戏画面上浮一个小框，鼠标点得穿、不抢焦点。显示哪几项、竖排还是横排、放哪个角或顶部居中、哪块屏幕都能选；快捷键藏起来。把别的程序认成游戏了，点「这不是游戏」。
 - CPU 温度、功耗要装一次 [PawnIO](https://pawnio.eu) 驱动（任务管理器里也没有这两项）；硬件监控助手在设置里一键打开，第一次弹一次管理员确认，以后跟着 Agent 一起起。
 
+**配音（给视频念旁白）**
+- 用阿里通义的 [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) 1.7B（Apache 2.0，可以商用），在本机生成、不联网。双击 `安装配音.bat` 装好环境、从魔搭下模型。
+- 贴文案 → 选预设音色（9 个，5 个中文，一句话控制语气）或写一段描述造一个音色 → 生成 → 当场试听 → 保存。
+- 长文案按句子切开生成、自动停顿、拼成一个 WAV，同时出每句的时间轴（JSON 和 SRT），做视频时字幕和画面按它对齐。
+- 描述音色的「描述 + 随机种子」能存成「我的音色」一键再用。用到才启动，闲置、玩游戏时关掉，显存全还回去。不接克隆，不克隆任何真人的声音。
+
 **装好、跑稳**
 - **整备**：14 项"能不能在这台电脑上跑起来"的检查，每次启动自动查，好了的直接打勾。
 - **一键补齐**：Git、本地模型环境、底座和嵌入模型、模型服务、Kev 权重、硬件监控助手，按顺序装好（约 11GB）。测速选最快的源、分段下载、断点续传；某步失败让 DeepSeek 看日志，从固定的几种修法里选一个。
@@ -100,6 +106,7 @@
 | 后台 | 任务进度、各部分状态、进展报告和原始日志 |
 | 大脑 | 本地小脑、新类别、DeepSeek、更强的模型四块，各自的成长记录；导入更强的模型带回的总结 |
 | 报告 | 这周的分流、本地比例、被纠正几次、花了多少钱；先斩后奏的改动（能撤销）；等你决定的事 |
+| 配音 | 贴文案、选音色、生成、试听、保存；时间轴一句一行，点哪句跳到哪句 |
 | 设置 | 14 个分区：整备、提醒、本地模型、云端、QQ 通道、记忆与文件、分流旋钮、成长与训练、安全线、硬件监控、游戏内显示、外观、自动化、数据 |
 | 说明 | `docs/` 里的文档。每个功能一张能点开收起的树状图，QQ、模型服务这些节点按实时状态亮灯；能切到文字版 |
 | 常驻屏 | 闲下来自动进入（或者点侧栏「常驻」）：大时钟、下一个提醒、硬件读数，玩游戏时有帧数 |
@@ -123,7 +130,7 @@
 - 小脑训练本身（样本在攒，"先问你"这一步已经做好）
 - 自动生成技能
 - 标准 MCP 工具层
-- 语音
+- 和它语音对话（给视频念旁白的配音已经有了）
 
 逐条的对照见 [架构 · 总览](docs/AI文档/架构/00-总览.md) 最后一节，每一版改了什么见 [更新记录](docs/更新记录.md)。
 
@@ -137,6 +144,7 @@
 6. （可选）在 设置 › QQ 通道 填 QQ 机器人的 AppID 和 AppSecret（在 QQ 开放平台申请），然后在 整备 里绑定你的 QQ。
 7. （可选）要看 CPU 温度和游戏帧数：设置 › 硬件监控 打开助手；CPU 温度、功耗还要装一次 PawnIO 驱动，装完重启电脑。
 8. （可选）双击 `开机自启.bat`，以后登录 Windows 自动启动。
+9. （可选）要配音：双击 `安装配音.bat`（配音环境 + 两个模型，约 14GB），然后点侧栏「配音」。
 
 以后每次启动会自动查一遍哪些已经装好，不用再点一键补齐。更新到新版本：新压缩包解压到原来的文件夹，选「替换」。
 
@@ -162,10 +170,11 @@
 - **[PresentMon](https://github.com/GameTechDev/PresentMon)**（Intel）：用 ETW 事件读游戏帧数的办法。
 - **[LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)**：CPU、硬盘的温度和功耗传感器。
 - **[CC Switch](https://github.com/farion1231/cc-switch)**："获取模型列表 → 下拉选择"的设计。
-- **模型**：[MiniCPM](https://github.com/OpenBMB/MiniCPM)（OpenBMB）当底座，[Qwen3-Embedding](https://github.com/QwenLM/Qwen3-Embedding)（通义千问）做嵌入。模型文件由一键补齐从魔搭下载，不在仓库里，各自遵守原许可。
+- **模型**：[MiniCPM](https://github.com/OpenBMB/MiniCPM)（OpenBMB）当底座，[Qwen3-Embedding](https://github.com/QwenLM/Qwen3-Embedding)（通义千问）做嵌入，[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)（通义千问，Apache-2.0）配音。模型文件由一键补齐、安装配音从魔搭下载，不在仓库里，各自遵守原许可。
 - **库**：
   - 后端：FastAPI、Uvicorn、HTTPX、websockets、psutil、NumPy、nvidia-ml-py、pywebview、pythonnet、pywintrace
   - 本地模型：PyTorch、Transformers、PEFT、Accelerate、bitsandbytes
+  - 配音：qwen-tts、torchaudio、librosa、soundfile、ONNX Runtime
 - 代码和文档大部分是作者和 **Claude**（Anthropic）一起写的。
 
 ## 许可

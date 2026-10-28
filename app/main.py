@@ -15,11 +15,11 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import (agent, agentstate, checks, db, deepseek, docs, events, exam, feed, growth, hw, hwctl, memory, monitor, nightly, osd,
-               paths, reminders, reports, router, safety, settings, setup, websearch)
+               paths, reminders, reports, router, safety, settings, setup, tts, websearch)
 from .models import M
 from .qq import BOT
 
-VERSION = "1.8.5"
+VERSION = "1.8.6"
 PORT = 8765
 _bg = []
 
@@ -37,6 +37,8 @@ def _on_settings(ch):
         loop.create_task(BOT.restart())
     if ch.get("kevMode") == "off":
         M.kevp.stop()
+    if "ttsPort" in ch or "ttsPython" in ch:
+        tts.T.stop("配音设置改了")
     if "memDir" in ch or "useGit" in ch:
         memory.init()
     if ch.get("quiet") is False:      # 关掉免打扰：把攒着的消息一起发
@@ -73,6 +75,7 @@ async def housekeeping():
                     M.start_kev()
             data = await hw.sample()
             M.tick(data)
+            tts.T.tick()                          # 配音服务：让路时关掉、闲置久了关掉
             if n % 15 == 0 and M._health:
                 await router.embed_missing()
             if n % 150 == 5 and M._health:
@@ -162,6 +165,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Agent", lifespan=lifespan)
+app.include_router(tts.api)                       # 配音页的接口（app/tts.py）
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}", "127.0.0.1", "localhost"}
 
 

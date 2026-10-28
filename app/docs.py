@@ -73,6 +73,15 @@ ROUTES = {
     "/api/docs": "说明文档列表（侧栏「说明」）",
     "/api/docs/{rel:path}": "读一篇说明文档",
     "/api/quit": "退出 Agent：停掉自己开的子进程（硬件监控助手开着也一起关），然后退出",
+    "/api/tts": "配音页要的一切：环境和模型装没装、服务在不在、正在生成的进度、最近一次生成（时间轴）、预设音色、我的音色、实测速度",
+    "/api/tts/gen": "开始生成配音（预设音色 / 描述音色 + 语气）；长文案按句子切开一句一句生成，带 same 就是「试同一个人」",
+    "/api/tts/stop": "念完手上这一句就停",
+    "/api/tts/off": "关掉配音服务（显存还回去）",
+    "/api/tts/draft.wav": "最近一次生成的配音（试听用）",
+    "/api/tts/save": "把最近一次生成的存进「配音输出」：WAV + 时间轴 JSON + 字幕 SRT + 文案，一个文件夹，名字带日期和音色",
+    "/api/tts/open": "打开「配音输出」文件夹（带 last 打开最近存的那个）",
+    "/api/tts/voices": "存一个「我的音色」（描述 + 随机种子）",
+    "/api/tts/voices/{vid}": "删掉一个「我的音色」",
 }
 LOOPS = [
     ("后台照看（housekeeping）", "每 2 秒", "读硬件、判断让路、自动拉起模型服务、补算向量、整理排队的事、查余额、问训练、记录各部分上下线"),
@@ -81,7 +90,17 @@ LOOPS = [
     ("QQ 通道（qq.BOT）", "一直连着", "WebSocket 收消息、心跳、断线续连"),
 ]
 PORTS = [(8765, "界面和后端（app/main.py）"), (8090, "本地模型服务（app/model_server.py，在 ai-env 里跑）"),
-         (8091, "Kev 决策模型服务"), (8085, "硬件监控助手（app/hw_helper.py，管理员运行）")]
+         (8091, "Kev 决策模型服务"), (8092, "配音服务（app/tts_server.py，在 tts-env 里跑，用到才启动）"), (8085, "硬件监控助手（app/hw_helper.py，管理员运行）")]
+
+
+def _flat(routes):
+    """app.include_router 挂进来的接口（配音 app/tts.py）在新版 FastAPI 里是一整块，展开成一条一条。"""
+    for r in routes:
+        sub = getattr(r, "original_router", None)
+        if sub is not None:
+            yield from _flat(sub.routes)
+        else:
+            yield r
 
 
 def _title(p: Path) -> str:
@@ -186,7 +205,7 @@ def generate(app=None, version="", themes=None):
     if app is not None:
         L += ["", "## 接口（都在 127.0.0.1:8765）", "", "| 方法 | 地址 | 做什么 |", "| --- | --- | --- |"]
         seen = set()
-        for r in app.routes:
+        for r in _flat(app.routes):
             path, methods = getattr(r, "path", ""), sorted(getattr(r, "methods", None) or [])
             if not path or path.startswith(("/docs", "/openapi", "/redoc")) or not methods or (path, tuple(methods)) in seen:
                 continue
@@ -203,10 +222,10 @@ def generate(app=None, version="", themes=None):
     L += ["## 数据和日志都在哪", "", "| 位置 | 是什么 |", "| --- | --- |",
           "| data/settings.json | 设置 |", "| data/secrets.bin | 加密的密钥 |", "| data/agent.db | 数据库：事件、提醒、送达、花费、判例、类别、改动记录、等你决定 |",
           "| data/window.json | 窗口大小、位置、是否全屏 |", "| data/webview/ | 桌面窗口（WebView2）自己的缓存 |",
-          "| data/logs/backend.log | 后端的输出（平时没有黑窗口，出了问题先看这里） |", "| data/logs/model_server.log、kev.log、hw_helper.log | 本地模型服务、Kev、硬件监控助手 |",
+          "| data/logs/backend.log | 后端的输出（平时没有黑窗口，出了问题先看这里） |", "| data/logs/model_server.log、kev.log、tts.log、hw_helper.log | 本地模型服务、Kev、配音服务、硬件监控助手 |", "| data/tts/ | 最近一次生成的配音（试听用，只留一份） |",
           "| data/logs/setup_*.log | 一键补齐每一步的原始日志 |", "| data/logs/report.jsonl | 进展报告 |",
           "| data/logs/actions.jsonl | 动作日志（哈希链，改不了） |", "| memory/ | 记忆、技能、提示词、Claude 总结（中文 Markdown，git 记录改动） |",
-          "| training/ | 慢成长的样本 |", "| models/ | 底座、嵌入模型、小脑、Kev 权重 |", "| ai-env/、.venv/ | 两个 Python 环境 |",
+          "| training/ | 慢成长的样本 |", "| models/ | 底座、嵌入模型、小脑、Kev 权重、配音模型（models/tts） |", "| ai-env/、tts-env/、.venv/ | 三个 Python 环境（本地模型、配音、后端） |", "| 配音输出/ | 保存的配音：一次一个文件夹（WAV、时间轴、字幕、文案） |",
           "| tools/ | 便携版 Git、PyTorch 安装包、下载缓存、临时文件 |"]
     if paths.LOGS.exists():
         L += ["", "现在 data/logs 里有：" + "、".join(sorted(p.name for p in paths.LOGS.iterdir() if p.is_file())[:30])]

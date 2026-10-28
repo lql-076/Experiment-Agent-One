@@ -135,6 +135,7 @@ var SECTIONS = [
     { k: 'kevDir', l: 'Kev 源码文件夹', place: 'kev', h: '已随项目打包，一般不用改' },
     { k: 'baseQuant', l: '底座精度', t: 'select', d: '4bit', o: [['4bit', '4bit（约 2GB 显存，默认）'], ['8bit', '8bit（约 3GB）'], ['bf16', '原始精度（约 5GB）']] },
     { k: 'idleUnload', l: '底座和 Kev 闲置多久卸载', t: 'number', u: '分钟', d: 15, h: '常驻的只有嵌入模型，其余用到才加载' },
+    { k: 'ttsIdle', l: '配音服务闲置多久关掉', t: 'number', u: '分钟', d: 10, h: '左边「配音」页用到才启动，关掉后显存全还回去；在玩游戏时也会关' },
     { k: 'kevMode', l: 'Kev（决策脑第二票）', t: 'select', d: 'ondemand', o: [['ondemand', '用到才启动（默认）'], ['resident', '一直开着（约多占 2GB）'], ['off', '关闭，只用语义路由']] },
     { k: 'hfMirror', l: '下载 Kev 权重走国内镜像 hf-mirror', t: 'toggle', d: true },
     { k: 'yieldAuto', l: '显存让路：别的程序要显存时自动让出来', t: 'toggle', d: true, h: '按显存算：别的程序（游戏、画图）占得多了，先卸底座和 Kev，还不够再卸嵌入模型；认出在玩游戏也先让。空出来几分钟后自动把嵌入模型装回去，底座还是用到才装。让路期间非隐私的活交 DeepSeek，隐私的活排队' },
