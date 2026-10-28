@@ -12,6 +12,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "data" / "logs" / "backend.log"
+if str(ROOT) not in sys.path:                    # 开机自启是直接跑这个文件（不是 -m app.launch），要把 Agent 文件夹加进来
+    sys.path.insert(0, str(ROOT))
 
 
 def _box(title, msg):
@@ -29,7 +31,25 @@ def _tail(n=12):
         return ""
 
 
+def autostart():
+    """开机自启（设置 › 自动化）走这里：和 启动.bat 一样打开界面；依赖清单变了（刚更新了新版本）就交给 启动.bat 去补装。
+    返回 True = 交给 启动.bat 了，这里不用再起。"""
+    os.chdir(ROOT)
+    os.environ.setdefault("AGENT_OPEN_UI", "1")
+    req, done = ROOT / "requirements.txt", ROOT / ".venv" / "requirements.done"
+    try:
+        same = done.read_bytes() == req.read_bytes()
+    except OSError:
+        same = False
+    if not same:
+        os.startfile(str(ROOT / "启动.bat"))     # 这时候会有装依赖的窗口，装完自己关
+        return True
+    return False
+
+
 def main():
+    if "--autostart" in sys.argv and autostart():
+        return 0
     if sys.stdout is None:                       # pythonw：没有命令行，先接一个"空的"，后端再把它接到日志文件上
         sys.stdout = open(os.devnull, "w", encoding="utf-8")
     if sys.stderr is None:

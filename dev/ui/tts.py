@@ -1,6 +1,7 @@
 """配音页点一遍（连测试后端，配音服务是假的 dev/fake_tts.py）：
 贴文案 → 选音色 → 生成（进度、完成）→ 试听有声音、时间轴一句一行 → 点时间轴跳到那一句 → 保存 →
-切到描述音色 → 存成我的音色（出现在上面）→ 点它把描述和种子填回来 → 删掉 → 输入的东西刷新后还在。
+切到描述音色 → 存成我的音色（出现在上面）→ 点它把描述和种子填回来 → 删掉 → 输入的东西刷新后还在 →
+设置 › 本地模型 点「安装配音」看进度到装好 → 设置 › 自动化 有「开机自启」开关。
 用法：python dev/ui/tts.py 截图文件夹（要先 dev/serve.sh start）"""
 import sys
 
@@ -90,6 +91,21 @@ with sync_playwright() as pw:
     p.click('#ttsMode [data-mode="preset"]')
     p.evaluate("api('PUT', '/api/settings', {ttsOut: ''})")
     p.wait_for_timeout(300)
+
+    # 设置 › 本地模型 的「安装配音」（测试后端里是假的安装，几秒就完）
+    p.evaluate("S.sec='models'; renderSettings(); goView('settings')")
+    p.wait_for_selector("#ttsInst [data-tti]", timeout=8000)
+    txt = p.inner_text("#ttsInst")
+    check("配音环境" in txt and "预设音色模型" in txt and "描述音色模型" in txt, "设置 › 本地模型 里有「配音」一块：环境、两个模型各装没装")
+    p.click("#ttsInst [data-tti]")
+    p.wait_for_selector("#ttsInst .prog", timeout=5000)
+    check(True, "点「安装配音」：出现进度条")
+    p.wait_for_selector("#ttsInst .tts-msg.ok", timeout=30000)
+    check("装好了" in p.inner_text("#ttsInst"), "装完了：显示「装好了」")
+    p.screenshot(path=f"{OUT}/tts-install.png")
+    p.evaluate("S.sec='auto'; renderSettings(); goView('settings')")
+    p.wait_for_selector("#autoSw", timeout=5000)
+    check("开机自启" in p.inner_text("#autoSt"), "设置 › 自动化 最上面有「开机自启」开关（沙箱里不是 Windows，开关灰着）")
     b.close()
 print("JS 报错：", errs or "没有")
 print("不过的：", bad or "没有")

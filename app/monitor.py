@@ -242,7 +242,7 @@ async def services():
     elif tts.proc.alive():
         tst, td = "warn", "正在启动"
     else:
-        tst, td = "off", "用到才启动，闲置 " + str(settings.S.get("ttsIdle", 10)) + " 分钟关掉" if tts.env_ok() else "还没装（双击「安装配音.bat」）"
+        tst, td = "off", "用到才启动，闲置 " + str(settings.S.get("ttsIdle", 10)) + " 分钟关掉" if tts.env_ok() else "还没装（设置 › 本地模型 点「安装配音」）"
     out.append({"k": "tts", "name": "配音服务", "st": tst, "detail": td, "log": "tts.log", **(_proc_info(tts.proc.p.pid) if tts.proc.alive() else {})})
     qs = {"online": "ok", "connecting": "warn", "error": "bad"}.get(BOT.status, "off")
     out.append({"k": "qq", "name": "QQ 通道", "st": qs, "detail": BOT.detail, "log": "backend.log"})

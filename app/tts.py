@@ -198,6 +198,13 @@ class TTS:
         d = self.model_dir(kind)
         return (d / "config.json").exists() and (d / "speech_tokenizer" / "config.json").exists() and any(d.glob("*.safetensors"))
 
+    def model_size(self, kind):
+        """模型文件夹有多大（字节；下到一半的也算）。"""
+        try:
+            return sum(f.stat().st_size for f in self.model_dir(kind).rglob("*") if f.is_file())
+        except OSError:
+            return 0
+
     def out_dir(self):
         return paths.resolve(self.s.get("ttsOut", ""), paths.TTS_OUT)
 
@@ -232,7 +239,7 @@ class TTS:
         if h:
             return h
         if not self.env_ok():
-            raise RuntimeError("还没装配音环境：双击 Agent 文件夹里的「安装配音.bat」")
+            raise RuntimeError("还没装配音：到 设置 › 本地模型 点「安装配音」")
         if not self.proc.alive():
             self.proc.start(self.cmd(), paths.ROOT, self.env())
             self.last = time.time()
@@ -319,7 +326,7 @@ class TTS:
             raise HTTPException(400, f"一次最多 {MAX_CHARS} 字，分几次生成吧")
         v = self.voice(req)
         if not self.model_ok(v["kind"]) and not ((self._h or {}).get("models") or {}).get(v["kind"]):
-            raise HTTPException(400, f"{MODEL_INFO[v['kind']]}的模型还没下：双击「安装配音.bat」")
+            raise HTTPException(400, f"{MODEL_INFO[v['kind']]}的模型还没下：到 设置 › 本地模型 点「安装配音」")
         gap = float(self.s.get("ttsGap", 0.35))
         segs = split(text, gap=1.0 if same else gap, para=1.2 if same else float(self.s.get("ttsParaGap", 0.7)))
         if not segs:
@@ -476,7 +483,9 @@ class TTS:
 
     async def status(self):
         h = await self.health()
+        from . import tts_install
         return {"env": self.env_ok(), "models": {k: self.model_ok(k) for k in paths.TTS_MODELS}, "model_names": paths.TTS_MODELS,
+                "sizes": {k: self.model_size(k) for k in paths.TTS_MODELS}, "inst": tts_install.public(),
                 "server": bool(h), "proc": self.proc.alive(), "loaded": (h or {}).get("loaded"), "attn": (h or {}).get("attn"),
                 "cuda": (h or {}).get("cuda"), "yield": (M.yield_reason or "显存让路") if M.yielding else "",
                 "job": self.public(), "draft": self.draft(), "speakers": SPEAKERS, "langs": LANGS, "voices": self.voices(),

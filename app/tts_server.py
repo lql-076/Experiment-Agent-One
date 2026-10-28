@@ -89,7 +89,7 @@ def load(kind):
         raise HTTPException(503, "没检测到可用的显卡（CUDA）。按约定只用显卡，不在 CPU 上跑。")
     d = Path(A.models) / NAMES[kind]
     if not (d / "config.json").exists():
-        raise HTTPException(404, f"模型还没下：{d}（双击「安装配音.bat」）")
+        raise HTTPException(404, f"模型还没下：{d}（设置 › 本地模型 点「安装配音」）")
     unload()
     from qwen_tts import Qwen3TTSModel
     t0, err = time.time(), None

@@ -5,12 +5,14 @@
 4. 配音环境、生成的配音不进仓库不进压缩包；两边的模型名一致
 5. 连测试后端（dev/serve.sh start 起的，配音服务换成假的 dev/fake_tts.py）：生成 → 拼接和停顿 → 时间轴 JSON / SRT 对得上 WAV →
    保存（文件夹名带日期和音色、重名加 _2）→ 我的音色存 / 改 / 删 → 试同一个人 → 停下 → 生成中再点生成 → 关掉服务
+6. 设置 › 本地模型 的「安装配音」：后台装、进展报告、日志、失败再点、改走 hf-mirror、停下
 用法：python dev/test_tts.py（要先 dev/serve.sh start）"""
 import ast
 import io
 import json
 import pathlib
 import re
+import shutil
 import sys
 import time
 import wave
@@ -108,6 +110,7 @@ B = "http://127.0.0.1:8765"
 H = {"X-Agent": "1"}
 c = httpx.Client(base_url=B, headers=H, timeout=30)
 OUT = ROOT / "dev" / ".run" / "配音输出-测试"
+shutil.rmtree(OUT, ignore_errors=True)          # 上一次测试存的清掉（只在 dev/.run 里），免得同一分钟重名
 c.put("/api/settings", json={"ttsOut": str(OUT), "ttsGap": 0.35, "ttsParaGap": 0.7})
 
 
@@ -181,6 +184,39 @@ check(j["job"]["st"] == "stop" and j["job"]["i"] < 39, f"点「停下」：念�
 check(j["draft"]["ver"] == ver and j["proc"], "停下的这次不覆盖上一次的试听；配音服务不关（模型还在，下次不用重装）")
 c.post("/api/tts/off")
 check(not c.get("/api/tts").json()["proc"], "点「关掉」：配音服务关了")
+
+# ---------- 6. 设置 › 本地模型 的「安装配音」（测试后端里换成假的安装 dev/fake_tts_install.py） ----------
+def inst_wait(t=30):
+    t0 = time.time()
+    while time.time() - t0 < t:
+        i = c.get("/api/tts").json()["inst"]
+        if i["st"] != "run":
+            return i
+        time.sleep(0.2)
+    return c.get("/api/tts").json()["inst"]
+
+
+r = c.post("/api/tts/install", json={})
+check(r.status_code == 200 and r.json()["st"] == "run", "点「安装配音」：在后台开始装")
+check(c.post("/api/tts/install", json={}).status_code == 409, "装着的时候再点：不重复开")
+i = inst_wait()
+check(i["st"] == "ok" and i["code"] == 0 and i["pct"] == 100, f"装完了：{i['line']}")
+feedtxt = " | ".join(e["text"] for e in c.get("/api/feed?n=60").json()["items"] if e.get("job") == "安装配音")
+check("开始安装配音" in feedtxt and "装好了 4 个包" in feedtxt and "下载 model.safetensors 完成" in feedtxt and "配音装好了" in feedtxt,
+      "每一步写进进展报告（后台页，任务名「安装配音」）：开始、装了哪些包、下载完成多大多久、装好了")
+log = pathlib.Path(i["log"].replace("\\", "/"))
+check(log.exists() and "预设音色 CustomVoice 下好了" in log.read_text("utf-8"), "原始输出写进 data/logs/setup_tts.log")
+(ROOT / "dev" / ".run" / "fake_tts_install_fail.flag").write_text("1")
+c.post("/api/tts/install", json={})
+i = inst_wait()
+check(i["st"] == "fail" and i["code"] == 1, "下到一半断了：显示没装完（退出码 1），可以再点")
+c.post("/api/tts/install", json={"hf": True})
+i = inst_wait()
+check(i["st"] == "ok" and i["hf"], "点「改从 hf-mirror 下」：接着装好了")
+c.post("/api/tts/install", json={})
+c.post("/api/tts/install/stop")
+i = inst_wait()
+check(i["st"] == "stop", "点「停下」：停了（再点会接着装）")
 c.put("/api/settings", json={"ttsOut": ""})
 
 print("不过的：", bad or "没有")

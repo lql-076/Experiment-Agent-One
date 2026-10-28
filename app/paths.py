@@ -15,7 +15,7 @@ MODELS_BRAINS = MODELS / "brains"                      # 小脑 LoRA，每个小
 HF_CACHE = MODELS / "hf-cache"                         # Kev 权重的下载缓存
 KEV = ROOT / "kev"                                     # Kev 源码（已随项目打包）
 AI_ENV = ROOT / "ai-env"                               # 本地模型的 Python 环境（安装本地模型环境.bat 生成）
-TTS_ENV = ROOT / "tts-env"                             # 配音的 Python 环境（安装配音.bat 生成；配音要的 Transformers 版本和 ai-env 不一样，分开装）
+TTS_ENV = ROOT / "tts-env"                             # 配音的 Python 环境（设置 › 本地模型「安装配音」或 安装配音.bat 生成；配音要的 Transformers 版本和 ai-env 不一样，分开装）
 MODELS_TTS = MODELS / "tts"                            # 配音模型（魔搭 Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice、-VoiceDesign）
 TTS_MODELS = {"custom": "Qwen3-TTS-12Hz-1.7B-CustomVoice",  # 预设音色 + 一句话控制语气
               "design": "Qwen3-TTS-12Hz-1.7B-VoiceDesign"}  # 用一段文字描述造音色

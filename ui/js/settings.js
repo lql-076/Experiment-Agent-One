@@ -77,6 +77,8 @@ function sectionBody(sec) {
   if (sec.custom === 'cloud') h += '<div class="balrow">' + balanceHTML() + searchHTML() + '</div>';
   if (sec.custom === 'osd') h += osdHTML() + '<div id="fpsSeen">' + fpsSeenHTML() + '</div>';
   if (sec.custom === 'hw') h += '<div id="hwCtl">' + hwCtlHTML() + '</div>';
+  if (sec.custom === 'models') h += '<div id="ttsInst">' + ttsInstHTML() + '</div>';
+  if (sec.custom === 'auto') h += '<div id="autoSt">' + autoStHTML() + '</div>';
   if (sec.custom === 'growth') h += '<div class="btnrow" style="margin-bottom:1.5rem"><button class="btn" id="nightNow"' + (useLive() ? '' : ' disabled') + '>现在跑一次每日差事</button></div>';
   return h + '<div class="fields">' + sec.fields.map(fieldHTML).join('') + '</div>';
 }
@@ -162,6 +164,23 @@ function hwCtlHTML() {
     '<div class="btnrow"><span class="cap">' + (on ? '开着 · 跟着 Agent 起' : run ? '没设成跟着 Agent 起' : '关着') + '</span><button class="switch" role="switch" id="hwHelperSw" aria-label="硬件监控助手开关" aria-checked="' + on + '"' + (live && !HWCTL.busy ? '' : ' disabled') + '></button></div></div>';
 }
 
+/* 开机自启（app/autostart.py）：写当前用户的启动项，不要管理员；开机自启.bat 建的旧任务也认得出 */
+var AUTOST = { st: null, busy: false };
+function autoLoad() {
+  if (!useLive()) return;
+  api('GET', '/api/autostart', null, 15000).then(function (r) { AUTOST.st = r; var c = $('#autoSt'); if (c) c.innerHTML = autoStHTML(); }).catch(function () {});
+}
+function autoStHTML() {
+  var a = AUTOST.st, live = useLive(), on = !!(a && a.on);
+  var st = !live ? ['off', '演示数据'] : !a ? ['off', '正在读取…'] : !a.ok ? ['off', a.msg] : AUTOST.busy ? ['warn', '正在改…'] : on ? ['ok', '开着'] : ['off', '关着'];
+  var how = a && a.ok && a.task && !a.run ? '现在用的是「开机自启.bat」建的计划任务。' : '';
+  return '<div class="balbox hwctl"><div><span class="label">开机自启</span><div class="hwc-st st-' + st[0] + '"><i></i><b>' + esc(st[1]) + '</b></div>' +
+    '<div class="help">' + how + '登录 Windows 后自动启动 Agent、打开界面。打开：写进你这个账号的启动项，不要管理员、不弹确认、没有黑窗口。' +
+    '关掉：以前用「开机自启.bat」开过的话，删那个旧任务要弹一次管理员确认。两个 bat 都留着备用。' +
+    (a && a.other ? '<br>启动项里原来指向别的文件夹（' + esc(a.other) + '），打开会改成现在这个。' : '') + '</div></div>' +
+    '<div class="btnrow"><button class="switch" role="switch" id="autoSw" aria-label="开机自启开关" aria-checked="' + on + '"' + (live && a && a.ok && !AUTOST.busy ? '' : ' disabled') + '></button></div></div>';
+}
+
 /* 联网搜索：今天搜了几次 / 上限、这个月多少次花了多少；能现场测一次 */
 function searchStats() {
   if (!useLive()) return { on: true, limit: 200, today: { n: 7, cny: 0.04 }, month: { n: 86, cny: 0.46 } };
@@ -182,13 +201,16 @@ function renderSettings() {
   if (S.sec === 'remind') fetchReminders();
   if (S.sec === 'prep') setupPoll();
   if (S.sec === 'osd') requestAnimationFrame(osdFitPrev);
+  secOpened(S.sec);
 }
+/* 打开某个分区时要现查的：配音装没装（本地模型）、开机自启开没开（自动化） */
+function secOpened(id) { if (id === 'models') ttsInstLoad(); if (id === 'auto') autoLoad(); }
 function goSec(id) {
   if (S.sec === id) return;
   S.sec = id; S.resetArm = false;
   $$('.sitem').forEach(function (b) { b.setAttribute('aria-current', b.dataset.sec === id); });
   var b = $('#sbody');
-  var fill = function () { b.innerHTML = sectionBody(secById(id)); b.scrollTop = 0; if (id === 'remind') fetchReminders(); if (id === 'prep') setupPoll(); if (id === 'osd') requestAnimationFrame(osdFitPrev); };
+  var fill = function () { b.innerHTML = sectionBody(secById(id)); b.scrollTop = 0; if (id === 'remind') fetchReminders(); if (id === 'prep') setupPoll(); if (id === 'osd') requestAnimationFrame(osdFitPrev); secOpened(id); };
   if (S.set.motion === 'off') { fill(); return; }
   b.style.transition = 'opacity .14s ease'; b.style.opacity = '0';
   setTimeout(function () { fill(); replay(b); b.style.opacity = ''; }, 140);
@@ -274,6 +296,12 @@ sv.addEventListener('click', function (ev) {
   else if (t.dataset.choice) {
     setVal(t.dataset.choice, t.dataset.v === '1');
     $$('[data-choice="' + t.dataset.choice + '"]').forEach(function (b) { b.setAttribute('aria-pressed', b === t); });
+  }
+  else if (t.id === 'autoSw') {
+    var wantOn = t.getAttribute('aria-checked') !== 'true';
+    AUTOST.busy = true; $('#autoSt').innerHTML = autoStHTML();
+    api('POST', '/api/autostart', { on: wantOn }, 60000).then(function (r) { AUTOST.st = r; toast(r.msg, 5000); })
+      .catch(function (e) { toast(e.message, 6000); }).then(function () { AUTOST.busy = false; var c = $('#autoSt'); if (c) c.innerHTML = autoStHTML(); });
   }
   else if (t.id === 'hwHelperSw') {
     var want = t.getAttribute('aria-checked') !== 'true';

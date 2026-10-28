@@ -349,8 +349,8 @@ def cleanup_orphans():
     except Exception:
         return 0
     marks = [str(paths.ROOT / "scripts" / "install_ai.py"), str(paths.ROOT / "scripts" / "download_models.py"),
-             str(paths.ROOT / "scripts" / "fastdl.py")]
-    aienv = str(paths.AI_ENV).lower()
+             str(paths.ROOT / "scripts" / "fastdl.py"), str(paths.ROOT / "scripts" / "install_tts.py")]
+    envs = (str(paths.AI_ENV).lower(), str(paths.TTS_ENV).lower())
     n = 0
     for p in psutil.process_iter(["pid", "cmdline", "exe"]):
         try:
@@ -358,7 +358,7 @@ def cleanup_orphans():
             exe = (p.info["exe"] or "").lower()
             if p.pid == os.getpid():
                 continue
-            if any(m in cmd for m in marks) or (exe.startswith(aienv) and " -m pip" in cmd):
+            if any(m in cmd for m in marks) or (exe.startswith(envs) and " -m pip" in cmd):
                 for c in p.children(recursive=True):
                     c.kill()
                 p.kill()

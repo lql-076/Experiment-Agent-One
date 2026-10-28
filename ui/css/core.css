@@ -1231,3 +1231,14 @@ html[data-orient="portrait"] .osd-top{grid-template-columns:minmax(0,24rem) minm
 html[data-orient="portrait"] .tts .ph .sub{display:none}
 html[data-orient="portrait"] .tts-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:minmax(14rem,.8fr) minmax(0,1.2fr)}
 html[data-orient="portrait"] .tts-text{grid-column:1/-1}
+/* 设置 › 本地模型 的「配音」一块（ui/js/tts.js 的 ttsInstHTML） */
+.ttsinst{align-items:flex-start}
+.ttsi-main{display:flex;flex-direction:column;gap:.5rem;min-width:min(100%,26rem);flex:1}
+.ttsi-list{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:.35rem 1.75rem}
+.ttsi-list li{display:flex;align-items:center;gap:.5rem;font-size:.875rem;color:var(--text2)}
+.ttsi-list li i{width:.5rem;height:.5rem;border-radius:50%;background:var(--text3);flex:none}
+.ttsi-list li.ok i{background:var(--ok);box-shadow:0 0 .4rem var(--ok)}
+.ttsi-list li em{font-style:normal;color:var(--text3);font-family:var(--fn);font-size:.8125rem}
+.ttsinst .hwc-st{margin:.1rem 0}
+.ttsinst .prog{display:flex;flex-direction:column;gap:.4rem}
+.tts-warn .btnrow{margin-top:.35rem}

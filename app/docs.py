@@ -82,6 +82,9 @@ ROUTES = {
     "/api/tts/open": "打开「配音输出」文件夹（带 last 打开最近存的那个）",
     "/api/tts/voices": "存一个「我的音色」（描述 + 随机种子）",
     "/api/tts/voices/{vid}": "删掉一个「我的音色」",
+    "/api/tts/install": "设置 › 本地模型 的「安装配音」：后台跑 scripts/install_tts.py（配音环境 + 两个模型），带 hf 就从 hf-mirror 下模型",
+    "/api/tts/install/stop": "停下安装配音（按进程号结束它和它开的 pip）",
+    "/api/autostart": "开机自启：GET 看开没开（当前用户的启动项 / 开机自启.bat 建的计划任务），POST {on} 打开或关掉",
 }
 LOOPS = [
     ("后台照看（housekeeping）", "每 2 秒", "读硬件、判断让路、自动拉起模型服务、补算向量、整理排队的事、查余额、问训练、记录各部分上下线"),

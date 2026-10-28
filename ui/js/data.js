@@ -128,7 +128,7 @@ var LIVE_CHECKS = CHECKS.filter(function (c) { return !c.later; });
 var SECTIONS = [
   { id: 'prep', name: '整备', desc: '这里只放"能不能在这台电脑上跑起来"的项，每次启动自动自检。能自动装的点「一键补齐」；剩下的 DeepSeek Key、QQ 机器人要你自己填。', custom: 'prep' },
   { id: 'remind', name: '提醒', fields: [{ k: 'quiet', l: '免打扰', t: 'toggle', d: false, h: '开着时只发提醒（吃药这类照常准时）；别的主动消息先攒着，关掉后一起发给你。不设时段，什么时候开关由你' }], desc: '提醒不经过任何模型，显卡被游戏占满也照样准时。先发 QQ；QQ 发不出去就弹电脑通知；同时在界面上挂一张卡片，直到你点"好了"或"晚点"。也可以直接在 QQ 里说"每天晚上十点提醒我吃药"。', custom: 'remind' },
-  { id: 'models', name: '本地模型', desc: '只用显卡，不用 CPU。路径留空就用默认位置（Agent 文件夹里），一般不用改。', fields: [
+  { id: 'models', name: '本地模型', desc: '只用显卡，不用 CPU。路径留空就用默认位置（Agent 文件夹里），一般不用改。', custom: 'models', fields: [
     { k: 'baseDir', l: '底座文件夹（MiniCPM5-2B）', place: 'base', h: '放魔搭下载的整个模型文件夹，里面直接能看到 config.json' },
     { k: 'embedDir', l: '嵌入模型文件夹（Qwen3-Embedding-0.6B）', place: 'embed' },
     { k: 'loraDir', l: '小脑（LoRA）存放文件夹', place: 'brains', h: '每个小脑一个子文件夹，训练出来会自动放这里' },
@@ -224,7 +224,7 @@ var SECTIONS = [
     { k: 'layout', l: '布局', t: 'select', d: 'auto', o: [['auto', '自动（按窗口比例）'], ['landscape', '固定横屏'], ['portrait', '固定竖屏']] },
     { k: 'h24', l: '24 小时制', t: 'toggle', d: true }
   ] },
-  { id: 'auto', name: '自动化', desc: '让界面自己照顾自己：没人用时进入常驻，启动时自动自检。', fields: [
+  { id: 'auto', name: '自动化', desc: '让界面自己照顾自己：开机自启、没人用时进入常驻、启动时自动自检。', custom: 'auto', fields: [
     { k: 'idleRes', l: '无操作多久自动进入常驻', t: 'select', d: '5', o: [['0', '关闭'], ['1', '1 分钟（测试用）'], ['5', '5 分钟'], ['10', '10 分钟'], ['15', '15 分钟'], ['30', '30 分钟'], ['60', '60 分钟']] },
     { k: 'startRes', l: '打开时直接进入常驻', t: 'toggle', d: false },
     { k: 'bootShow', l: '启动时显示自检过程', t: 'toggle', d: true, h: '关掉后在后台静默自检，有缺失才提醒' },

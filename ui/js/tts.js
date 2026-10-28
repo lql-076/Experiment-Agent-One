@@ -15,7 +15,8 @@ var TTS_DEMO = {
     { id: 'Sohee', name: 'Sohee', d: '女声 · 温暖、情感丰富', lang: '韩语' }],
   langs: [['Chinese', '中文'], ['English', '英文'], ['Auto', '自动']],
   voices: [{ id: 1, name: '解说男声', desc: '三十岁左右的男声，声音低沉温和，吐字清楚，语速平稳，像科技频道的解说', seed: 20261028 }],
-  out: 'F:\\Agent\\配音输出', saved: null, speed: null, gap: 0.35, para: 0.7
+  out: 'F:\\Agent\\配音输出', saved: null, speed: null, gap: 0.35, para: 0.7,
+  sizes: { custom: 4.5e9, design: 4.5e9 }, inst: { st: 'idle' }
 };
 function ttsSeed() { return 1 + Math.floor(Math.random() * 2147483646); }
 function ttsForm() {
@@ -101,7 +102,10 @@ function ttsSync() {
   $('#ttsSvc').innerHTML = svc;
   var kind = ttsKind(), miss = !s.env ? 'env' : !(s.models || {})[kind] ? 'model' : '';
   var g = '<div class="hc-h"><span class="label">生成</span>' + (s.speed ? '<span class="cap">上次实测：每分钟音频要生成 ' + ttsDur(s.speed.per_min) + '</span>' : '') + '</div>';
-  if (miss) g += '<div class="tts-warn"><b>' + (miss === 'env' ? '还没装配音' : '还没下' + (kind === 'custom' ? '预设音色' : '描述音色') + '的模型') + '</b><span>双击 Agent 文件夹里的「安装配音.bat」：装配音环境，再从魔搭下两个模型（每个 4~5 GB）。装好回来就能用。</span></div>';
+  var ins = s.inst || {};
+  if (miss) g += '<div class="tts-warn"><b>' + (ins.st === 'run' ? '正在安装配音' + (ins.pct != null ? ' · ' + Math.round(ins.pct) + '%' : '') : miss === 'env' ? '还没装配音' : '还没下' + (kind === 'custom' ? '预设音色' : '描述音色') + '的模型') + '</b>' +
+    '<span>' + (ins.st === 'run' ? esc(ins.phase || ins.line || '准备中') + '。装好了这里自己变。' : '到 设置 › 本地模型 点「安装配音」：装配音环境，再从魔搭下两个模型（每个 4~5 GB）。') + '</span>' +
+    '<span class="btnrow"><button class="btn" data-act="goinst">去 设置 › 本地模型</button></span></div>';
   else if (s.yield && !run) g += '<div class="tts-warn"><b>现在在让路</b><span>' + esc(s.yield) + '。配音要 5~6 GB 显存，游戏关了再生成。</span></div>';
   if (run) {
     var pct = j.chars ? Math.round(j.done_chars / j.chars * 100) : 0;
@@ -170,6 +174,7 @@ $('#view-tts').addEventListener('click', function (ev) {
   var act = t.dataset.act; if (!act) return;
   if (act === 'gen') ttsGo(false);
   else if (act === 'same') ttsGo(true);
+  else if (act === 'goinst') { S.sec = 'models'; renderSettings(); goView('settings'); }
   else if (act === 'reseed') { f.seed = ttsSeed(); ttsKeep(); $('#ttsSeed').value = f.seed; $$('#ttsVoice [data-voice]').forEach(function (b) { b.setAttribute('aria-pressed', 'false'); }); }
   else if (act === 'savevoice') {
     if (!f.name.trim() || !f.desc.trim()) { toast('起个名字、写好描述再存'); return; }
@@ -199,3 +204,47 @@ $('#view-tts').addEventListener('change', function (ev) {
     toast(t.id === 'ttsGap' ? '句子之间停 ' + v + ' 秒（下次生成起作用）' : '换段停 ' + v + ' 秒（下次生成起作用）');
   }
 });
+
+/* ================= 安装配音（设置 › 本地模型 里那一块，后端 app/tts_install.py） ================= */
+function ttsGB(b) { return b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b >= 1e6 ? Math.round(b / 1e6) + ' MB' : '0'; }
+function ttsInstLoad() {
+  return ttsLoad().then(function () { var c = $('#ttsInst'), x = ttsInstHTML(); if (c && c.innerHTML !== x) c.innerHTML = x; }).catch(function () {});
+}
+function ttsInstHTML() {
+  var s = TTS.st;
+  if (!s) return '<div class="balbox ttsinst"><div><span class="label">配音 · Qwen3-TTS 1.7B</span><div class="help">正在读取…</div></div></div>';
+  var i = s.inst || {}, run = i.st === 'run', m = s.models || {}, z = s.sizes || {}, live = useLive();
+  var all = s.env && m.custom && m.design, some = s.env || m.custom || m.design || z.custom || z.design;
+  var st = run ? ['warn', '正在安装'] : all ? ['ok', '装好了'] : some ? ['warn', '没装全'] : ['off', '还没装'];
+  var row = function (ok, name, extra) { return '<li class="' + (ok ? 'ok' : '') + '"><i></i><span>' + name + '</span><em>' + extra + '</em></li>'; };   // 一行三项，横着排
+  var mod = function (k, name) { var g = (z[k] || 0) >= 1e6 ? ' · ' + ttsGB(z[k]) : ''; return row(m[k], name, m[k] ? '已下' + g : g ? '下了一半' + g : '没下'); };
+  var h = '<div class="balbox ttsinst"><div class="ttsi-main"><span class="label">配音 · Qwen3-TTS 1.7B（左边「配音」页用）</span><div class="hwc-st st-' + st[0] + '"><i></i><b>' + st[1] + '</b></div>' +
+    '<ul class="ttsi-list">' + row(s.env, '配音环境', s.env ? '已装' : '没装') + mod('custom', '预设音色模型', '') + mod('design', '描述音色模型') + '</ul>';
+  if (run) {
+    var pct = i.pct == null ? null : Math.round(i.pct);
+    h += '<div class="prog' + (pct == null ? ' busy' : '') + '"><div class="prog-h"><span>' + esc(i.phase || '准备中') + '</span><b>' + (pct == null ? '' : pct + '%') + '</b></div>' +
+      '<div class="prog-bar"><i style="transform:scaleX(' + (pct == null ? 1 : pct / 100) + ')"></i></div>' +
+      '<div class="prog-f">' + (i.speed ? (i.speed / 1e6).toFixed(1) + ' MB/s' : '') + (i.eta ? ' · 还要约 ' + ttsDur(i.eta) : '') + (i.line ? ' · ' + esc(i.line.slice(0, 60)) : '') + '</div></div>';
+  } else if (i.st === 'fail') h += '<div class="tts-msg bad">上次没装完（退出码 ' + esc(i.code) + '）。再点一次会接着装；魔搭下不动就点「改从 hf-mirror 下」。原始输出：' + esc(i.log || '') + '</div>';
+  else if (i.st === 'stop') h += '<div class="tts-msg">上次停下了，再点一次接着装。</div>';
+  else if (i.st === 'ok') h += '<div class="tts-msg ok">装好了，左边点「配音」就能用。</div>';
+  h += '<div class="help">约 14 GB：配音环境 5 GB + 两个模型各 4~5 GB（魔搭）。装过的跳过、断了接着下，关掉界面也接着装，每一步在 后台 › 进展报告。备用：双击「安装配音.bat」。</div></div>' +
+    '<div class="btnrow">' + (run ? '<button class="btn" data-tti="stop">停下</button>'
+      : '<button class="btn primary" data-tti="go"' + (live ? '' : ' disabled') + '>' + (all ? '重新检查一遍' : i.st === 'fail' || i.st === 'stop' || some ? '接着装' : '安装配音') + '</button>' +
+        (i.st === 'fail' ? '<button class="btn" data-tti="hf">改从 hf-mirror 下</button>' : '')) + '</div></div>';
+  return h;
+}
+$('#view-settings').addEventListener('click', function (ev) {
+  var t = ev.target.closest('[data-tti]'); if (!t || t.disabled) return;
+  if (!useLive()) { toast('演示模式：连上后端才能装'); return; }
+  var go = t.dataset.tti === 'stop' ? api('POST', '/api/tts/install/stop', {}) : api('POST', '/api/tts/install', { hf: t.dataset.tti === 'hf' });
+  t.disabled = true;
+  go.then(function () { if (t.dataset.tti !== 'stop') toast('开始安装配音，可以关掉界面，它在后台接着装'); return ttsInstLoad(); }).catch(function (e) { toast(e.message, 5000); t.disabled = false; });
+});
+var ttsInstN = 0;
+setInterval(function () {
+  if (S.view !== 'settings' || S.sec !== 'models' || !useLive()) return;
+  ttsInstN++;
+  var run = TTS.st && TTS.st.inst && TTS.st.inst.st === 'run';
+  if (run || ttsInstN % 5 === 0) ttsInstLoad();
+}, 1000);
