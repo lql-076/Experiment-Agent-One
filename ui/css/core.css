@@ -1263,3 +1263,7 @@ html[data-orient="portrait"] .tts-text{grid-column:1/-1}
 .rs.tight2 .rt .spark{display:none}
 html[data-orient="portrait"] .rs.tight2{--rsz:min(76vw,38vh);gap:1.75rem}
 #resident.rs-tight .r-src{display:none}
+.tts-seg.est .num{color:var(--c-neu)}
+#ttsWay button{padding:.4rem .75rem;min-height:2.25rem}
+.tts-gorow{align-items:center;gap:.75rem 1rem}
+.tts-wayhint{font-size:.8125rem;color:var(--text3)}

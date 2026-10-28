@@ -21,6 +21,7 @@ import wave
 from contextlib import redirect_stdout
 
 import httpx
+import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -52,6 +53,36 @@ check([s["text"] for s in tts.split("好。！？\n——\n下一句。")] == ["
 check([s["text"] for s in tts.split("版本 v1.8.6 已经发布，价格 3.5 元。Next one. And this!")] == ["版本 v1.8.6 已经发布，价格 3.5 元。", "Next one.", "And this!"],
       "小数点、版本号不切；英文句号后面有空格才切")
 check(tts.split("   \n\n  ") == [], "全是空白：没有要念的")
+
+# ---------- 1b. 整段一次生成：分块、按停顿对齐、补停顿（v1.8.9） ----------
+SR = 1000
+
+
+def audio(parts):
+    """[(秒, 有没有声音)…] → 16 位 PCM。"""
+    out = bytearray()
+    for sec, loud in parts:
+        n = int(round(sec * SR))
+        out += (np.sin(np.arange(n) * 0.9) * (9000 if loud else 0)).astype("<i2").tobytes()
+    return out
+
+
+segs = tts.split("大家好，欢迎回来。今天聊三个工具！第一个是配音。")
+pcm = audio([(0.4, 1), (0.14, 0), (0.8, 1), (0.3, 0), (1.6, 1), (0.3, 0), (1.4, 1)])     # 第一句中间有逗号的小停顿
+spans, est, got = tts.whole_timeline(pcm, SR, segs, [0, 1, 2])
+check(not any(est) and abs(spans[1][0] - 1.64) < 0.03 and abs(spans[2][0] - 3.54) < 0.03,
+      f"按停顿对齐：句末的停顿对上了，逗号那个小停顿不算（第 2、3 句从 {spans[1][0]:.2f}、{spans[2][0]:.2f} 秒开始）")
+pcm2 = audio([(1.2, 1), (0.3, 0), (3.0, 1)])                                            # 后两句连着念了，中间没停
+spans, est, got = tts.whole_timeline(pcm2, SR, segs, [0, 1, 2])
+check(est == [False, True, True] and spans[0][1] == 1.2, "有一处没停顿（两句连着念了）：那两句标「按字数估的」，别的照样对齐")
+pcm3, sp3 = tts.pad_pauses(pcm, SR, [[0, 1.34], [1.64, 3.24], [3.54, 4.94]], [(1.34, 1.64), (3.24, 3.54)], [0.35, 0.7])
+check(abs(len(pcm3) / 2 / SR - (len(pcm) / 2 / SR + 0.05 + 0.4)) < 0.01 and abs(sp3[1][0] - 1.69) < 0.01 and abs(sp3[2][0] - 3.99) < 0.01,
+      "模型停得比设置的短：在停顿中间补静音（句间补到 0.35、换段补到 0.7），后面的时间跟着挪")
+big = tts.split(("这是一句十个字的话。" * 50 + "\n\n") * 4)
+ch = tts.whole_chunks(big, 1200)
+check(len(ch) == 2 and all(big[c[-1]]["kind"] in ("para", "end") for c in ch) and sum(len(c) for c in ch) == len(big),
+      f"太长的（2000 字）分成 {len(ch)} 块，都在换段处断开，一句不少")
+check(tts.chunk_text(tts.split("标题没有标点\n\n正文一句。"), [0, 1]) == "标题没有标点。\n正文一句。", "一块里没有句末标点的行补一个句号，换段处换行")
 
 # ---------- 2. 字幕、音色参数、文件名 ----------
 check(tts.srt_time(3725.5) == "01:02:05,500" and tts.srt_time(0) == "00:00:00,000", f"SRT 时间格式：{tts.srt_time(3725.5)}")
@@ -150,19 +181,40 @@ check(st["env"] and not st["proc"] and len(st["speakers"]) == 9 and sum("中文"
       "配音页拿得到状态：9 个预设音色（5 个中文），服务没开")
 TEXT = "大家好，欢迎回来。今天聊三个工具！\n\n第一个是配音。"
 r = c.post("/api/tts/gen", json={"mode": "preset", "speaker": "Serena", "text": TEXT, "tone": "轻松一点"})
-check(r.status_code == 200 and r.json()["job"]["n"] == 3, f"开始生成：切成 {r.json().get('job', {}).get('n')} 句")
+check(r.status_code == 200 and r.json()["job"]["n"] == 3 and r.json()["job"]["whole"], f"开始生成：默认整段一次生成，时间轴分 {r.json().get('job', {}).get('n')} 句")
 r2 = c.post("/api/tts/gen", json={"mode": "preset", "speaker": "Serena", "text": "再来一段。"})
 check(r2.status_code == 409, "上一段还在生成时再点生成：不让（409）")
 j = wait()
 check(j["job"]["st"] == "done" and j["proc"], f"生成好了，配音服务是用到才启动的：{j['job']['msg']}")
 d = j["draft"]
+check(c.get("http://127.0.0.1:8092/health").json()["stats"]["n"] == 1, "整段一次生成：三句话只念了一次（一次采样，语气连贯）")
+
+
+def fake_len(t):
+    """假配音服务念一句要多久：一个字 0.2 秒 + 句子中间每个逗号停 0.14 秒。"""
+    return 0.2 * len(t) + 0.14 * sum(1 for ch in t[:-1] if ch in "，,、；;：:")
+
+
 w = c.get("/api/tts/draft.wav")
 with wave.open(io.BytesIO(w.content)) as f:
     dur = f.getnframes() / f.getframerate()
 s1, s2, s3 = d["segments"]
-check(abs(dur - d["duration"]) < 0.01 and abs(dur - s3["end"]) < 0.01, f"WAV 长度 = 时间轴最后一句的结束（{dur:.2f} 秒）")
-check(abs((s2["start"] - s1["end"]) - 0.35) < 0.01 and abs((s3["start"] - s2["end"]) - 0.7) < 0.01, "句子之间停 0.35 秒、换段停 0.7 秒")
-check(all(abs((s["end"] - s["start"]) - 0.2 * len(s["text"])) < 0.01 for s in d["segments"]), "每句的开始、结束和那句的音频对得上")
+check(abs(dur - d["duration"]) < 0.01 and abs(dur - s3["end"]) < 0.06, f"WAV 长度 = 时间轴最后一句的结束（{dur:.2f} 秒）")
+check(d["way"] == "whole" and not any(x.get("est") for x in d["segments"]), "整段生成：三句的边界都对上了音频里的停顿（没有按字数估的）")
+check(all(abs((x["end"] - x["start"]) - fake_len(x["text"])) < 0.06 for x in d["segments"]),
+      "按停顿对齐：每句的开始、结束和那句的声音对得上（误差 0.06 秒内）：" + "、".join(f"{x['start']:.2f}-{x['end']:.2f}" for x in d["segments"]))
+check(abs((s2["start"] - s1["end"]) - 0.35) < 0.06 and (s3["start"] - s2["end"]) >= 0.69,
+      f"模型自己停的比设置的短就补够：句间 {s2['start'] - s1['end']:.2f} 秒（设置 0.35）、换段 {s3['start'] - s2['end']:.2f} 秒（≥ 0.7）")
+r = c.post("/api/tts/gen", json={"mode": "preset", "speaker": "Serena", "text": TEXT, "whole": False})
+j = wait()
+d1 = j["draft"]
+t1, t2, t3 = d1["segments"]
+check(d1["way"] == "sentence" and abs((t2["start"] - t1["end"]) - 0.35) < 0.01 and abs((t3["start"] - t2["end"]) - 0.7) < 0.01
+      and all(abs((x["end"] - x["start"]) - fake_len(x["text"])) < 0.06 for x in d1["segments"]), "一句一句生成也还能用：句子之间 0.35 秒、换段 0.7 秒")
+c.post("/api/tts/gen", json={"mode": "preset", "speaker": "Serena", "text": TEXT, "tone": "轻松一点"})
+j = wait()
+d = j["draft"]
+check("照这个速度，1 分钟音频要" in j["job"]["msg"], "生成完的那句话说清楚：多长音频、用了多久、照这个速度 1 分钟音频要多久：" + j["job"]["msg"])
 check(d["voice"]["speaker"] == "Serena" and d["voice"]["tone"] == "轻松一点" and d["license"] == "Apache-2.0" and d["model"].endswith("CustomVoice"),
       "时间轴里记着音色、语气、模型名、许可证")
 sv = c.post("/api/tts/save").json()
@@ -196,7 +248,7 @@ check(j["job"]["st"] == "done" and d["same_test"] and len(d["segments"]) == 2 an
 check(abs((d["segments"][1]["start"] - d["segments"][0]["end"]) - 1.2) < 0.01, "试同一个人：两段之间停 1.2 秒，好分辨")
 
 ver = d["ver"]
-c.post("/api/tts/gen", json={"mode": "preset", "speaker": "Vivian", "text": "一句话。" * 40})
+c.post("/api/tts/gen", json={"mode": "preset", "speaker": "Vivian", "text": "一句话。" * 40, "whole": False})
 time.sleep(1.0)
 tk = [t for t in c.get("/api/tasks").json()["tasks"] if t["k"] == "tts"]
 check(tk and tk[0]["name"] == "生成配音 · Vivian" and "/40 句" in tk[0]["phase"], f"生成配音时常驻屏的后台任务里也有它：{tk[0]['phase'] if tk else '没有'}")
@@ -204,6 +256,13 @@ c.post("/api/tts/stop")
 j = wait(20)
 check(j["job"]["st"] == "stop" and j["job"]["i"] < 39, f"点「停下」：念完手上这句就停（停在第 {j['job']['i'] + 1} 句）")
 check(j["draft"]["ver"] == ver and j["proc"], "停下的这次不覆盖上一次的试听；配音服务不关（模型还在，下次不用重装）")
+c.post("/api/tts/gen", json={"mode": "preset", "speaker": "Vivian", "text": "一句话。" * 60})
+time.sleep(1.2)
+tk = [t for t in c.get("/api/tasks").json()["tasks"] if t["k"] == "tts"]
+check(tk and "整段一次生成" in tk[0]["phase"] and tk[0]["pct"] is not None, f"整段生成时后台任务里也有它，进度按上次的速度估：{tk[0] if tk else '没有'}")
+c.post("/api/tts/stop")
+j = wait(20)
+check(j["job"]["st"] == "stop" and j["draft"]["ver"] == ver, f"整段生成时点「停下」：马上停（把服务关了），不覆盖上一次的试听（{j['job']['msg']}）")
 c.post("/api/tts/off")
 check(not c.get("/api/tts").json()["proc"], "点「关掉」：配音服务关了")
 

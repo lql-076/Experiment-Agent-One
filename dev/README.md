@@ -67,7 +67,7 @@
 | `serve.sh` | 起 / 停测试环境：假服务加测试后端，后端在 8765 |
 | `test_backend.py` | 测试后端：和真的一样，只是一键补齐的每一步换成假步骤；配音服务的启动命令换成 `fake_tts.py` |
 | `fake_tts_install.py` | 假的「安装配音」：输出和 `scripts/install_tts.py` 一样（讲解、pip、魔搭进度），几秒就完；`dev/.run/fake_tts_install_fail.flag` 在就装到一半失败一次，`fake_tts_install_slow.flag` 在就慢慢走 |
-| `fake_tts.py` | 假的配音服务：接口和 `app/tts_server.py` 一样，念出来是一段"嘟——"（一个字 0.2 秒），用来查拼接、停顿、时间轴 |
+| `fake_tts.py` | 假的配音服务：接口和 `app/tts_server.py` 一样，念出来是一段"嘟——"（一个字 0.2 秒，句号后停 0.3、换行停 0.5、逗号停 0.14 秒，像真模型一样自己停），用来查拼接、按停顿对齐、时间轴 |
 | `fake_step.py` | 假的安装步骤：输出和真脚本一样（进展报告、进度、pip、tqdm），第一次跑 models 会故意失败一次 |
 | `mocks.py` | 假服务：本地模型服务 8090（加 `--with-model` 才起）、Kev 8091、DeepSeek 8099（含工具调用、搜索、抓取；`/__last` 能看最近一次请求）、硬件监控 8085 |
 | `mock_qq.py` | 假的 QQ 开放平台 |

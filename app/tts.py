@@ -21,6 +21,7 @@ import wave
 from datetime import datetime
 
 import httpx
+import numpy as np
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse
 
@@ -121,13 +122,13 @@ def split(text, gap=0.35, para=0.7, comma=0.15):
                     out[-1]["text"] += s
                 continue
             for piece in soft_split(s):
-                out.append({"text": piece, "gap": comma})
+                out.append({"text": piece, "gap": comma, "kind": "comma"})
                 added = True
-            out[-1]["gap"] = gap
+            out[-1].update(gap=gap, kind="sent")
         if added:
-            out[-1]["gap"] = para
+            out[-1].update(gap=para, kind="para")
     if out:
-        out[-1]["gap"] = 0.0
+        out[-1].update(gap=0.0, kind="end")
     return out
 
 
@@ -168,6 +169,133 @@ def mmss(sec):
 
 class Stopped(Exception):
     pass
+
+
+# ---------------- 整段一次生成（v1.8.9）：一段话一次念完，语气连贯；时间轴按停顿对齐 ----------------
+# 一句一句生成时每句都是单独采样，9 句话 9 种语气（作者实测 v1.8.8）。Qwen3-TTS 技术报告说能一次念 10 分钟以上、韵律前后一致，
+# 所以默认整段一次生成；太长的（超过 WHOLE_MAX 字）在空行处、再不行在句号处分成几大块。
+WHOLE_MAX = 1200          # 一块最多多少字（中文大约 5 分钟音频）
+
+
+def whole_chunks(segs, limit=WHOLE_MAX):
+    """把 split() 切好的句子按顺序装进几大块：优先在换段处断开，一块不超过 limit 字。返回 [[句子下标…], …]。"""
+    out, cur, n = [], [], 0
+    for i, sg in enumerate(segs):
+        L = len(sg["text"])
+        if cur and n + L > limit:
+            back = max((k for k in range(len(cur)) if segs[cur[k]]["kind"] == "para"), default=None)   # 往回找最近的换段处
+            if back is not None and back < len(cur) - 1 and sum(len(segs[x]["text"]) for x in cur[:back + 1]) > limit * 0.4:
+                out.append(cur[:back + 1])
+                cur = cur[back + 1:]
+            else:
+                out.append(cur)
+                cur = []
+            n = sum(len(segs[x]["text"]) for x in cur)
+        cur.append(i)
+        n += L
+    if cur:
+        out.append(cur)
+    return out
+
+
+def chunk_text(segs, idx):
+    """一块要念的字：句子按原样接起来，换段处换行；没有句末标点的（比如一行标题）补一个句号，免得和下一句连成一句念。"""
+    t = ""
+    for k, i in enumerate(idx):
+        x = segs[i]["text"]
+        if not re.search(r"[。！？!?…\.；;，,、：:”’\"'」』）)】》]$", x):
+            x += "." if re.search(r"[A-Za-z0-9]$", x) and not re.search(r"[\u4e00-\u9fff]", x) else "。"
+        t += x + ("\n" if segs[i]["kind"] == "para" and k < len(idx) - 1 else "")
+    return t
+
+
+def find_pauses(pcm, sr, min_len=0.1):
+    """音频里的停顿（[开始, 结束] 秒，不算头尾）。按 10 毫秒一格算音量，比响的那部分小很多的连续几格算停顿。"""
+    a = np.frombuffer(bytes(pcm), dtype="<i2").astype(np.float32) / 32768
+    hop = max(1, int(sr * 0.01))
+    n = len(a) // hop
+    if n < 5:
+        return []
+    rms = np.sqrt((a[: n * hop].reshape(n, hop) ** 2).mean(axis=1))
+    thr = max(0.003, float(np.percentile(rms, 90)) * 0.06)
+    q = np.concatenate(([0], (rms < thr).astype(np.int8), [0]))
+    d = np.diff(q)
+    starts, ends = np.flatnonzero(d == 1), np.flatnonzero(d == -1)
+    return [(s * 0.01, e * 0.01) for s, e in zip(starts, ends) if s > 0 and e < n and (e - s) * 0.01 >= min_len]
+
+
+def align_pauses(pauses, expected, weights, skip=1.5):
+    """每个句子边界（按字数估的时间 expected，句末 weights 大、逗号处小）配一个停顿，顺序不能乱；多出来的停顿（逗号、换气）不管，
+    配不上的边界给 None。动态规划：代价 = |停顿中点 − 估的时间| − 权重 × 停顿长度（句末的停顿一般更长）。"""
+    m, k = len(pauses), len(expected)
+    INF = float("inf")
+    dp = [[INF] * (m + 1) for _ in range(k + 1)]
+    bk = [[None] * (m + 1) for _ in range(k + 1)]
+    for j in range(m + 1):
+        dp[0][j] = 0.0
+    for i in range(1, k + 1):
+        for j in range(0, m + 1):
+            best, how = dp[i - 1][j] + skip, ("skip", j)
+            if j:
+                if dp[i][j - 1] < best:
+                    best, how = dp[i][j - 1], ("extra", j - 1)
+                s, e = pauses[j - 1]
+                c = dp[i - 1][j - 1] + abs((s + e) / 2 - expected[i - 1]) - weights[i - 1] * (e - s)
+                if c < best:
+                    best, how = c, ("match", j - 1)
+            dp[i][j], bk[i][j] = best, how
+    out, i, j = [None] * k, k, m
+    while i > 0:
+        how, pj = bk[i][j]
+        if how == "match":
+            out[i - 1] = pauses[pj]
+            i, j = i - 1, pj
+        elif how == "skip":
+            i -= 1
+        else:
+            j = pj
+    return out
+
+
+def whole_timeline(pcm, sr, segs, idx):
+    """整块音频 → 每句的 [开始, 结束]（秒，相对这一块）+ 这句是不是按字数估的。句子边界配上了停顿就用停顿的两头。"""
+    dur = len(pcm) / 2 / sr
+    lens = [max(1, len(segs[i]["text"])) for i in idx]
+    tot, acc, exp = sum(lens), 0, []
+    for L in lens[:-1]:
+        acc += L
+        exp.append(dur * acc / tot)
+    w = [0.5 if segs[i]["kind"] == "comma" else 2.0 for i in idx[:-1]]
+    got = align_pauses(find_pauses(pcm, sr), exp, w)
+    spans, est = [], []
+    for n_, _ in enumerate(idx):
+        st = 0.0 if n_ == 0 else (got[n_ - 1][1] if got[n_ - 1] else exp[n_ - 1])
+        en = dur if n_ == len(idx) - 1 else (got[n_][0] if got[n_] else exp[n_])
+        spans.append([st, max(st, en)])
+        est.append((n_ > 0 and not got[n_ - 1]) or (n_ < len(idx) - 1 and not got[n_]))
+    return spans, est, got
+
+
+def pad_pauses(pcm, sr, spans, got, gaps):
+    """配上的停顿比设置的停顿短：在停顿中间补静音补够（不剪掉任何声音）。返回新的 PCM 和挪过的时间。"""
+    adds = []
+    for b, pz in enumerate(got):
+        if pz and gaps[b] > (pz[1] - pz[0]) + 0.02:
+            adds.append(((pz[0] + pz[1]) / 2, gaps[b] - (pz[1] - pz[0])))
+    if not adds:
+        return pcm, spans
+    out, last = bytearray(), 0
+    for t, extra in adds:
+        cut = int(t * sr) * 2
+        out += pcm[last:cut] + bytes(2 * int(extra * sr))
+        last = cut
+    out += pcm[last:]
+    new = []
+    for st, en in spans:
+        sh_s = sum(x for t, x in adds if t <= st)
+        sh_e = sum(x for t, x in adds if t < en)
+        new.append([st + sh_s, en + sh_e])
+    return out, new
 
 
 # ---------------- 管家 ----------------
@@ -332,65 +460,125 @@ class TTS:
         if not segs:
             raise HTTPException(400, "没有要念的字")
         chars = sum(len(x["text"]) for x in segs)
+        whole = bool(self.s.get("ttsWhole", True)) if req.get("whole") is None else bool(req.get("whole"))
+        if same:
+            whole = False             # 试同一个人：两段要分开念（分开采样），才看得出同一段描述 + 种子换了文字还像不像
         self.job = {"id": int(time.time() * 1000), "st": "run", "i": 0, "n": len(segs), "chars": chars, "done_chars": 0, "cur": "",
                     "msg": "准备中", "err": "", "stop": "", "same": same, "voice": v, "t0": time.time(), "t1": 0.0,
-                    "audio_s": 0.0, "eta": None}
+                    "audio_s": 0.0, "eta": None, "whole": whole, "chunks": 1, "chunk_t0": 0.0, "chunk_est": 0.0, "chunk_chars": 0}
         self._task = asyncio.get_event_loop().create_task(self._run(self.job, text, segs))
-        feed.add(f"开始配音：{len(segs)} 句、{chars} 字，音色 {v['label']}" + ("（试同一个人）" if same else ""), "head", job="配音")
+        feed.add(f"开始配音：{len(segs)} 句、{chars} 字，音色 {v['label']}，" + ("整段一次生成" if whole else "一句一句生成") + ("（试同一个人）" if same else ""),
+                 "head", job="配音")
         return self.public()
+
+    async def _post(self, c, job, v, text, timeout):
+        """念一段字，返回 (采样率, PCM)。点了停下 / 让路把服务关了：抛 Stopped。"""
+        try:
+            r = await c.post(self.url("/generate"), timeout=timeout,
+                             json={"kind": v["kind"], "text": text, "speaker": v.get("speaker"), "instruct": v["instruct"],
+                                   "language": v["lang"], "seed": v["seed"]})
+        except httpx.HTTPError as e:
+            if job["stop"]:
+                raise Stopped(job["stop"]) from None
+            raise RuntimeError(f"配音服务断了：{e}") from None
+        self.last = time.time()
+        if r.status_code != 200:
+            if job["stop"]:
+                raise Stopped(job["stop"])
+            try:
+                why = r.json().get("detail") or r.text
+            except Exception:
+                why = r.text
+            raise RuntimeError(str(why)[:300])
+        return read_wav(r.content)
+
+    async def _by_sentence(self, c, job, v, segs):
+        """一句一句生成（v1.8.6 的做法）：进度准，但每句单独采样，句与句的语气会不一样。"""
+        pcm, sr, tl = bytearray(), None, []
+        for i, sg in enumerate(segs):
+            if job["stop"]:
+                raise Stopped(job["stop"])
+            job.update(i=i, cur=sg["text"])
+            if i:
+                job["msg"] = f"第 {i + 1}/{len(segs)} 句"
+            rate, frames = await self._post(c, job, v, sg["text"], 900)
+            sr = sr or rate
+            if rate != sr:
+                raise RuntimeError("前后两句的采样率对不上")
+            start = len(pcm) / 2 / sr
+            pcm += frames
+            end = len(pcm) / 2 / sr
+            tl.append({"i": i + 1, "start": round(start, 3), "end": round(end, 3), "text": sg["text"]})
+            if sg["gap"] > 0 and i < len(segs) - 1:
+                pcm += bytes(2 * int(sr * sg["gap"]))
+            job["done_chars"] += len(sg["text"])
+            job["audio_s"] = round(end, 2)
+            per = (time.time() - job["t1"]) / max(1, job["done_chars"])
+            job["eta"] = round(per * (job["chars"] - job["done_chars"]))
+        return pcm, sr, tl
+
+    async def _whole(self, c, job, v, segs):
+        """整段一次生成（v1.8.9 默认）：一块（最多 WHOLE_MAX 字）一次念完，语气前后连贯；每句的开始、结束按音频里的停顿对齐，
+        配不上停顿的按字数估（时间轴里标 est）；停顿比设置的短就补静音补够。"""
+        pcm, sr, tl = bytearray(), None, []
+        chunks = whole_chunks(segs)
+        job["chunks"] = len(chunks)
+        per_min = float((db.kv_get("tts_speed") or {}).get("per_min") or 240)      # 生成 1 分钟音频要几秒；没测过按 4 分钟估
+        for ci, idx in enumerate(chunks):
+            if job["stop"]:
+                raise Stopped(job["stop"])
+            text = chunk_text(segs, idx)
+            nc = sum(len(segs[i]["text"]) for i in idx)
+            audio = nc / (4.2 if re.search(r"[\u4e00-\u9fff]", text) else 14)          # 中文一秒大约 4 个字
+            est = max(5.0, audio * per_min / 60)
+            job.update(i=idx[0], cur=text[:40], chunk_t0=time.time(), chunk_est=est, chunk_chars=nc,
+                       msg=f"整段一次生成中：{len(idx)} 句、{nc} 字一起念（念完才出声音，进度是按上次的速度估的）" if len(chunks) == 1
+                       else f"第 {ci + 1}/{len(chunks)} 块：{len(idx)} 句、{nc} 字一起念（进度是估的）")
+            rate, frames = await self._post(c, job, v, text, max(900.0, est * 4 + 120))
+            sr = sr or rate
+            if rate != sr:
+                raise RuntimeError("前后两块的采样率对不上")
+            spans, est_flags, got = whole_timeline(frames, rate, segs, idx)
+            frames, spans = pad_pauses(frames, rate, spans, got, [segs[i]["gap"] for i in idx[:-1]])
+            base = len(pcm) / 2 / sr
+            pcm += frames
+            for (st, en), e, i in zip(spans, est_flags, idx):
+                tl.append({"i": i + 1, "start": round(base + st, 3), "end": round(base + en, 3), "text": segs[i]["text"], **({"est": True} if e else {})})
+            if ci < len(chunks) - 1:
+                pcm += bytes(2 * int(sr * segs[idx[-1]]["gap"]))
+            job["done_chars"] += nc
+            job["audio_s"] = round(len(pcm) / 2 / sr, 2)
+            job["chunk_t0"] = 0.0
+        return pcm, sr, tl
 
     async def _run(self, job, text, segs):
         v = job["voice"]
         try:
             job["msg"] = "启动配音服务（第一次要等半分钟到一分钟）" if not self._h else "准备中"
             await self.free_vram()
-            await self.ensure()
+            try:
+                await self.ensure()
+            except RuntimeError:
+                if job["stop"]:
+                    raise Stopped(job["stop"]) from None
+                raise
+            if job["stop"]:
+                raise Stopped(job["stop"])
             job["msg"] = f"装{MODEL_INFO[v['kind']]}的模型（换模型时要等一会）"
-            pcm, sr, tl = bytearray(), None, []
             job["t1"] = time.time()
             async with httpx.AsyncClient(timeout=900) as c:
-                for i, sg in enumerate(segs):
-                    if job["stop"]:
-                        raise Stopped(job["stop"])
-                    job.update(i=i, cur=sg["text"])
-                    if i:
-                        job["msg"] = f"第 {i + 1}/{len(segs)} 句"
-                    try:
-                        r = await c.post(self.url("/generate"), json={"kind": v["kind"], "text": sg["text"], "speaker": v.get("speaker"),
-                                                                       "instruct": v["instruct"], "language": v["lang"], "seed": v["seed"]})
-                    except httpx.HTTPError as e:
-                        if job["stop"]:
-                            raise Stopped(job["stop"]) from None
-                        raise RuntimeError(f"配音服务断了：{e}") from None
-                    self.last = time.time()
-                    if r.status_code != 200:
-                        try:
-                            why = r.json().get("detail") or r.text
-                        except Exception:
-                            why = r.text
-                        raise RuntimeError(str(why)[:300])
-                    rate, frames = read_wav(r.content)
-                    sr = sr or rate
-                    if rate != sr:
-                        raise RuntimeError("前后两句的采样率对不上")
-                    start = len(pcm) / 2 / sr
-                    pcm += frames
-                    end = len(pcm) / 2 / sr
-                    tl.append({"i": i + 1, "start": round(start, 3), "end": round(end, 3), "text": sg["text"]})
-                    if sg["gap"] > 0 and i < len(segs) - 1:
-                        pcm += bytes(2 * int(sr * sg["gap"]))
-                    job["done_chars"] += len(sg["text"])
-                    job["audio_s"] = round(end, 2)
-                    per = (time.time() - job["t1"]) / max(1, job["done_chars"])
-                    job["eta"] = round(per * (job["chars"] - job["done_chars"]))
+                pcm, sr, tl = await (self._whole(c, job, v, segs) if job["whole"] else self._by_sentence(c, job, v, segs))
+            if job["stop"]:                  # 念完的那一刻点了停下：也不存（不覆盖上一次的试听）
+                raise Stopped(job["stop"])
             gen = time.time() - job["t1"]
             meta = self._write_draft(job, text, sr, pcm, tl, gen)
             speed = {"audio_s": meta["duration"], "gen_s": round(gen, 1), "per_min": round(gen / max(meta["duration"], 0.1) * 60),
-                     "attn": (self._h or {}).get("attn", ""), "kind": v["kind"], "ts": time.time()}
+                     "attn": (self._h or {}).get("attn", ""), "kind": v["kind"], "whole": job["whole"], "ts": time.time()}
             db.kv_set("tts_speed", speed)
             job.update(st="done", i=len(segs), cur="", eta=0,
-                       msg=f"好了：{mmss(meta['duration'])}音频，用时 {mmss(gen)}（每分钟音频约 {mmss(speed['per_min'])}）")
-            feed.add(f"配音好了：{len(segs)} 句，{mmss(meta['duration'])}音频，生成用了 {mmss(gen)}", "ok", job="配音")
+                       msg=f"好了：{mmss(meta['duration'])}音频，生成用了 {mmss(gen)}（照这个速度，1 分钟音频要 {mmss(speed['per_min'])}）")
+            feed.add(f"配音好了：{len(segs)} 句，{mmss(meta['duration'])}音频，生成用了 {mmss(gen)}" + ("（整段一次生成）" if job["whole"] else "（一句一句）"),
+                     "ok", job="配音")
         except Stopped as e:
             job.update(st="stop", msg=f"停了：{e}（这次没生成完，没保存）")
             feed.add(f"配音停了：{e}", "warn", job="配音")
@@ -406,7 +594,9 @@ class TTS:
         meta = {"app": "Agent 配音", "created": now.strftime("%Y-%m-%d %H:%M:%S"),
                 "name": f"{now:%Y-%m-%d_%H%M}_{safe_name(v['label'])}", "model": paths.TTS_MODELS[v["kind"]], "license": LICENSE,
                 "voice": voice, "language": v["lang"], "sample_rate": sr, "duration": round(len(pcm) / 2 / sr, 3),
-                "gen_seconds": round(gen, 1), "same_test": job["same"],
+                "gen_seconds": round(gen, 1), "same_test": job["same"], "way": "whole" if job["whole"] else "sentence",
+                "align": ("整段一次生成：每句的开始、结束按音频里的停顿对齐；带 est 的是没对上停顿、按字数估的" if job["whole"]
+                          else "一句一句生成：每句的开始、结束是准的"),
                 "gaps": {"sentence": float(self.s.get("ttsGap", 0.35)), "paragraph": float(self.s.get("ttsParaGap", 0.7))},
                 "segments": tl}
         tmp = DRAFT / "draft.tmp.wav"
@@ -451,10 +641,17 @@ class TTS:
         j = self.job
         if not j:
             return None
-        keys = ("id", "st", "i", "n", "chars", "done_chars", "cur", "msg", "err", "same", "audio_s", "eta")
+        keys = ("id", "st", "i", "n", "chars", "done_chars", "cur", "msg", "err", "same", "audio_s", "eta", "whole", "chunks")
         out = {k: j[k] for k in keys}
         out["voice"] = j["voice"]["label"]
         out["elapsed"] = round(time.time() - j["t0"])
+        done = j["done_chars"]
+        if j["st"] == "run" and j["whole"] and j["chunk_t0"]:      # 整段生成：念完才知道，按上次的速度估这一块到哪了
+            el = time.time() - j["chunk_t0"]
+            done += min(0.95, el / max(1.0, j["chunk_est"])) * j["chunk_chars"]
+            rest = j["chars"] - j["done_chars"] - j["chunk_chars"]
+            out["eta"] = round(max(5.0, j["chunk_est"] - el) + rest * j["chunk_est"] / max(1, j["chunk_chars"]))
+        out["pct"] = round(done / j["chars"] * 100, 1) if j["chars"] else None
         return out
 
     # ---------- 我的音色 ----------
@@ -490,7 +687,8 @@ class TTS:
                 "cuda": (h or {}).get("cuda"), "yield": (M.yield_reason or "显存让路") if M.yielding else "",
                 "job": self.public(), "draft": self.draft(), "speakers": SPEAKERS, "langs": LANGS, "voices": self.voices(),
                 "out": paths.show(self.out_dir()), "saved": db.kv_get("tts_saved"), "speed": db.kv_get("tts_speed"),
-                "idle": self.s.get("ttsIdle"), "gap": self.s.get("ttsGap"), "para": self.s.get("ttsParaGap"), "license": LICENSE}
+                "idle": self.s.get("ttsIdle"), "gap": self.s.get("ttsGap"), "para": self.s.get("ttsParaGap"), "whole": bool(self.s.get("ttsWhole", True)),
+                "license": LICENSE}
 
 
 T = TTS()
@@ -512,8 +710,12 @@ async def tts_gen(body: dict = Body(...)):
 @api.post("/api/tts/stop")
 def tts_stop():
     if T.busy():
-        T.job["stop"] = "你点了「停下」"        # 念完手上这一句就停（服务不关，模型还在，下次不用重新装）
-        T.job["msg"] = "念完这一句就停"
+        T.job["stop"] = "你点了「停下」"
+        if T.job["whole"]:                    # 整段生成：一块可能要念好几分钟，等不了，直接把服务关掉（下次重新装模型，要半分钟）
+            T.job["msg"] = "马上停"
+            T.stop("你点了「停下」")
+        else:
+            T.job["msg"] = "念完这一句就停"     # 一句一句：念完手上这一句就停（服务不关，模型还在，下次不用重新装）
     return {"job": T.public()}
 
 

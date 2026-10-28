@@ -148,7 +148,7 @@ def generate(body: dict = Body(...)):
         m = load(kind)
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
-        kw = {"max_new_tokens": min(2048, 96 + len(text) * 8)}     # 12Hz：一秒 12 帧。按字数给够，免得偶尔停不下来一直念
+        kw = {"max_new_tokens": min(16384, 96 + len(text) * 8)}    # 12Hz：一秒 12 帧。按字数给够（整段一次念也够），免得偶尔停不下来一直念
         t0 = time.time()
         try:
             if kind == "custom":
