@@ -35,6 +35,7 @@ A = ap.parse_args()
 DEVICE = os.environ.get("AGENT_TEST_DEVICE") or "cuda"   # 只给开发测试用；正常运行永远是 cuda
 CUDA = torch.cuda.is_available() or DEVICE == "cpu"
 GPU = torch.cuda.get_device_name(0) if torch.cuda.is_available() else ("测试用 CPU" if DEVICE == "cpu" else "")
+IMPORT_LOCK = threading.Lock()   # 刚启动时后台在加载嵌入模型，同时来一个请求，两个线程一起第一次导入 transformers 会报 ImportError
 ELOCK = threading.RLock()   # 嵌入模型
 BLOCK = threading.RLock()   # 底座 + 小脑（两把锁互不阻塞）
 EMBED_INSTRUCT = "Given a user message to a personal assistant, retrieve messages that should be handled the same way"
@@ -60,7 +61,8 @@ def vram():
 
 # ---------------- 嵌入 ----------------
 def load_embed():
-    from transformers import AutoModel, AutoTokenizer
+    with IMPORT_LOCK:
+        from transformers import AutoModel, AutoTokenizer
     with ELOCK:
         if state["embed"] is not None:
             return
@@ -111,7 +113,8 @@ def scan_loras():
 
 
 def load_base():
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    with IMPORT_LOCK:
+        from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
     with BLOCK:
         if state["base"] is not None:
             return
@@ -132,7 +135,8 @@ def load_base():
             m = AutoModelForCausalLM.from_pretrained(A.base, **kw).eval()
             loras = scan_loras()
             if loras:
-                from peft import PeftModel
+                with IMPORT_LOCK:
+                    from peft import PeftModel
                 m = PeftModel.from_pretrained(m, str(loras[0]), adapter_name=loras[0].name)
                 for p in loras[1:]:
                     m.load_adapter(str(p), adapter_name=p.name)

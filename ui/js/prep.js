@@ -120,9 +120,11 @@ function checkPanel(manual) {
     close();
   };
   runChecks(true).then(function () {
-    var n = readyCount(), todo = total - n;
+    // 开机头 2 分钟里还在启动的项（后端标成 run）不算「要处理」：后台会自己重查，好了自己变绿
+    var n = readyCount(), starting = LIVE_CHECKS.filter(function (c) { var r = S.check[c.k]; return r && r.st === 'run' && !S.manual[c.k]; }).length;
+    var todo = total - n - starting;
     b.classList.add('done');
-    $('#bootSub').textContent = todo ? '有 ' + todo + ' 项要处理' : '全部就绪';
+    $('#bootSub').textContent = todo ? '有 ' + todo + ' 项要处理' + (starting ? '，' + starting + ' 项还在启动' : '') : starting ? starting + ' 项还在启动，好了会自己变绿' : '全部就绪';
     $('#bootSum').textContent = '已就绪 ' + n + ' / ' + total + (manual ? ' · 用时 ' + ((performance.now() - t0) / 1000).toFixed(1) + ' 秒' : '');
     if (!manual) return delay(missingCount() ? 1600 : 800).then(function () { close(); afterCheck(); });
     if (closed) { toast('自检完成：已就绪 ' + n + ' / ' + total + (todo ? '，' + todo + ' 项要处理' : ''), 3500); return; }

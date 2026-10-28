@@ -16,6 +16,11 @@ from .qq import BOT
 
 _ai_cache = {"ts": 0, "res": None}
 _ai_job = {"task": None}
+T0 = time.time()          # 后端什么时候起来的（这个模块随后端一起加载）
+GRACE = 120               # 开机缓冲：头 2 分钟里，会自己好的项没准备好时显示「启动中」，不判缺失
+NAMES = {"driver": "显卡驱动", "python": "Python", "git": "Git", "aienv": "本地模型环境", "base": "底座模型", "embed": "嵌入模型",
+         "models": "本地模型服务", "kev": "决策脑 Kev", "hwmon": "硬件监控", "ds": "DeepSeek Key", "qq": "QQ 官方机器人",
+         "qqbind": "绑定你的 QQ", "qqpush": "测试主动提醒", "memory": "记忆文件夹"}
 
 
 def _run(cmd, timeout=15):
@@ -152,7 +157,7 @@ async def c_models(deep=False):
             return await c_models(False)
         except Exception as e:
             return miss(str(e)[:200])
-    return wait("模型服务没在运行（启动后自动拉起；也可以点按钮现在启动）", action="start_models")
+    return wait("模型服务没在运行（启动后自动拉起；也可以点按钮现在启动）", action="start_models", heal=True)
 
 
 async def c_kev():
@@ -189,7 +194,7 @@ async def c_hwmon():
         return wait("助手在运行，但读不到 CPU 温度：装一下 PawnIO 驱动（pawnio.eu），装完重启电脑", running=True)
     except Exception:
         if settings.S.get("hwOn"):
-            return wait("开关开着，助手正在启动或没起来" + (f"：{hwctl.ST['msg']}" if hwctl.ST.get("msg") else "") + "（每半分钟自动再拉一次）")
+            return wait("开关开着，助手正在启动或没起来" + (f"：{hwctl.ST['msg']}" if hwctl.ST.get("msg") else "") + "（每半分钟自动再拉一次）", heal=True)
         return miss("硬件监控助手没开：设置 › 硬件监控 打开（第一次弹一次管理员确认）")
 
 
@@ -198,7 +203,9 @@ async def c_ds():
         return miss("还没有填 Key")
     b = await deepseek.refresh_balance(force=True)
     if not b or b.get("err"):
-        return miss(f"Key 验证失败：{(b or {}).get('err') or '查不到余额'}")
+        err = (b or {}).get("err") or "查不到余额"
+        bad_key = any(x in err for x in ("401", "403", "Key 不对"))
+        return miss(f"Key 验证失败：{err}", heal=not bad_key)      # 连不上（刚开机还没联网）会自己好；Key 不对不会
     return ok(f"Key 可用 · 余额 {deepseek.money(b['total'], b['currency'])} · 本月估计花了 ¥{deepseek.month_cost_cny():.2f}")
 
 
@@ -209,9 +216,9 @@ async def c_qq():
         return ok(BOT.detail + ("（沙箱）" if settings.S["qqSandbox"] else ""))
     try:
         await BOT.get_token(force=True)
-        return wait(f"凭证有效，连接状态：{BOT.detail}")
+        return wait(f"凭证有效，连接状态：{BOT.detail}", heal=True)
     except Exception as e:
-        return miss(str(e)[:120])
+        return miss(str(e)[:120], heal=True)
 
 
 async def c_qqbind():
@@ -247,31 +254,90 @@ CHECKS = {"driver": c_driver, "python": c_python, "git": c_git, "aienv": c_aienv
           "memory": c_memory}
 
 
-LIVE = ("aienv", "models", "kev", "hwmon", "qq")
+LIVE = ("aienv", "models", "kev", "hwmon", "qq", "ds")
+RECHECK_IF_BAD = ("ds",)  # 这几项只在没好的时候重查（DeepSeek 要联网问余额，好了就不再每半分钟问一次）
+
+
+def booting():
+    return time.time() - T0 < GRACE
+
+
+def settle(k, r):
+    """开机缓冲：头 2 分钟里，会自己好的项（模型服务在加载、助手在启动、网络还没连上……）没准备好时显示「启动中」，
+    不显示「缺失」；后台每 10 秒重查，好了自己变绿。过了 2 分钟还不行才按原样显示。"""
+    if booting() and r.get("heal") and r.get("st") in ("miss", "wait"):
+        r = dict(r, st="run", d="启动中 · " + r.get("d", ""))
+    return r
+
+
+def record(k, r, since=None, bump=False):
+    """写回一项自检结果。since：开始查的时间，这期间你在界面上重查过这一项就以你那次为准（不覆盖）。
+    状态变了：写进 backend.log；开机缓冲过后变成缺失的，再写进进展报告。返回状态变没变。"""
+    r = dict(settle(k, r), at=time.time())
+    cur = db.kv_get("checks") or {"res": {}}
+    res = cur.setdefault("res", {})
+    old = res.get(k) or {}
+    if since is not None and old.get("at", 0) > since:
+        return False
+    changed = old.get("st") != r.get("st")
+    res[k] = r
+    if changed or bump:
+        cur["ts"] = time.time()
+    db.kv_set("checks", cur)
+    if changed:
+        name = NAMES.get(k, k)
+        print(f"自检：{name} {ST_NAME.get(old.get('st'), '没查过')} → {ST_NAME.get(r['st'], r['st'])}：{r.get('d', '')[:160]}")
+        if r["st"] == "miss" and not booting():
+            from . import feed
+            feed.add(f"整备：「{name}」缺失 · {r.get('d', '')[:120]}", "warn", job="整备")
+    return changed
+
+
+ST_NAME = {"ok": "已就绪", "miss": "缺失", "wait": "待处理", "run": "检测中"}
+
+
+async def after_boot():
+    """开机缓冲结束时调一次：还显示「启动中」的再查一遍（这次不再缓冲），然后在日志里写一句整备的情况；
+    有没好的，也写进进展报告。"""
+    cur = (db.kv_get("checks") or {}).get("res") or {}
+    for k, r in list(cur.items()):
+        if k in CHECKS and r.get("st") == "run":
+            try:
+                rr = await asyncio.wait_for(CHECKS[k](), 20)
+            except asyncio.TimeoutError:
+                rr = miss("检测超时")
+            except Exception as e:
+                rr = miss(f"检测出错：{str(e)[:120]}")
+            record(k, rr, bump=True)
+    cur = (db.kv_get("checks") or {}).get("res") or {}
+    bad = [k for k in CHECKS if k in cur and cur[k].get("st") != "ok"]
+    line = f"开机 2 分钟后的整备：{len(CHECKS) - len(bad)}/{len(CHECKS)} 就绪" + (
+        "；没好的：" + "；".join(f"{NAMES.get(k, k)}（{cur[k].get('d', '')[:60]}）" for k in bad) if bad else "")
+    print(line)
+    if bad:
+        from . import feed
+        feed.add(line, "warn", job="整备")
+    return bad
 
 
 async def refresh_live() -> bool:
-    """会自己变的几项（本地模型环境、模型服务、Kev、硬件监控助手、QQ）：启动后它们陆续起来，后台每半分钟重查一次写回自检结果，
+    """会自己变的几项（本地模型环境、模型服务、Kev、硬件监控助手、QQ、DeepSeek）：启动后它们陆续起来，后台每半分钟重查一次写回自检结果，
     整备上跟着变，不用你点重新自检。状态变了返回 True（界面据此刷新）。"""
     last = db.kv_get("checks")
     if not last or not last.get("res"):
         return False
     changed = False
     for k in LIVE:
+        if k in RECHECK_IF_BAD and (last["res"].get(k) or {}).get("st") == "ok":
+            continue
+        t = time.time()
         try:
             r = await asyncio.wait_for(CHECKS[k](), 15)
         except Exception:
             continue
-        old = last["res"].get(k) or {}
-        if old.get("st") != r.get("st"):
+        # 一项一项写回；查这一项的时候你在界面上重查过它，就以你那次为准（以前是整轮都扔掉，开机时常常白查）
+        if record(k, r, since=t):
             changed = True
-        last["res"][k] = r
-    cur = db.kv_get("checks") or {}
-    if cur.get("ts", 0) > last.get("ts", 0):          # 查的这会儿你点了重新自检：以你那次为准
-        return False
-    if changed:
-        last["ts"] = time.time()
-    db.kv_set("checks", last)
     return changed
 
 
@@ -280,12 +346,16 @@ async def run_all():
         try:
             return k, await asyncio.wait_for(fn(), 20)
         except asyncio.TimeoutError:
-            return k, miss("检测超时")
+            return k, miss("检测超时", heal=True)
         except Exception as e:
             return k, miss(f"检测出错：{str(e)[:120]}")
     res = dict(await asyncio.gather(*(one(k, fn) for k, fn in CHECKS.items())))
-    db.kv_set("checks", {"ts": time.time(), "res": res})
-    return res
+    for k, r in res.items():
+        record(k, r, bump=True)
+    cur = (db.kv_get("checks") or {}).get("res") or {}
+    bad = [f"{NAMES.get(k, k)}（{(cur.get(k) or {}).get('d', '')[:60]}）" for k in CHECKS if (cur.get(k) or {}).get("st") != "ok"]
+    print(f"自检：{len(CHECKS) - len(bad)}/{len(CHECKS)} 就绪" + ("；没好的：" + "；".join(bad) if bad else ""))
+    return {k: cur.get(k) for k in CHECKS}
 
 
 def places():

@@ -54,6 +54,20 @@ class Proc:
             return ""
 
 
+def orphan_kind(cmd, exe, cwd, root):
+    """这个进程是不是上一次 Agent 留下的子进程（后端被直接结束时，它开的模型服务、Kev、游戏内小框还活着，占着端口）。
+    只认本项目的：命令行里带本项目的模型服务脚本，或者在本项目文件夹里跑的 Kev / 游戏内显示。别的程序一概不碰。"""
+    c, e, w, r = (cmd or "").lower(), (exe or "").lower(), (cwd or "").lower(), str(root).lower().rstrip("\\/")
+    ours = any(x == r or x.startswith(r + "\\") or x.startswith(r + "/") for x in (e, w))
+    if (r + "\\app\\model_server.py") in c or (r + "/app/model_server.py") in c:
+        return "本地模型服务"
+    if "-m kev.serve" in c and ours:
+        return "Kev"
+    if "-m app.osd" in c and ours:
+        return "游戏内显示"
+    return None
+
+
 def yield_want(total, used, ours, reserve, need, game=False):
     """该让到哪一级。room = 显卡总显存 − 别的程序占的 − 预留，是我们最多能用的。
     嵌入模型都放不下 → 2；底座 + 嵌入 + Kev 放不下，或者在玩游戏 → 1；放得下 → 0。返回 (级别, 别的程序占的 GB)。"""
@@ -439,6 +453,27 @@ class Manager:
                 "kev_installed": self.kev_installed(), "kev_proc": self.kevp.alive(), "kev_ready": await self.kev_ready(max_age=12),
                 "kev_mode": self.s["kevMode"], "yielding": self.yielding, "yield_level": self.yield_level,
                 "yield_reason": self.yield_reason, "vram": self.vram_info}
+
+    def cleanup_orphans(self):
+        """后端启动时：上一次留下的模型服务、Kev、游戏内小框（后端被直接结束、崩溃时它们会活下来）按 PID 停掉，
+        免得新起的模型服务报「端口已被占用」。硬件监控助手是管理员权限跑的、可以接着用，不动它。"""
+        n = []
+        for p in psutil.process_iter(["pid", "cmdline", "exe", "cwd"]):
+            try:
+                if p.pid == os.getpid():
+                    continue
+                kind = orphan_kind(" ".join(p.info["cmdline"] or []), p.info["exe"], p.info["cwd"], paths.ROOT)
+                if not kind:
+                    continue
+                for c in p.children(recursive=True):
+                    c.kill()
+                p.kill()
+                n.append(kind)
+            except Exception:
+                continue
+        if n:
+            print("停掉了上次留下的子进程：" + "、".join(n))
+        return n
 
     def stop_all(self):
         self.server.stop()

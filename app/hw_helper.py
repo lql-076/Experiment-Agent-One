@@ -276,6 +276,16 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
+class Srv(ThreadingHTTPServer):
+    """Agent 那边读数据超时就直接断开，这里会打一大串「远程主机强迫关闭了一个现有的连接」：没有坏处，不往日志里写。"""
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def _quit():
     time.sleep(0.3)
     FPS.stop()
@@ -288,7 +298,7 @@ def _quit():
 
 if __name__ == "__main__":
     try:
-        srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
+        srv = Srv(("127.0.0.1", PORT), H)
     except OSError as e:                                  # 端口被占：多半是已经有一个助手在跑了
         print(f"127.0.0.1:{PORT} 已经被占用（已经有一个硬件监控助手在跑？），这个就不开了：{e}")
         sys.exit(0)

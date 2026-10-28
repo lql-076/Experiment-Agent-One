@@ -7,6 +7,7 @@
   model_server.log   本地模型服务
   kev.log            Kev
   setup_*.log        一键补齐的每一步
+  crash.log          后端底层崩溃的记录（正常时只有每次启动的一行）
 """
 import os
 import re
@@ -22,7 +23,97 @@ T0 = time.time()
 LOG_RE = re.compile(r"^[\w.\-]+\.log$")
 LABEL = {"setup_git.log": "补齐 1 · Git", "setup_aienv.log": "补齐 2 · 模型环境", "setup_models.log": "补齐 3 · 下载模型",
          "setup_start.log": "补齐 4 · 启动服务", "setup_kev.log": "补齐 5 · Kev 权重", "setup_hwmon.log": "补齐 6 · 硬件监控",
-         "backend.log": "后端", "model_server.log": "模型服务", "kev.log": "Kev", "hw_helper.log": "硬件监控助手", "osd.log": "游戏内显示"}
+         "backend.log": "后端", "crash.log": "崩溃记录", "model_server.log": "模型服务", "kev.log": "Kev", "hw_helper.log": "硬件监控助手", "osd.log": "游戏内显示"}
+
+
+# ---------- 后端有没有正常退出 ----------
+# 后端在跑的时候，data\logs\running.json 里记着进程号、什么时候起来的、最近一次"还活着"的时间（每半分钟更新）。
+# 点「退出 Agent」会删掉它；下次启动时它还在，就说明上次不是正常退出的：电脑关机重启、被结束进程、或者崩溃了。
+# 底层崩溃（Python 自己都来不及打印报错的那种）由 faulthandler 写进 data\logs\crash.log。
+_guard = {"crash": None, "last": None}
+
+
+def _flag():
+    return paths.LOGS / "running.json"
+
+
+def exit_reason(flag, boot_time, crash_text):
+    """上次为什么停了。flag：上次留下的 running.json；boot_time：这次开机时间；crash_text：crash.log 里上次那一段。
+    返回 (种类, 一句话)：reboot 电脑关机或重启了 / crash 崩溃了 / killed 被结束了（或者崩溃了没留下记录）。"""
+    beat = float(flag.get("beat") or flag.get("start") or 0)
+    when = datetime.fromtimestamp(beat).strftime("%m-%d %H:%M") if beat else "不知道什么时候"
+    if beat and boot_time and beat < boot_time:
+        return "reboot", f"上次 Agent 在 {when} 前后随电脑关机或重启停了"
+    if crash_text and "Fatal Python error" in crash_text:
+        line = next((x for x in crash_text.splitlines() if "Fatal Python error" in x), "").strip()
+        return "crash", f"上次 Agent 在 {when} 前后崩溃了：{line[:120]}（详细记在 data\\logs\\crash.log）"
+    return "killed", (f"上次 Agent 在 {when} 前后停了，不是点「退出 Agent」停的：可能是在任务管理器里结束了 Python 进程，"
+                      "也可能是崩溃了没留下记录。它开的模型服务这些子进程，这次启动时会先清理掉")
+
+
+def start_guard():
+    """后端一起来就调：打开崩溃记录，看看上次是不是正常退出，再写上这一次的运行标记。"""
+    import faulthandler
+    paths.LOGS.mkdir(parents=True, exist_ok=True)
+    crash = paths.LOGS / "crash.log"
+    prev_crash = ""
+    try:
+        txt = crash.read_text("utf-8", errors="replace") if crash.exists() else ""
+        prev_crash = txt.rsplit("===== ", 1)[-1] if "===== " in txt else txt
+    except Exception:
+        pass
+    try:
+        f = open(crash, "a", encoding="utf-8")
+        f.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} 后端启动 · 进程 {os.getpid()}\n")
+        f.flush()
+        faulthandler.enable(file=f, all_threads=True)
+        _guard["crash"] = f
+    except Exception as e:
+        print("打不开崩溃记录：", e)
+    try:
+        if _flag().exists():
+            import json as _json
+            import psutil
+            old = _json.loads(_flag().read_text("utf-8") or "{}")
+            _guard["last"] = exit_reason(old, psutil.boot_time(), prev_crash)
+            print(_guard["last"][1])
+    except Exception as e:
+        print("读不了上次的运行标记：", e)
+    beat()
+
+
+def beat():
+    """写运行标记（后台照看每半分钟调一次）。"""
+    import json as _json
+    try:
+        old = _json.loads(_flag().read_text("utf-8")) if _flag().exists() else {}
+        start = old.get("start") if old.get("pid") == os.getpid() else time.time()
+        _flag().write_text(_json.dumps({"pid": os.getpid(), "start": start, "beat": time.time()}), "utf-8")
+    except Exception:
+        pass
+
+
+def clean_exit():
+    """正常退出（点「退出 Agent」、命令行里 Ctrl+C）：删掉运行标记，下次启动就不会当成意外退出。"""
+    try:
+        _flag().unlink()
+    except Exception:
+        pass
+
+
+def report_last_exit():
+    """进展报告加载好以后调：上次是意外停的（不是关机重启），写一句进去。"""
+    last = _guard.get("last")
+    if last and last[0] != "reboot":
+        feed.add(last[1], "warn", job="后端")
+
+
+def quiet_handler(loop, ctx):
+    """Windows 上对方先断开连接时，asyncio 会打一大段「远程主机强迫关闭了一个现有的连接」：没有坏处，不往日志里写，
+    免得把真正的报错淹掉。别的照常打印。"""
+    if isinstance(ctx.get("exception"), (ConnectionResetError, ConnectionAbortedError)):
+        return
+    loop.default_exception_handler(ctx)
 
 
 class _Tee:

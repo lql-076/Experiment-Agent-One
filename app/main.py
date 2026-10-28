@@ -19,7 +19,7 @@ from . import (agent, agentstate, checks, db, deepseek, docs, events, exam, feed
 from .models import M
 from .qq import BOT
 
-VERSION = "1.8.4"
+VERSION = "1.8.5"
 PORT = 8765
 _bg = []
 
@@ -93,6 +93,7 @@ async def housekeeping():
                 asyncio.get_event_loop().create_task(M.kev_ready())   # 不等它，免得卡住别的
             if n % 15 == 1:
                 await deepseek.balance_tick(n)
+                monitor.beat()                    # 运行标记：每半分钟写一次"还活着"
             if n % 60 == 30:
                 await growth.tick()
             if n % 2 == 1:
@@ -105,28 +106,36 @@ async def housekeeping():
 
 
 async def live_checks():
-    """会自己变的几项（本地模型环境、模型服务、Kev、硬件监控助手、QQ）：启动后头两分钟每 10 秒、之后每 30 秒重查一次，
+    """会自己变的几项（本地模型环境、模型服务、Kev、硬件监控助手、QQ、DeepSeek）：启动后头两分钟每 10 秒、之后每 30 秒重查一次，
     写回自检结果，整备和「一键补齐」的每一步跟着变（界面轮询 /api/state 看到 prep.ts 变了就刷新）。"""
-    n = 0
+    n, settled = 0, False
     while True:
         await asyncio.sleep(10 if n < 12 else 30)
         n += 1
         with contextlib.suppress(Exception):
             await checks.refresh_live()
+        if not settled and not checks.booting():      # 开机缓冲结束：还在「启动中」的再查一遍，日志里写一句整备情况
+            settled = True
+            with contextlib.suppress(Exception):
+                await checks.after_boot()
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app):
     monitor.tee_console()
+    asyncio.get_running_loop().set_exception_handler(monitor.quiet_handler)
     settings.load()
     db.conn()
     feed.load()
+    monitor.report_last_exit()
     write_themes_js()
     with contextlib.suppress(Exception):
         docs.tidy_old()
         docs.generate(app, VERSION, theme_list())      # docs/AI文档/当前结构.md：每次启动按代码重写
     with contextlib.suppress(Exception):
         await asyncio.to_thread(setup.cleanup_orphans)
+    with contextlib.suppress(Exception):
+        await asyncio.to_thread(M.cleanup_orphans)      # 上次留下的模型服务、Kev、游戏内小框：先停掉，免得端口被占
     memory.init()
     router.seed_examples()
     router.MEM.load()
@@ -486,6 +495,7 @@ async def quit_all():
         if settings.S.get("hwOn"):        # 硬件监控助手是跟着 Agent 起的，也一起关
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(hwctl.stop(), 6)
+        monitor.clean_exit()
         os._exit(11)                      # 11：界面上点了退出（启动.bat 看日志模式下，黑窗口也跟着关）
     asyncio.get_event_loop().create_task(bye())
     return {"ok": True}
@@ -560,14 +570,11 @@ async def run_one(k: str, quick: int = 0):
         else:
             r = await asyncio.wait_for(fn(), 20)
     except asyncio.TimeoutError:
-        r = checks.miss("检测超时")
+        r = checks.miss("检测超时", heal=True)
     except Exception as e:
         r = checks.miss(f"检测出错：{str(e)[:120]}")
-    last = db.kv_get("checks") or {"res": {}}
-    last.setdefault("res", {})[k] = r
-    last["ts"] = time.time()
-    db.kv_set("checks", last)
-    return r
+    checks.record(k, r, bump=True)
+    return (db.kv_get("checks") or {}).get("res", {}).get(k, r)
 
 
 @app.post("/api/actions/{name}")
@@ -804,7 +811,9 @@ def run():
                 settings.load()
                 open_ui()
             return 10
+    monitor.start_guard()                 # 崩溃记录 + 看看上次是不是正常退出的
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning", use_colors=False)
+    monitor.clean_exit()
     return 0
 
 
