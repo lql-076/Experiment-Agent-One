@@ -19,7 +19,7 @@ from . import (agent, agentstate, autostart, checks, db, deepseek, docs, events,
 from .models import M
 from .qq import BOT
 
-VERSION = "1.8.7"
+VERSION = "1.8.8"
 PORT = 8765
 _bg = []
 
@@ -297,6 +297,11 @@ async def import_(body: dict = Body(...)):
 @app.get("/api/state")
 async def state():
     return await reports.state()
+
+
+@app.get("/api/tasks")
+def get_tasks():
+    return {"tasks": reports.tasks()}
 
 
 @app.get("/api/osd")

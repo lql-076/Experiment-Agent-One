@@ -1242,3 +1242,24 @@ html[data-orient="portrait"] .tts-text{grid-column:1/-1}
 .ttsinst .hwc-st{margin:.1rem 0}
 .ttsinst .prog{display:flex;flex-direction:column;gap:.4rem}
 .tts-warn .btnrow{margin-top:.35rem}
+/* 常驻屏的后台任务进度条（v1.8.8，ui/js/resident.js 的 renderTasks）：硬件格子下面，有任务才出现 */
+.rtasks{display:flex;flex-direction:column;gap:.6rem}
+.rtasks[hidden]{display:none}
+.rtask{border-radius:var(--r);padding:.85rem 1.125rem;background:var(--card);border:1px solid var(--cardb);display:flex;flex-direction:column;gap:.5rem}
+.rtk-h{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;font-size:.75rem;letter-spacing:var(--ls);color:var(--text3)}
+.rtk-h span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rtk-h b{font-family:var(--fc);font-weight:var(--fcw);font-size:1.5rem;line-height:1;color:var(--accent)}
+.rtk-bar{height:.4rem;border-radius:.2rem;background:var(--bg4);overflow:hidden}
+.rtk-bar i{display:block;height:100%;background:var(--grad);transform-origin:left;transition:transform .8s var(--ease)}
+.rtk-bar.busy i{background:linear-gradient(90deg,transparent,var(--accent),transparent);background-size:40% 100%;background-repeat:no-repeat;animation:busy 1.4s linear infinite}
+.rtk-f{display:flex;justify-content:space-between;gap:1rem;font-size:.8125rem;color:var(--text2);font-family:var(--fn)}
+.rtk-p{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rtk-f .num{flex:none;color:var(--text3)}
+.rs.tight .rgrid{gap:.6rem}
+.rs.tight .rs-side{gap:.6rem}
+.rs.tight .rt{padding:.7rem .95rem;gap:.3rem}
+.rs.tight .rt .spark{height:1.75rem}
+.rs.tight .rtask{padding:.6rem .95rem;gap:.35rem}
+.rs.tight2 .rt .spark{display:none}
+html[data-orient="portrait"] .rs.tight2{--rsz:min(76vw,38vh);gap:1.75rem}
+#resident.rs-tight .r-src{display:none}

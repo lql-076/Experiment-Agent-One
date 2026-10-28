@@ -75,9 +75,49 @@ function renderResident() {
       rTile(5, 'var(--h5)', ['整机功耗', '估算'], hw('sys.power', 'int', 1) + '<small>W</small>', sparkHTML('pw', 350), '<span><em>CPU</em>' + hw('cpu.power') + ' W</span><span><em>显卡</em>' + hw('gpu.power') + ' W</span>') +
       '<div class="rt rin" style="--i:6;--tc:var(--accent)"><div class="rt-h"><span>硬盘温度</span><span id="diskCount">' + HW.disks.length + ' 块</span></div><div id="diskBody" style="display:flex;flex-direction:column;gap:.6rem;margin-top:.25rem">' + diskTileBody() +
       '</div></div>' +
-    '</div></div></div>';
-  fillResidentText();
+    '</div><div class="rtasks" id="rTasks" hidden></div></div></div>';
+  fillResidentText(); renderTasks(RTASK.list); requestAnimationFrame(fitResident);
   secDeg = null; renderClock(); renderHW();
+}
+/* 后台任务进度条（v1.8.8）：安装配音、一键补齐、生成配音在跑时，常驻屏硬件格子下面多一条；没任务不显示。
+   数据：/api/state 的 tasks（每 5 秒），在常驻屏时另外每 2 秒拿一次 /api/tasks */
+var RTASK = { list: [], timer: null, busy: false };
+function rtDur(s) { s = Math.round(s || 0); return s >= 3600 ? Math.floor(s / 3600) + ' 小时 ' + Math.round(s % 3600 / 60) + ' 分' : s >= 60 ? Math.floor(s / 60) + ' 分 ' + pad(s % 60) + ' 秒' : s + ' 秒'; }
+function rtSpeed(b) { return b >= 1e6 ? (b / 1e6).toFixed(1) + ' MB/s' : b >= 1e3 ? Math.round(b / 1e3) + ' KB/s' : ''; }
+function renderTasks(list) {
+  RTASK.list = list || [];
+  var el = $('#rTasks'); if (!el) return;
+  var was = el.hidden;
+  el.hidden = !RTASK.list.length;
+  if (was !== el.hidden) requestAnimationFrame(fitResident);
+  var ab = themeVar('--res-labels') === 'en';
+  var x = RTASK.list.map(function (t) {
+    var pct = t.pct == null ? null : Math.max(0, Math.min(100, +t.pct)), more = [t.speed ? rtSpeed(t.speed) : '', t.eta ? '还要约 ' + rtDur(t.eta) : ''].filter(Boolean).join(' · ');
+    return '<div class="rtask" data-k="' + esc(t.k) + '"><div class="rtk-h"><span>' + (ab ? 'TASK · ' : '后台任务 · ') + esc(t.name) + '</span><b class="num">' + (pct == null ? '' : Math.floor(pct) + '%') + '</b></div>' +
+      '<div class="rtk-bar' + (pct == null ? ' busy' : '') + '"><i style="transform:scaleX(' + (pct == null ? 1 : pct / 100) + ')"></i></div>' +
+      '<div class="rtk-f"><span class="rtk-p">' + esc(t.phase || '') + '</span><span class="num">' + esc(more) + '</span></div></div>';
+  }).join('');
+  if (el.innerHTML !== x) { el.innerHTML = x; fitResident(); }
+}
+/* 多了进度条放不下（竖屏、字调大了）：先把硬件格子收紧一点，还不行再藏掉走势线、钟小一圈。放得下就不动（v1.8.8） */
+function fitResident() {
+  var s = $('#resident .rs'); if (!s) return;          // 不在常驻时 #resident 是隐藏的，量出来是 0，不会收紧
+  s.classList.remove('tight', 'tight2');
+  $('#resident').classList.remove('rs-tight');
+  if (!RTASK.list.length) return;
+  if (s.scrollHeight > s.clientHeight + 1) s.classList.add('tight');
+  if (s.scrollHeight > s.clientHeight + 1) s.classList.add('tight2');
+  $('#resident').classList.toggle('rs-tight', s.classList.contains('tight'));     // 挤的时候右下角那行"硬件数据从哪来"先藏起来，免得压在进度条上
+}
+window.addEventListener('resize', function () { requestAnimationFrame(fitResident); });
+function taskTimer(on) {
+  clearInterval(RTASK.timer); RTASK.timer = null;
+  if (!on || !useLive()) return;
+  RTASK.timer = setInterval(function () {
+    if (RTASK.busy || document.hidden) return;
+    RTASK.busy = true;
+    api('GET', '/api/tasks', null, 4000).then(function (j) { renderTasks(j.tasks); }).catch(function () {}).then(function () { RTASK.busy = false; });
+  }, 2000);
 }
 function fillResidentText() { var a = $('#rStatus'); if (a) a.textContent = statusShort(); var b = $('#rLast'); if (b) b.textContent = lastEventText(); updateReminder(); }
 var animOK = function () { return S.set.motion !== 'off' && !!Element.prototype.animate; };
@@ -113,6 +153,8 @@ function setMode(m) {
     root.dataset.mode = m;
     if (m === 'resident') { renderHW(); ringIn(); } else placeInd(true);
   });
+  taskTimer(m === 'resident');
+  if (m === 'resident') { setTimeout(fitResident, 300); setTimeout(fitResident, 1200); }    // 等切换动画把常驻屏放出来再量
   if (t) t.finished.then(function () { root.classList.remove('mode-vt'); }, function () { root.classList.remove('mode-vt'); });
   else { root.classList.remove('mode-vt'); replay(m === 'resident' ? $('#rWrap') : $('#content')); }
   clearInterval(driftTimer); $('#rWrap').style.transform = '';

@@ -46,9 +46,27 @@ TOKENIZER = "Qwen/Qwen3-TTS-Tokenizer-12Hz"     # 正常已经在模型的 speec
 SOURCE = os.environ.get("AGENT_MODEL_SOURCE", "modelscope")
 
 
+# 装完后的自检：在配音环境里真的导入一次。qwen-tts 一导入就 import sox，而 SoX 我们不装（只有旧版 25Hz 模型用它）：
+# 和配音服务（app/tts_server.py）一样，导入前放一个空的 sox 模块顶替（v1.8.7 这里忘了放，自检报错、模型没下）
+CHECK = ("import sys, types\n"
+         "sys.modules.setdefault('sox', types.ModuleType('sox'))\n"
+         "import torch, transformers, qwen_tts\n"
+         "print('PyTorch', torch.__version__, '| 显卡', torch.cuda.get_device_name(0) if torch.cuda.is_available() else '用不了',"
+         " '| Transformers', transformers.__version__)")
+
+
 def has(code):
-    r = subprocess.run([str(A.PY), "-c", code], capture_output=True, text=True)
-    return r.returncode == 0, (r.stdout or r.stderr).strip()[-400:]
+    """在配音环境里跑一段代码。成功返回 (True, 最后一行输出)；失败返回 (False, 真正的报错那一行)，
+    完整的报错打印出来（写进 setup_tts.log）。qwen-tts 导入时会往输出里打一段 flash-attn 的提示，那不是报错。"""
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    r = subprocess.run([str(A.PY), "-c", code], capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+    out = [x for x in (r.stdout or "").splitlines() if x.strip() and x.strip("* ")]
+    if r.returncode == 0:
+        return True, (out[-1].strip() if out else "")
+    err = [x for x in (r.stderr or "").splitlines() if x.strip()]
+    if err:
+        print("\n".join(err[-15:]), flush=True)
+    return False, (err[-1].strip() if err else out[-1].strip() if out else f"退出码 {r.returncode}")[:300]
 
 
 def install_env():
@@ -78,12 +96,11 @@ def install_env():
     if not A.pip_any(*DEPS, f"torch=={A.TORCH}", f"torchaudio=={A.TORCH}"):
         say("配音要的库没装上，看上面的报错；网络问题的话过一会再试", "!")
         return 5
-    ok, info = has("import torch, transformers, qwen_tts; print('PyTorch', torch.__version__, '| 显卡', torch.cuda.get_device_name(0) "
-                   "if torch.cuda.is_available() else '用不了', '| Transformers', transformers.__version__)")
+    ok, info = has(CHECK)
     if not ok:
         say("装完了但导入出错：" + info, "!")
         return 6
-    say("配音环境装好了：" + info.splitlines()[-1], "✓")
+    say("配音环境装好了：" + info, "✓")
     return 0
 
 

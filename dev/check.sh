@@ -29,6 +29,7 @@ step "对话页、Agent 状态、游戏内显示设置" "$PY" dev/ui/chat.py dev
 step "配音：切句子、拼接停顿、时间轴、保存、我的音色、让路和闲置关掉、安装配音" "$PY" dev/test_tts.py
 step "配音页点一遍、设置里的安装配音和开机自启" "$PY" dev/ui/tts.py dev/.run/shots
 step "开机自启开关" "$PY" dev/test_autostart.py
+step "常驻屏的后台任务进度条" "$PY" dev/ui/rtasks.py dev/.run/shots
 step "一页一屏放下（不靠滚轮）" "$PY" dev/ui/fit.py dev/.run/shots
 step "Kev 权重在不在本机" "$PY" dev/test_kev.py
 step "硬件读数、显存让路、硬盘、本地模型环境自检" "$PY" dev/test_hw.py

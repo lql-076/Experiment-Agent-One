@@ -131,7 +131,8 @@ def brief():
         return None
     i = next((n for n, s in enumerate(STEPS) if s["k"] == JOB["cur"]), 0)
     pr = JOB["steps"][STEPS[i]["k"]].get("prog") or {}
-    return {"running": True, "n": i + 1, "total": len(STEPS), "t": STEPS[i]["t"], "pct": pr.get("pct")}
+    return {"running": True, "n": i + 1, "total": len(STEPS), "t": STEPS[i]["t"], "pct": pr.get("pct"),
+            "phase": pr.get("phase") or "", "speed": pr.get("speed"), "eta": pr.get("eta")}
 
 
 def _mark(k, st, info=None, **kw):

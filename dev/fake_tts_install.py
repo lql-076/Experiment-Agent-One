@@ -1,5 +1,6 @@
 """测试用：假的「安装配音」（scripts/install_tts.py 的样子：@@SAY 讲解、@@PROGRESS、pip raw、魔搭的 tqdm），几秒就完。
-dev/.run/fake_tts_install_fail.flag 在的话，这次装到一半失败（用一次就删掉），用来测"失败了再点一次"。"""
+dev/.run/fake_tts_install_fail.flag 在的话，这次装到一半失败（用一次就删掉），用来测"失败了再点一次"；
+dev/.run/fake_tts_install_slow.flag 在的话下载慢慢走，给常驻屏的进度条截图。"""
 import json
 import os
 import sys
@@ -7,6 +8,7 @@ import time
 from pathlib import Path
 
 FAIL = Path(__file__).resolve().parent / ".run" / "fake_tts_install_fail.flag"
+SLOW = Path(__file__).resolve().parent / ".run" / "fake_tts_install_slow.flag"   # 在的话下载那段慢慢走（约 1 分钟），给常驻屏进度条截图用
 FEED = os.environ.get("AGENT_FEED") == "1"
 
 
@@ -28,7 +30,7 @@ say(f"下载 预设音色 CustomVoice（大约 4~5 GB）：从{src} Qwen/Qwen3-T
 for i in range(0, 101, 10):
     sys.stdout.write(f"\rDownloading [model.safetensors]: {i:3d}%|{'█' * (i // 10):<10}| {3.8 * i / 100:.2f}G/3.80G [00:{i // 10:02d}<00:10, 380MB/s]")
     sys.stdout.flush()
-    time.sleep(0.06)
+    time.sleep(6 if SLOW.exists() else 0.06)
 print(flush=True)
 if FAIL.exists():
     FAIL.unlink()

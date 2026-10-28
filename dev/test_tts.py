@@ -10,12 +10,15 @@
 import ast
 import io
 import json
+import os
 import pathlib
 import re
 import shutil
 import sys
+import tempfile
 import time
 import wave
+from contextlib import redirect_stdout
 
 import httpx
 
@@ -104,6 +107,23 @@ check(names == paths.TTS_MODELS, f"配音服务和后端用的模型名一致：
 inst = (ROOT / "scripts" / "install_tts.py").read_text("utf-8")
 check("qwen-tts==0.1.1" in inst and "transformers==4.57.3" in inst and "gradio" not in inst.split("DEPS = ")[1].split("]")[0],
       "安装配音：qwen-tts 锁 0.1.1，Transformers 用官方要的 4.57.3，不装 gradio")
+# v1.8.7 的 bug：装完自检时导入 qwen_tts，它一导入就 import sox（没装）→ 报错，界面上只显示一排星号（qwen-tts 打的 flash-attn 提示）
+sys.path.insert(0, str(ROOT / "scripts"))
+import install_tts  # noqa: E402
+fake = pathlib.Path(tempfile.mkdtemp()) / "fakeqtts"
+fake.mkdir()
+(fake / "__init__.py").write_text('print("\\n********\\nWarning: flash-attn is not installed.\\n********\\n ")\nimport sox\n', "utf-8")
+os.environ["PYTHONPATH"] = str(fake.parent)
+install_tts.A.PY = pathlib.Path(sys.executable)
+stub = install_tts.CHECK.split("import torch")[0]
+ok, info = install_tts.has(stub + "import fakeqtts\nprint('好了')")
+check(ok and info == "好了", f"自检先放空的 sox 再导入：像 qwen-tts 那样一导入就 import sox 也能过（{info}）")
+with redirect_stdout(io.StringIO()):
+    ok, info = install_tts.has("import fakeqtts")
+check(not ok and "No module named 'sox'" in info, f"真出错时写出真正的报错，不是那排星号：{info}")
+c0 = install_tts.CHECK
+check(c0.index("sys.modules.setdefault('sox'") < c0.index("import torch, transformers, qwen_tts"), "安装自检的代码里：空 sox 放在导入 qwen_tts 之前")
+os.environ.pop("PYTHONPATH")
 
 # ---------- 5. 连测试后端 ----------
 B = "http://127.0.0.1:8765"
@@ -178,6 +198,8 @@ check(abs((d["segments"][1]["start"] - d["segments"][0]["end"]) - 1.2) < 0.01, "
 ver = d["ver"]
 c.post("/api/tts/gen", json={"mode": "preset", "speaker": "Vivian", "text": "一句话。" * 40})
 time.sleep(1.0)
+tk = [t for t in c.get("/api/tasks").json()["tasks"] if t["k"] == "tts"]
+check(tk and tk[0]["name"] == "生成配音 · Vivian" and "/40 句" in tk[0]["phase"], f"生成配音时常驻屏的后台任务里也有它：{tk[0]['phase'] if tk else '没有'}")
 c.post("/api/tts/stop")
 j = wait(20)
 check(j["job"]["st"] == "stop" and j["job"]["i"] < 39, f"点「停下」：念完手上这句就停（停在第 {j['job']['i'] + 1} 句）")
@@ -198,9 +220,12 @@ def inst_wait(t=30):
 
 r = c.post("/api/tts/install", json={})
 check(r.status_code == 200 and r.json()["st"] == "run", "点「安装配音」：在后台开始装")
+tk = c.get("/api/tasks").json()["tasks"]
+check(any(t["k"] == "tts_install" and t["name"] == "安装配音" for t in tk), f"常驻屏的后台任务里有「安装配音」：{[t['name'] for t in tk]}")
 check(c.post("/api/tts/install", json={}).status_code == 409, "装着的时候再点：不重复开")
 i = inst_wait()
 check(i["st"] == "ok" and i["code"] == 0 and i["pct"] == 100, f"装完了：{i['line']}")
+check(not any(t["k"] == "tts_install" for t in c.get("/api/tasks").json()["tasks"]), "装完了：后台任务里没有它了（常驻屏的进度条消失）")
 feedtxt = " | ".join(e["text"] for e in c.get("/api/feed?n=60").json()["items"] if e.get("job") == "安装配音")
 check("开始安装配音" in feedtxt and "装好了 4 个包" in feedtxt and "下载 model.safetensors 完成" in feedtxt and "配音装好了" in feedtxt,
       "每一步写进进展报告（后台页，任务名「安装配音」）：开始、装了哪些包、下载完成多大多久、装好了")

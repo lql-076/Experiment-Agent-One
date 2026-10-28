@@ -144,6 +144,25 @@ def _bal():
             "low": b.get("total") is not None and b["total"] < float(settings.S["dsLow"])}
 
 
+def tasks():
+    """后台正在跑、有进度的活（常驻屏的进度条用，v1.8.8）：安装配音、一键补齐、生成配音。没有就是空列表。"""
+    from . import tts, tts_install
+    out = []
+    i = tts_install.public()
+    if i["st"] == "run":
+        out.append({"k": "tts_install", "name": "安装配音", "phase": i["phase"] or i["line"] or "准备中", "pct": i["pct"],
+                    "speed": i["speed"], "eta": i["eta"]})
+    b = setup.brief()
+    if b:
+        out.append({"k": "setup", "name": f"一键补齐 · 第 {b['n']}/{b['total']} 步 · {b['t']}", "phase": b["phase"] or b["t"], "pct": b["pct"],
+                    "speed": b["speed"], "eta": b["eta"]})
+    j = tts.T.public()
+    if j and j["st"] == "run":
+        out.append({"k": "tts", "name": f"生成配音 · {j['voice']}", "phase": f"第 {min(j['i'] + 1, j['n'])}/{j['n']} 句",
+                    "pct": round(j["done_chars"] / j["chars"] * 100, 1) if j["chars"] else None, "speed": None, "eta": j["eta"]})
+    return out
+
+
 async def state():
     sp = split(day_start())
     tot = sum(sp.values())
@@ -160,4 +179,4 @@ async def state():
             "qq": {"status": BOT.status, "detail": BOT.detail, "candidate": db.kv_get("qq_candidate") if not settings.S["qqUser"] else None},
             "models": {"server": ms["server"], "kev": ms["kev_ready"], "yielding": ms["yielding"], "yield_reason": ms["yield_reason"],
                        "embed": bool((ms["health"] or {}).get("embed_loaded")), "base": bool((ms["health"] or {}).get("base_loaded"))},
-            "events": recent(40)}
+            "tasks": tasks(), "events": recent(40)}
