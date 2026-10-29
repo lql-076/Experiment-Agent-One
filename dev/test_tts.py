@@ -83,6 +83,12 @@ ch = tts.whole_chunks(big, 1200)
 check(len(ch) == 2 and all(big[c[-1]]["kind"] in ("para", "end") for c in ch) and sum(len(c) for c in ch) == len(big),
       f"太长的（2000 字）分成 {len(ch)} 块，都在换段处断开，一句不少")
 check(tts.chunk_text(tts.split("标题没有标点\n\n正文一句。"), [0, 1]) == "标题没有标点。\n正文一句。", "一块里没有句末标点的行补一个句号，换段处换行")
+ten = tts.split(("这是一句十个字的话。" * 40 + "\n\n") * 6)                      # 2400 字，中文大约 9 分半
+check(tts.WHOLE_MAX >= 2500 and len(tts.whole_chunks(ten)) == 1, f"10 分钟以内（2400 字）一次念完，不分块（一块最多 {tts.WHOLE_MAX} 字）")
+over = tts.split(("这是一句十个字的话。" * 40 + "\n\n") * 8)                     # 3200 字，超过 10 分钟
+check(len(tts.whole_chunks(over)) == 2, "超过 10 分钟（3200 字）才在换段处分成两块")
+srv = (ROOT / "app" / "tts_server.py").read_text("utf-8")
+check("min(24000, 96 + len(text) * 6)" in srv and 96 + 2600 * 6 <= 24000, "配音服务给的长度上限够念 2600 字（一个字 6 帧，10 分钟一整段也够）")
 
 # ---------- 2. 字幕、音色参数、文件名 ----------
 check(tts.srt_time(3725.5) == "01:02:05,500" and tts.srt_time(0) == "00:00:00,000", f"SRT 时间格式：{tts.srt_time(3725.5)}")
