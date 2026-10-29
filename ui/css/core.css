@@ -1172,65 +1172,6 @@ html[data-orient="portrait"] .osd-top{grid-template-columns:minmax(0,24rem) minm
 .fix-hint{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.6rem}
 .fix-hint a.btn{text-decoration:none;display:inline-flex;align-items:center}
 
-/* ===== 配音页（ui/js/tts.js）：横屏三栏一屏放下（文案 | 音色 | 生成 + 试听）；竖屏文案在上，下面两栏。文案框、时间轴自己在里面滚 ===== */
-.page.fill.tts{height:100%;display:flex;flex-direction:column;max-width:none}
-.tts .ph{margin-bottom:1rem;align-items:center}
-.tts-svc{margin-left:auto;display:flex;align-items:center;gap:.6rem}
-.tts-svc .btn{min-height:2rem;padding:.2rem .75rem}
-.tts-grid{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr);gap:1rem}
-.tts .hc{min-height:0}
-.tts-text textarea{flex:1;min-height:0;resize:none;font-size:1.0625rem;line-height:1.85;padding:.75rem 1rem}
-.tts-gaps{display:flex;gap:1.5rem;flex-wrap:wrap;font-size:.875rem;color:var(--text2);align-items:center}
-.tts-gaps label{display:flex;align-items:center;gap:.4rem}
-.tts-gaps .inp{width:5.25rem;min-height:2.25rem}
-.tts-voice{gap:.9rem}
-.tts-vb{display:flex;flex-direction:column;gap:.75rem;min-height:0}
-.tts-spk{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.5rem}
-.tts-sp{display:flex;flex-direction:column;align-items:flex-start;gap:.2rem;text-align:left;padding:.6rem .8rem;border-radius:var(--rs);border:1px solid var(--line2);background:var(--bg2);color:var(--text);transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease)}
-.tts-sp:hover{border-color:var(--text3)}
-.tts-sp b{font-size:.9375rem;font-weight:600;display:flex;gap:.5rem;align-items:baseline}
-.tts-sp .tag{font-size:.6875rem;font-weight:400;color:var(--text3)}
-.tts-sp small{font-size:.75rem;color:var(--text3);line-height:1.45}
-.tts-sp[aria-pressed="true"]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,var(--bg2))}
-.tts-sp[aria-pressed="true"] small{color:var(--text2)}
-.tts-row{display:flex;flex-direction:column;gap:.4rem}
-.tts-lang{flex-direction:row;align-items:center;gap:.75rem}
-.tts-lang select{width:auto;min-width:7rem}
-.tts-lab{font-size:.8125rem;color:var(--text3);white-space:nowrap}
-.tts-row2{display:flex;align-items:center;gap:.5rem}
-.tts-row2 .inp{flex:1;min-width:0}
-.tts-row2 #ttsSeed{flex:0 1 9rem}
-.tts-mine{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem .5rem}
-.tts-mv{display:inline-flex;align-items:center}
-.tts-x{border:0;background:transparent;color:var(--text3);width:1.75rem;height:1.75rem;display:grid;place-items:center;border-radius:var(--rs)}
-.tts-x:hover{color:var(--bad);background:var(--bg3)}
-.tts-x svg{width:.9rem;height:.9rem}
-#ttsDesc{min-height:5.5rem;resize:none}
-.tts-note{font-size:.8125rem;color:var(--text3);margin:0}
-.tts-side{display:flex;flex-direction:column;gap:1rem;min-height:0}
-.tts-gen{flex:none;gap:.9rem}
-.tts-go{min-height:3rem;padding:.5rem 2rem;font-size:1rem}
-.tts-warn{display:flex;flex-direction:column;gap:.3rem;padding:.75rem 1rem;border-radius:var(--rs);border:1px solid color-mix(in srgb,var(--c-neu) 40%,transparent);background:color-mix(in srgb,var(--c-neu) 8%,transparent);font-size:.875rem;line-height:1.6}
-.tts-warn b{color:var(--c-neu)}
-.tts-warn span{color:var(--text2)}
-.tts-msg{font-size:.875rem;color:var(--text2);line-height:1.6}
-.tts-msg.ok{color:var(--ok)}
-.tts-msg.bad{color:var(--bad)}
-.tts-gen .prog{display:flex;flex-direction:column;gap:.45rem}
-.tts-res{flex:1;gap:.75rem}
-.tts-res audio{width:100%;height:2.75rem;flex:none}
-.tts-empty{line-height:1.8}
-.tts-saved{font-size:.8125rem}
-.tts-link{border:0;background:transparent;color:var(--accent);padding:0;font-size:inherit;text-decoration:underline;text-underline-offset:.2em}
-.tts-tl{flex:1;min-height:4rem;overflow:auto;display:flex;flex-direction:column;border-top:1px solid var(--line);margin:0 -.5rem;padding:.25rem 0;position:relative}
-.tts-seg{display:grid;grid-template-columns:4.5rem minmax(0,1fr);gap:.75rem;text-align:left;border:0;background:transparent;color:var(--text2);padding:.45rem .5rem;border-radius:var(--rs);font-size:.875rem;line-height:1.55;transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
-.tts-seg:hover{background:var(--bg3);color:var(--text)}
-.tts-seg .num{color:var(--text3);font-size:.8125rem}
-.tts-seg.on{background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--text)}
-.tts-seg.on .num{color:var(--accent)}
-html[data-orient="portrait"] .tts .ph .sub{display:none}
-html[data-orient="portrait"] .tts-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:minmax(14rem,.8fr) minmax(0,1.2fr)}
-html[data-orient="portrait"] .tts-text{grid-column:1/-1}
 /* 设置 › 本地模型 的「配音」一块（ui/js/tts.js 的 ttsInstHTML） */
 .ttsinst{align-items:flex-start}
 .ttsi-main{display:flex;flex-direction:column;gap:.5rem;min-width:min(100%,26rem);flex:1}
@@ -1263,20 +1204,179 @@ html[data-orient="portrait"] .tts-text{grid-column:1/-1}
 .rs.tight2 .rt .spark{display:none}
 html[data-orient="portrait"] .rs.tight2{--rsz:min(76vw,38vh);gap:1.75rem}
 #resident.rs-tight .r-src{display:none}
-.tts-seg.est .num{color:var(--c-neu)}
+
+/* ===== 配音页（v1.8.12 重做，ui/js/tts.js）：一张录音棚控制台——左边文案，中间音色和表达，右边生成和波形。
+   横屏三栏一屏放下；竖屏文案在上、下面两栏。文案框、音色面板、时间轴在自己里面滚。颜色全用主题变量，三套风格都跟着变 ===== */
+.page.fill.tts{height:100%;display:flex;flex-direction:column;max-width:none;padding-bottom:1.25rem}
+.tts-top{margin-bottom:1rem;align-items:center;flex-wrap:nowrap}
+.tts-top h1{flex:none}
+.tts-top .sub{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tts-svc{margin-left:auto;display:flex;align-items:center;gap:.5rem;flex:none}
+.tts-svc .btn{min-height:2rem;padding:.2rem .75rem}
+/* 引擎开关：两格，底下亮的那块滑过去 */
+.tts-eng{position:relative;display:grid;grid-template-columns:1fr 1fr;flex:none;width:27rem;border:1px solid var(--line2);border-radius:calc(var(--rs) + 3px);padding:3px;background:var(--bg2)}
+.tts-eng::before{content:"";position:absolute;top:3px;bottom:3px;left:3px;width:calc(50% - 3px);border-radius:var(--rs);background:color-mix(in srgb,var(--accent) 15%,var(--bg3));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 55%,transparent),0 0 1.4rem -.3rem color-mix(in srgb,var(--accent) 55%,transparent);transition:transform .45s var(--spring)}
+.tts-eng[data-on="cloud"]::before{transform:translateX(100%)}
+.tts-eng button{position:relative;z-index:1;border:0;background:transparent;color:var(--text3);display:flex;flex-direction:column;align-items:flex-start;gap:.05rem;padding:.3rem .85rem;text-align:left;min-width:0;transition:color var(--dur) var(--ease)}
+.tts-eng b{font-weight:600;font-size:.9375rem}
+.tts-eng small{font-size:.6875rem;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.tts-eng button[aria-pressed="true"]{color:var(--text)}
+.tts-grid{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr) minmax(0,1.2fr);gap:1rem}
+.tts .hc{min-height:0}
+.tts-lab{font-size:.8125rem;color:var(--text3);white-space:nowrap}
+.tts-note{font-size:.8125rem;color:var(--text3);margin:0;line-height:1.6}
+.tts-msg{font-size:.875rem;color:var(--text2);line-height:1.6}
+.tts-msg.ok{color:var(--ok)}
+.tts-msg.bad{color:var(--bad)}
+.tts-warn{display:flex;flex-direction:column;gap:.3rem;padding:.75rem 1rem;border-radius:var(--rs);border:1px solid color-mix(in srgb,var(--c-neu) 40%,transparent);background:color-mix(in srgb,var(--c-neu) 8%,transparent);font-size:.875rem;line-height:1.6}
+.tts-warn b{color:var(--c-neu)}
+.tts-warn span{color:var(--text2)}
+/* 文案 */
+.tts-text{gap:.6rem}
+.tts-text textarea{flex:1;min-height:0;resize:none;font-size:1.0625rem;line-height:1.9;padding:.85rem 1rem}
+.tts-tags{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center}
+.tts-tags .tts-lab{margin-right:.25rem}
+.tts-tag{border:1px dashed var(--line2);background:transparent;color:var(--text2);border-radius:var(--rs);padding:.05rem .5rem;font-size:.8125rem;min-height:1.65rem;transition:border-color var(--dur) var(--ease),color var(--dur) var(--ease),background var(--dur) var(--ease)}
+.tts-tag:hover{border-style:solid;border-color:var(--accent);color:var(--text);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.tts-gaps{display:flex;gap:1.5rem;flex-wrap:wrap;font-size:.875rem;color:var(--text2);align-items:center}
+.tts-gaps label{display:flex;align-items:center;gap:.4rem}
+.tts-gaps .inp{width:5.25rem;min-height:2.25rem}
+/* 音色：标签页 + 面板（在里面滚）+ 表达 */
+.tts-voice{gap:.7rem}
+.tts-tabs{display:flex;gap:.1rem;border-bottom:1px solid var(--line);flex:none}
+.tts-tabs button{border:0;background:transparent;color:var(--text3);padding:.45rem .8rem .55rem;font-size:.9375rem;position:relative;min-height:2.4rem;transition:color var(--dur) var(--ease)}
+.tts-tabs button:hover{color:var(--text2)}
+.tts-tabs button::after{content:"";position:absolute;left:.55rem;right:.55rem;bottom:-1px;height:2px;border-radius:1px;background:var(--accent);transform:scaleX(0);transition:transform .35s var(--spring)}
+.tts-tabs button[aria-pressed="true"]{color:var(--text)}
+.tts-tabs button[aria-pressed="true"]::after{transform:none;box-shadow:0 0 .6rem var(--accent)}
+.tts-vb{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:.5rem;padding-right:.35rem;margin-right:-.35rem}
+.tts-vl{display:flex;flex-direction:column;gap:.35rem}
+.tts-vh{display:flex;align-items:center;justify-content:space-between;gap:.5rem;font-size:.75rem;color:var(--text3);margin:.4rem 0 .05rem}
+.tts-vh:first-child{margin-top:.1rem}
+.tts-vha{display:flex;align-items:center;gap:.5rem}
+.tts-vha .btn{display:inline-flex;align-items:center;gap:.3rem}
+.tts-vha svg{width:.9rem;height:.9rem}
+.tts-none{font-size:.8125rem;color:var(--text3);line-height:1.7;padding:.75rem .9rem;border:1px dashed var(--line2);border-radius:var(--rs)}
+.vrow{position:relative;display:flex}
+.tts-sp{flex:1;display:flex;align-items:center;gap:.8rem;text-align:left;padding:.5rem .75rem;min-height:3.25rem;border-radius:var(--rs);border:1px solid var(--line2);background:var(--bg2);color:var(--text);transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease)}
+.vrow.hasplay .tts-sp{padding-right:3.25rem}
+.vrow:has(.vdel) .tts-sp{padding-right:5.5rem}
+.tts-sp:hover{border-color:var(--text3)}
+.tts-sp[aria-pressed="true"]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--bg2))}
+.tts-sp[disabled]{cursor:default}
+.vrow.off .tts-sp{opacity:.62}
+.vt{display:flex;flex-direction:column;gap:.15rem;min-width:0}
+.vt b{font-size:.9375rem;font-weight:600;display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap}
+.vt small{font-size:.75rem;color:var(--text3);line-height:1.45;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.tts-sp[aria-pressed="true"] small{color:var(--text2)}
+.tts-sp .tag{font-size:.6875rem;font-weight:400;color:var(--text3)}
+.vst{font-size:.6875rem;font-weight:500;padding:0 .4rem;border-radius:.6rem;border:1px solid currentColor;line-height:1.5}
+.vst.dep{color:var(--c-neu)}
+.vst.dep::before{content:"";display:inline-block;width:.45rem;height:.45rem;margin-right:.3rem;border-radius:50%;border:1.5px solid currentColor;border-right-color:transparent;animation:spin .9s linear infinite;vertical-align:-.05rem}
+.vst.bad{color:var(--bad)}
+/* 声纹：按音色 ID 算出来的一排竖条，试听时跳 */
+.vp{flex:none;display:flex;align-items:center;gap:2px;width:2.3rem;height:1.6rem;color:var(--text3)}
+.vp i{flex:1;height:calc(var(--h) * 100%);background:currentColor;border-radius:1px;transform-origin:center}
+.tts-sp[aria-pressed="true"] .vp{color:var(--accent)}
+.vrow.playing .vp{color:var(--accent)}
+.vrow.playing .vp i{animation:vpb .55s ease-in-out var(--d) infinite alternate}
+@keyframes vpb{from{transform:scaleY(.3)}to{transform:scaleY(1.05)}}
+.vplay,.vdel{position:absolute;top:50%;transform:translateY(-50%);display:grid;place-items:center;border:1px solid var(--line2);background:var(--bg3);color:var(--text2);transition:border-color var(--dur) var(--ease),color var(--dur) var(--ease),background var(--dur) var(--ease)}
+.vplay{right:.55rem;width:2.15rem;height:2.15rem;border-radius:50%}
+.vplay svg{width:1rem;height:1rem}
+.vplay:hover{border-color:var(--accent);color:var(--accent)}
+.vplay.wait{animation:soft .6s ease-in-out infinite alternate}
+.vrow.playing .vplay{background:var(--accent);border-color:var(--accent);color:var(--bg)}
+.vrow:has(.vdel) .vplay{right:2.95rem}
+.vdel{right:.55rem;min-width:2rem;height:2rem;padding:0 .35rem;border-radius:var(--rs);font-size:.75rem;white-space:nowrap}
+.vdel svg{width:.85rem;height:.85rem}
+.vdel:hover{border-color:var(--bad);color:var(--bad)}
+.tts-form{display:flex;flex-direction:column;gap:.6rem}
+.tts-row{display:flex;flex-direction:column;gap:.35rem;min-width:0}
+.tts-row2{display:flex;align-items:center;gap:.5rem}
+.tts-row2 .inp{flex:1;min-width:0}
+.tts-row2 #ttsSeed{flex:0 1 9rem}
+.tts-2c{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.6rem;align-items:end}
+.tts-2c .seg button{min-height:2.5rem}
+.tts-chips{display:flex;flex-wrap:wrap;gap:.3rem}
+.tts-chips .chip{min-height:1.75rem;padding:.1rem .6rem;font-size:.75rem}
+.tts-mine{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem .5rem}
+.tts-mv{display:inline-flex;align-items:center}
+.tts-x{border:0;background:transparent;color:var(--text3);width:1.75rem;height:1.75rem;display:grid;place-items:center;border-radius:var(--rs);flex:none}
+.tts-x:hover{color:var(--bad);background:var(--bg3)}
+.tts-x svg{width:.9rem;height:.9rem}
+.tts-src{align-self:flex-start}
+.tts-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.35rem;min-height:7rem;border:1px dashed var(--line2);border-radius:var(--r);background:var(--bg2);color:var(--text2);text-align:center;padding:.9rem 1rem;cursor:pointer;transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease)}
+.tts-drop svg{width:1.5rem;height:1.5rem;color:var(--accent)}
+.tts-drop b{font-weight:600;font-size:.9375rem;color:var(--text)}
+.tts-drop .cap{font-size:.8125rem;color:var(--text3)}
+.tts-drop:hover,.tts-drop.over{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,var(--bg2))}
+.tts-drop.fromdraft{cursor:default;align-items:flex-start;text-align:left}
+.tts-drop canvas{width:100%;height:2.75rem}
+.tts-dropf{display:flex;gap:.75rem;align-items:baseline;flex-wrap:wrap;justify-content:center}
+.tts-dropf .num{font-size:.8125rem;color:var(--text3);font-family:var(--fn)}
+.tts-dropw{font-size:.8125rem;color:var(--c-neu)}
+.tts-den{padding:.1rem 0}
+.tts-den label{font-size:.875rem}
+.tts-ok{display:flex;gap:.6rem;align-items:flex-start;font-size:.8125rem;color:var(--text2);line-height:1.6;padding:.6rem .75rem;border-radius:var(--rs);background:color-mix(in srgb,var(--c-neu) 7%,transparent);border:1px solid color-mix(in srgb,var(--c-neu) 30%,transparent);cursor:pointer}
+.tts-ok input{margin-top:.25rem;accent-color:var(--accent);flex:none;width:1rem;height:1rem}
+.tts-tips summary{font-size:.8125rem;color:var(--text3);cursor:pointer}
+.tts-tips p{margin:.4rem 0 0}
+.tts-dict{display:flex;flex-direction:column;gap:.35rem;align-items:flex-start}
+.tts-drow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) 1.75rem;gap:.4rem;align-items:center;width:100%}
+.tts-drow .inp{min-height:2.25rem;padding:.3rem .6rem}
+/* 表达：语气、语速、音调、音量、语言 */
+.tts-expr{flex:none;display:flex;flex-direction:column;gap:.6rem;padding-top:.75rem;border-top:1px solid var(--line)}
+.tts-knobs{display:grid;grid-template-columns:auto minmax(0,1fr) 3rem;gap:.15rem .8rem;align-items:center}
+.tts-knobs label{font-size:.8125rem;color:var(--text3)}
+.tts-knobs input[type=range]{height:1.75rem}
+.tts-knobs output{font-family:var(--fn);font-size:.8125rem;color:var(--text3);text-align:right}
+.tts-knobs output.mod{color:var(--accent)}
+.tts-knobs select{min-height:2.1rem;padding:.25rem .5rem;margin:.25rem 0}
+.tts-lang{flex-direction:row;align-items:center;gap:.75rem}
+.tts-lang select{width:auto;min-width:7rem}
+/* 生成和输出 */
+.tts-out{gap:.9rem}
+.tts-gen{flex:none;display:flex;flex-direction:column;gap:.65rem}
+.tts-gen .prog{display:flex;flex-direction:column;gap:.45rem;margin:0}
+.tts-gorow{display:flex;align-items:center;gap:.75rem 1rem;flex-wrap:wrap}
+.tts-go{min-height:3rem;padding:.5rem 2rem;font-size:1rem;letter-spacing:.04em}
 #ttsWay button{padding:.4rem .75rem;min-height:2.25rem}
-.tts-gorow{align-items:center;gap:.75rem 1rem}
-.tts-wayhint{font-size:.8125rem;color:var(--text3)}
-/* 配音的云端引擎（v1.8.11）：标题旁选引擎，云端音色带「试听」，生成前显示预估花费 */
-.tts-eng button{padding:.35rem .9rem;min-height:2.25rem;font-size:.875rem}
-.tts .ph .tts-eng{flex:none}
-.tts .ph .sub{flex:1 1 16rem;min-width:0}
-.tts-cvl{overflow:auto;min-height:0}
-.tts-cvw{position:relative;display:flex}
-.tts-cvw .tts-sp{flex:1;padding-right:4.5rem;min-height:4.25rem}
-.tts-try{position:absolute;top:50%;right:.6rem;transform:translateY(-50%);min-height:2rem;padding:.2rem .7rem;font-size:.8125rem}
+.tts-wayhint{font-size:.8125rem;color:var(--text3);line-height:1.6}
+.tts-using{font-size:.875rem;color:var(--text3)}
+.tts-using b{color:var(--text);font-weight:600}
 .tts-est{border-color:var(--line2);background:var(--bg2)}
 .tts-est b{color:var(--text)}
-html[data-orient="portrait"] .tts-eng button{padding:.3rem .7rem}
-.tts-cvl.one{grid-template-columns:minmax(0,1fr)}
-.tts-cvl.one .tts-sp{min-height:3.75rem}
+.tts-res{flex:1;min-height:0;display:flex;flex-direction:column;gap:.6rem}
+/* 波形台：这一页最显眼的东西 */
+.tts-stage{position:relative;flex:none;height:9rem;border-radius:var(--r);border:1px solid var(--line2);overflow:hidden;cursor:pointer;touch-action:none;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 6%,transparent),transparent 45%),color-mix(in srgb,var(--bg) 78%,#000)}
+.tts-stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.tts-empty{position:absolute;inset:0;display:grid;place-items:center;padding:1rem 1.5rem;text-align:center;color:var(--text3);font-size:.8125rem;line-height:1.75;pointer-events:none}
+.tts-stage.busy::after{content:"";position:absolute;top:0;bottom:0;width:22%;left:-22%;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 22%,transparent),transparent);border-right:1px solid color-mix(in srgb,var(--accent) 70%,transparent);animation:ttsScan 1.6s cubic-bezier(.45,0,.55,1) infinite}
+@keyframes ttsScan{to{left:100%}}
+.tts-transport{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
+.tts-tsp{flex:1}
+.tts-play{width:2.75rem;height:2.75rem;border-radius:50%;border:1px solid color-mix(in srgb,var(--accent) 60%,transparent);background:color-mix(in srgb,var(--accent) 16%,var(--bg3));display:grid;place-items:center;color:var(--text);flex:none;transition:background var(--dur) var(--ease),transform .2s var(--spring),box-shadow var(--dur) var(--ease)}
+.tts-play svg{width:1.15rem;height:1.15rem}
+.tts-play:hover{background:color-mix(in srgb,var(--accent) 28%,var(--bg3))}
+.tts-play:active{transform:scale(.94)}
+.tts-play.on{box-shadow:0 0 1.25rem -.2rem var(--accent)}
+.tts-tc{font-family:var(--fn);font-size:1.125rem;color:var(--text);letter-spacing:.02em}
+.tts-tc i{font-style:normal;color:var(--text3);font-size:.875rem}
+.tts-saved{font-size:.8125rem}
+.tts-link{border:0;background:transparent;color:var(--accent);padding:0;font-size:inherit;text-decoration:underline;text-underline-offset:.2em}
+.tts-tl{flex:1;min-height:4rem;overflow:auto;display:flex;flex-direction:column;border-top:1px solid var(--line);margin:0 -.5rem;padding:.25rem 0;position:relative}
+.tts-seg{display:grid;grid-template-columns:4.5rem minmax(0,1fr);gap:.75rem;text-align:left;border:0;background:transparent;color:var(--text2);padding:.4rem .5rem;border-radius:var(--rs);font-size:.875rem;line-height:1.55;transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+.tts-seg:hover{background:var(--bg3);color:var(--text)}
+.tts-seg .num{color:var(--text3);font-size:.8125rem;font-family:var(--fn)}
+.tts-seg.on{background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--text)}
+.tts-seg.on .num{color:var(--accent)}
+.tts-seg.est .num{color:var(--c-neu)}
+html[data-theme="ember"] .tts-stage{border-radius:0}
+/* 竖屏：文案在上，下面音色 | 输出两栏 */
+html[data-orient="portrait"] .tts-top .sub{display:none}
+html[data-orient="portrait"] .tts-eng{width:auto;min-width:0;flex:1 1 auto;max-width:26rem}
+html[data-orient="portrait"] .tts-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:minmax(13rem,.6fr) minmax(0,1.4fr)}
+html[data-orient="portrait"] .tts-text{grid-column:1/-1}
+html[data-orient="portrait"] .tts-stage{height:8rem}

@@ -1,16 +1,24 @@
 """配音页点一遍（连测试后端，配音服务是假的 dev/fake_tts.py）：
 贴文案 → 选音色 → 生成（进度、完成）→ 试听有声音、时间轴一句一行 → 点时间轴跳到那一句 → 保存 →
 切到描述音色 → 存成我的音色（出现在上面）→ 点它把描述和种子填回来 → 删掉 → 输入的东西刷新后还在 →
-换百炼云端：4 个音色、试听、预估花费、生成、刷新后还是云端、没填 Key 的提示、设置 › 云端 填 Key → 换回本地 →
+换云端：4 个音色、插标签、试听、预估花费、语速、生成、波形（点哪听哪、空格键）、设计一个音色（试听、审核、拿来生成）、
+复刻（上传录音、要先确认）、读音词典、删音色、刷新后还是云端、没填 Key 的提示、设置 › 云端 填 Key → 换回本地 →
 设置 › 本地模型 点「安装配音」看进度到装好 → 设置 › 自动化 有「开机自启」开关。
 用法：python dev/ui/tts.py 截图文件夹（要先 dev/serve.sh start）"""
+import pathlib
 import sys
+import wave
 
+import httpx
+import numpy as np
 from playwright.sync_api import sync_playwright
 
 from common import launch
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "dev/.run/shots"
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+B = "http://127.0.0.1:8765"
+FAKE = "http://127.0.0.1:8097"
 errs, bad = [], []
 
 
@@ -97,23 +105,120 @@ with sync_playwright() as pw:
     check(p.locator("[data-voice]").count() == 0, "删掉我的音色")
     p.click('#ttsMode [data-mode="preset"]')
 
-    # 百炼云端（v1.8.11，测试后端连的是假的百炼 dev/fake_bailian.py，假 Key sk-test-0000）
+    # 百炼云端（v1.8.11；v1.8.12 加了设计、复刻、读音、语速这些。测试后端连的是假的百炼 dev/fake_bailian.py，假 Key sk-test-0000）
     p.click('#ttsEng [data-eng="cloud"]')
     p.wait_for_selector("[data-cv]")
-    check(p.locator("[data-cv]").count() == 4 and "百炼" in p.inner_text(".tts .ph .sub") and p.locator("#ttsMode").count() == 0,
-          "点「百炼云端」：列出 4 个中文音色，标题旁写明只把文案和语气发给百炼")
+    check(p.locator('#ttsVoice [data-cv$="_v3.1"]').count() == 4 and p.get_attribute("#ttsEng", "data-on") == "cloud" and "百炼" in p.inner_text(".tts .ph .sub")
+          and p.locator("#ttsMode").count() == 0 and p.locator("#ttsTabs button").count() == 4,
+          "点「云端」：开关滑过去，音色库列出 4 个现成的中文音色，有 音色库 / 设计 / 复刻 / 读音 四页")
     p.fill("#ttsText", "大家好，欢迎回来。今天聊三个工具！\n\n第一个是配音。")
     check("预估 ¥" in p.inner_text("#ttsCount") and "计费字符" in p.inner_text("#ttsEst"), "贴了文案：显示字数和预估花费：" + p.inner_text("#ttsEst").split("\n")[0])
+    p.evaluate("var t=document.getElementById('ttsText'); t.focus(); t.setSelectionRange(0,0)")
+    p.click('[data-tag="excited"]')
+    check(p.input_value("#ttsText").startswith("[excited]大家好"), "点「兴奋」：在光标处插 [excited]")
+    p.fill("#ttsText", "大家好，欢迎回来。今天聊三个工具！\n\n第一个是配音。")
     p.click('[data-cvtry="longanlingxin_v3.1"]')
     p.wait_for_function("TTS.tryAu && TTS.tryAu.readyState >= 1", timeout=20000)
     check(p.evaluate("TTS.tryAu.duration") > 2, f"点「试听」：念一句固定的短句（{p.evaluate('TTS.tryAu.duration'):.1f} 秒）")
     p.click('[data-cv="xunanchuan_v3.1"]')
-    check(p.get_attribute('[data-cv="xunanchuan_v3.1"]', "aria-pressed") == "true", "点音色：选中许南川")
+    check(p.get_attribute('[data-cv="xunanchuan_v3.1"]', "aria-pressed") == "true" and "许南川" in p.inner_text(".tts-using"), "点音色：选中许南川，生成按钮旁写着用谁念")
     p.fill("#ttsTone", "请用轻松的语气")
+    p.evaluate("var r=document.getElementById('ttsRate'); r.value=1.2; r.dispatchEvent(new Event('input',{bubbles:true}))")
+    check(p.inner_text("#ottsRate") == "×1.2", "拖语速：数字跟着变（×1.2）")
+    n0 = httpx.get(FAKE + "/_fake/log").json()["n"]
     p.click('[data-act="gen"]')
     p.wait_for_function("(document.querySelector('#ttsGen .tts-msg.ok') || {}).textContent && document.querySelector('#ttsGen .tts-msg.ok').textContent.indexOf('花了约') >= 0", timeout=30000)
     p.wait_for_function("document.querySelectorAll('#ttsTl .tts-seg').length === 3 && document.querySelector('#ttsRes .hc-h').textContent.indexOf('许南川') >= 0", timeout=8000)
     check(True, "生成好了：说了花多少，时间轴 3 句，试听那里写着许南川 · 百炼：" + p.inner_text("#ttsGen .tts-msg.ok"))
+    last = httpx.get(FAKE + "/_fake/log").json()["items"][-1]["body"]["input"]
+    check(httpx.get(FAKE + "/_fake/log").json()["n"] == n0 + 1 and last.get("rate") == 1.2 and last.get("instruction") == "请用轻松的语气", "发给百炼的带着语速 1.2 和语气")
+    p.wait_for_function("TTS.wave && TTS.wave.peaks && TTS.wave.peaks.length > 100", timeout=8000)
+    lit = p.evaluate("(function(){var c=document.getElementById('ttsWave'),x=c.getContext('2d'),d=x.getImageData(0,0,c.width,c.height).data,n=0;for(var i=3;i<d.length;i+=4)if(d[i]>0)n++;return n/(c.width*c.height)})()")
+    check(lit > 0.05, f"波形画出来了（画了 {lit:.0%} 的面积）")
+    box = p.locator("#ttsStage").bounding_box()
+    p.mouse.click(box["x"] + box["width"] * 0.5, box["y"] + box["height"] * 0.5)
+    p.wait_for_timeout(250)
+    dur = p.evaluate("TTS.st.draft.duration")
+    t = p.evaluate("document.getElementById('ttsAudio').currentTime")
+    check(abs(t - dur / 2) < 0.6, f"点波形中间：跳到那里播放（{t:.2f} / {dur:.2f} 秒）")
+    p.evaluate("document.activeElement && document.activeElement.blur()")
+    p.evaluate("document.getElementById('ttsAudio').pause()")
+    p.keyboard.press(" ")
+    p.wait_for_timeout(200)
+    playing = p.evaluate("!document.getElementById('ttsAudio').paused")
+    p.keyboard.press(" ")
+    p.wait_for_timeout(200)
+    check(playing and p.evaluate("document.getElementById('ttsAudio').paused"), "空格键：播放、再按暂停")
+    p.dblclick("#ttsRate")
+    check(p.inner_text("#ottsRate") == "×1.0", "双击语速：回到默认 ×1.0")
+
+    # 设计一个音色
+    p.click('[data-tab="design"]')
+    p.wait_for_selector("#bdPrompt")
+    p.fill("#bdPrompt", "三十岁左右的男声，低沉有磁性")
+    p.click('[data-hint="语速平稳"]')
+    check(p.input_value("#bdPrompt") == "三十岁左右的男声，低沉有磁性，语速平稳", "点灵感词：接在描述后面")
+    p.fill("#bdName", "界面测试设计")
+    p.click('[data-act="design"]')
+    p.wait_for_function("(TTS.st.cloud.mine||[]).some(function(v){return v.name==='界面测试设计'})", timeout=15000)
+    p.wait_for_function("TTS.tryAu && TTS.tryId.indexOf('-vd-') > 0 && TTS.tryAu.readyState >= 1", timeout=15000)
+    check("界面测试设计" in p.inner_text("#ttsVoice"), "设计好了：出现在「最近设计的」里，马上放百炼给的试听")
+    p.screenshot(path=f"{OUT}/tts-design.png")
+    p.wait_for_function("(TTS.st.cloud.mine||[]).some(function(v){return v.name==='界面测试设计' && v.status==='OK'})", timeout=20000)
+    check(True, "百炼审核通过：「审核中」变成能用")
+    vid = p.evaluate("TTS.st.cloud.mine.filter(function(v){return v.name==='界面测试设计'})[0].id")
+    p.click('[data-tab="lib"]')
+    p.click(f'[data-cv="{vid}"]')
+    p.click('[data-act="gen"]')
+    p.wait_for_function("document.querySelector('#ttsRes .hc-h') && document.querySelector('#ttsRes .hc-h').textContent.indexOf('界面测试设计') >= 0", timeout=30000)
+    check(True, "用自己设计的音色生成：试听那里写着它的名字")
+
+    # 复刻：上传录音
+    wav = ROOT / "dev" / ".run" / "复刻测试录音.wav"
+    with wave.open(str(wav), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(24000)
+        f.writeframes((np.sin(np.arange(24000 * 12) * 0.05) * 6000 * (0.5 + 0.5 * np.sin(np.arange(24000 * 12) / 3000))).astype("<i2").tobytes())
+    p.click('[data-tab="clone"]')
+    p.wait_for_selector("#bcFile", state="attached")
+    p.set_input_files("#bcFile", str(wav))
+    p.wait_for_function("TTS.clone && TTS.clone.dur", timeout=8000)
+    p.wait_for_selector("#bcWave")
+    check("12.0 秒" in p.inner_text("#bcDrop") and p.input_value("#bcName") == "复刻测试录音", "选了录音：显示时长、画出波形、名字先用文件名")
+    n_before = p.evaluate("TTS.st.cloud.mine.length")
+    p.click('[data-act="clone"]')
+    p.wait_for_timeout(400)
+    check(p.evaluate("TTS.st.cloud.mine.length") == n_before, "没勾「是我自己的或 AI 生成的声音」：不复刻")
+    p.check("#bcOk")
+    p.click('[data-act="clone"]')
+    p.wait_for_function("(TTS.st.cloud.mine||[]).some(function(v){return v.name==='复刻测试录音' && v.kind==='clone'})", timeout=15000)
+    check(True, "复刻好了：出现在「最近复刻的」里")
+    p.click('[data-csrc="draft"]')
+    check("最近一次生成的配音" in p.inner_text("#ttsVoice"), "也能拿最近生成的配音来复刻（写着是哪一段）")
+    p.screenshot(path=f"{OUT}/tts-clone.png")
+
+    # 读音词典
+    p.click('[data-tab="dict"]')
+    p.click('[data-dictadd="p"]')
+    p.locator('[data-dk="p"][data-df="w"]').last.fill("重庆")
+    p.locator('[data-dk="p"][data-df="t"]').last.fill("chong2 qing4")
+    p.click('[data-act="dictsave"]')
+    p.wait_for_timeout(600)
+    check(httpx.get(B + "/api/tts").json()["cloud"]["hotfix"]["pronunciation"].get("重庆") == "chong2 qing4", "读音词典：加一条、存好了")
+    httpx.put(B + "/api/tts/cloud/hotfix", headers={"X-Agent": "1"}, json={})
+
+    # 删掉自己造的（点两次）
+    p.click('[data-tab="lib"]')
+    p.click(f'[data-bdel="{vid}"]')
+    check("再点一次删除" in p.inner_text(f'[data-bdel="{vid}"]'), "删音色：第一次点变成「再点一次删除」")
+    p.click(f'[data-bdel="{vid}"]')
+    p.wait_for_function(f"!(TTS.st.cloud.mine||[]).some(function(v){{return v.id==='{vid}'}})", timeout=8000)
+    check(True, "再点一次：删掉了（百炼那边也删）")
+    for v in httpx.get(B + "/api/tts").json()["cloud"]["mine"]:
+        httpx.delete(B + "/api/tts/cloud/voices/" + v["id"], headers={"X-Agent": "1"})
+    p.evaluate("ttsLoad().then(ttsRefresh)")
+    p.click('[data-tab="lib"]')
     p.screenshot(path=f"{OUT}/tts-cloud.png")
     p.wait_for_timeout(600)                 # 引擎 0.4 秒后才存进设置
     p.reload()

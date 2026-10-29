@@ -7,6 +7,8 @@ Key 只认 sk-test-0000。几个开关（dev/.run 里放文件）：
   fake_bl_arrears.flag  欠费（400 Arrearage）
   fake_bl_slow.flag     每句慢一点（测停下）
 文案超过 3000 字 → 400 InvalidParameter（文本太长）。
+POST /api/v1/services/audio/tts/customization（v1.8.12）：声音设计 / 复刻 / 查状态 / 列表 / 删除，和百炼一样（model = voice-enrollment）。
+新造的音色第一次查是 DEPLOYING，之后 OK；fake_bl_reject.flag 在就 UNDEPLOYED（审核没过）。合成时 rate 会让声音变快变慢。
 收到的每个请求（不含 Key，只记有没有带对）记下来，GET /_fake/log 看：测试用它检查只发了文案、没重试。"""
 import base64
 import json
@@ -25,6 +27,7 @@ KEY = "sk-test-0000"
 TAG = re.compile(r"\[[A-Za-z][A-Za-z ]{0,30}\]")
 app = FastAPI()
 LOG = []
+MADE = {}                # 造出来的音色：voice_id → {status, polls, target_model, kind}
 
 
 def flag(n):
@@ -69,7 +72,7 @@ async def synth(req: Request):
     body = await req.json()
     auth = req.headers.get("authorization", "")
     LOG.append({"ts": time.time(), "body": body, "auth_ok": auth == f"Bearer {KEY}", "sse": req.headers.get("x-dashscope-sse"),
-                "headers": sorted(h for h in req.headers.keys())})
+                "headers": sorted(h for h in req.headers.keys()), "path": "synth"})
     if auth != f"Bearer {KEY}":
         return JSONResponse({"request_id": "fake", "code": "InvalidApiKey", "message": "Invalid API-key provided."}, 401)
     if flag("arrears"):
@@ -78,8 +81,10 @@ async def synth(req: Request):
     text = inp.get("text") or ""
     if len(text) > 3000:
         return JSONResponse({"request_id": "fake", "code": "InvalidParameter", "message": "text length exceeds the limit"}, 400)
-    if not str(inp.get("voice", "")).endswith("_v3.1"):
+    vid = str(inp.get("voice", ""))
+    if not (vid.endswith("_v3.1") or (vid in MADE and MADE[vid]["status"] == "OK" and MADE[vid]["target_model"] == body.get("model"))):
         return JSONResponse({"request_id": "fake", "code": "InvalidParameter", "message": "voice not supported"}, 400)
+    rate = float(inp.get("rate") or 1.0)
     words_on = bool(inp.get("word_timestamp_enabled"))
     if words_on and flag("wordserr"):
         return JSONResponse({"request_id": "fake", "code": "InvalidParameter", "message": "word_timestamp_enabled is not supported for this voice"}, 400)
@@ -105,8 +110,8 @@ async def synth(req: Request):
                     continue
                 else:
                     b0 = t_ms + len(audio) / 2 / SR * 1000
-                    audio += tone(0.2)
-                    words.append({"text": ch, "begin_index": k, "end_index": k + 1, "begin_time": round(b0), "end_time": round(b0 + 200)})
+                    audio += tone(0.2 / rate)
+                    words.append({"text": ch, "begin_index": k, "end_index": k + 1, "begin_time": round(b0), "end_time": round(b0 + 200 / rate)})
             if si < len(sents) - 1:
                 audio += b"\0\0" * int(SR * 0.3)
             for a in range(0, len(audio), 9600):
@@ -125,3 +130,84 @@ async def synth(req: Request):
         yield ev(n, {"finish_reason": "stop", "audio": {"data": "", "url": "", "id": "a", "expires_at": 0}}, {"characters": bill})
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+def wav_bytes(pcm):
+    import io
+    import wave
+    b = io.BytesIO()
+    with wave.open(b, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SR)
+        w.writeframes(pcm)
+    return b.getvalue()
+
+
+def err(code, msg, st=400):
+    return JSONResponse({"request_id": "fake", "code": code, "message": msg}, st)
+
+
+@app.post("/api/v1/services/audio/tts/customization")
+async def custom(req: Request):
+    body = await req.json()
+    inp = dict(body.get("input") or {})
+    if isinstance(inp.get("audio"), str) and len(inp["audio"]) > 80:            # 录音很长：日志里只记开头和长度
+        inp["audio"] = inp["audio"][:40] + f"…（{len(inp['audio'])} 字）"
+    LOG.append({"ts": time.time(), "body": dict(body, input=inp), "auth_ok": req.headers.get("authorization", "") == f"Bearer {KEY}", "path": "custom"})
+    if req.headers.get("authorization", "") != f"Bearer {KEY}":
+        return err("InvalidApiKey", "Invalid API-key provided.", 401)
+    if body.get("model") != "voice-enrollment":
+        return err("InvalidParameter", "model must be voice-enrollment")
+    inp = body.get("input") or {}
+    act = inp.get("action")
+    if act == "create_voice":
+        tm, prefix = inp.get("target_model") or "", inp.get("prefix") or ""
+        if not re.fullmatch(r"[A-Za-z0-9]{1,10}", prefix):
+            return err("InvalidParameter", "prefix must be alphanumeric, at most 10 chars")
+        uid = "%06x" % (int(time.time() * 1e6) % 0xFFFFFF)
+        if "voice_prompt" in inp:
+            pt = inp.get("preview_text") or ""
+            if not inp["voice_prompt"] or len(inp["voice_prompt"]) > 500 or not 15 <= len(pt) <= 200:
+                return err("InvalidParameter", "voice_prompt or preview_text length invalid")
+            vid = f"{tm}-vd-{prefix}-{uid}"
+            MADE[vid] = {"status": "DEPLOYING", "polls": 0, "target_model": tm, "kind": "design", "voice_prompt": inp["voice_prompt"]}
+            pa = base64.b64encode(wav_bytes(tone(min(6.0, 0.2 * len(pt)), 260))).decode()
+            return {"request_id": "fake", "output": {"voice_id": vid, "target_model": tm,
+                                                     "preview_audio": {"data": pa, "sample_rate": 24000, "response_format": "wav"}}, "usage": {"count": 1}}
+        a = inp.get("audio") or inp.get("url") or ""
+        if not a.startswith("data:audio/"):
+            return err("InvalidParameter", "audio must be a public url or a base64 data uri")
+        raw = base64.b64decode(a.split(",", 1)[1])
+        if len(raw) < 1000:
+            return err("InvalidParameter", "audio too short")
+        vid = f"{tm}-{prefix}-{uid}"
+        MADE[vid] = {"status": "DEPLOYING", "polls": 0, "target_model": tm, "kind": "clone", "bytes": len(raw)}
+        return {"request_id": "fake", "output": {"voice_id": vid}, "usage": {"count": 1}}
+    if act == "query_voice":
+        v = MADE.get(inp.get("voice_id"))
+        if not v:
+            return err("InvalidParameter", "voice not found", 404)
+        v["polls"] += 1
+        if v["status"] == "DEPLOYING" and v["polls"] >= 2:
+            v["status"] = "UNDEPLOYED" if flag("reject") else "OK"
+        return {"request_id": "fake", "output": {"status": v["status"], "target_model": v["target_model"], "gmt_create": "2026-10-29 10:00:00",
+                                                 "gmt_modified": "2026-10-29 10:00:00"}, "usage": {"count": 1}}
+    if act == "list_voice":
+        pi, ps = int(inp.get("page_index") or 0), int(inp.get("page_size") or 10)
+        items = [{"voice_id": k, "status": v["status"], "gmt_create": "2026-10-29 10:00:00", "gmt_modified": "2026-10-29 10:00:00"} for k, v in MADE.items()]
+        return {"request_id": "fake", "output": {"voice_list": items[pi * ps:(pi + 1) * ps]}, "usage": {"count": 1}}
+    if act == "delete_voice":
+        if inp.get("voice_id") not in MADE:
+            return err("InvalidParameter", "voice not found", 404)
+        MADE.pop(inp["voice_id"])
+        return {"request_id": "fake", "output": {}, "usage": {"count": 1}}
+    return err("InvalidParameter", "unknown action")
+
+
+@app.post("/_fake/made")
+async def fake_made(req: Request):
+    """测试用：在「百炼上」直接放一个音色（模拟在百炼控制台造的），看同步能不能拿回来。"""
+    b = await req.json()
+    MADE[b["voice_id"]] = {"status": b.get("status") or "OK", "polls": 9, "target_model": b.get("target_model") or "qwen-audio-3.1-tts-plus", "kind": "design"}
+    return {"ok": True}

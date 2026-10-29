@@ -3,8 +3,11 @@
 2. 连测试后端（dev/serve.sh start）：生成 → 发出去的只有文案和音色这些 → 时间轴按字级时间戳 → WAV / JSON / SRT / 文案 4 个文件 →
    记用量、预估花费 → 长文案按段落分块（同一个音色、语气、种子）→ 没给时间戳按停顿对齐 → 音色不支持时间戳就去掉再试一次 →
    Key 不对、欠费、断网、文本太长、没填 Key：中文说明、只试一次 → 停下 → 试听（念过的不花钱）
-3. Key 不落明文、不进导出、不进日志、不进时间轴；在玩游戏让路时不停云端的活
+3. 自己造音色（v1.8.12）：声音设计（带试听、审核中 → 能用）、复刻（上传的录音 / 最近生成的配音，要先确认是自己的或 AI 的声音）、
+   用造的音色生成、同步、删除；语速 / 音调 / 音量 / 语言；读音词典（只发文案里出现的词）
+4. Key 不落明文、不进导出、不进日志、不进时间轴；在玩游戏让路时不停云端的活
 用法：python dev/test_tts_cloud.py（要先 dev/serve.sh start）"""
+import base64
 import io
 import pathlib
 import shutil
@@ -13,6 +16,7 @@ import time
 import wave
 
 import httpx
+import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -138,7 +142,7 @@ check(r.status_code == 200 and job.get("engine") == "cloud" and job.get("est", {
       f"开始生成（百炼云端），带着预估：{job.get('est')}")
 j = wait()
 d = j["draft"]
-check(j["job"]["st"] == "done" and "花了约 ¥" in j["job"]["msg"] and "计费" in j["job"]["msg"], "生成好了，说清楚多长、用了多久、花了多少：" + j["job"]["msg"])
+check(j["job"]["st"] == "done" and "花了约" in j["job"]["msg"] and "计费" in j["job"]["msg"], "生成好了，说清楚多长、用了多久、花了多少：" + j["job"]["msg"])
 check(not j["proc"], "云端生成不启动本地配音服务（不占显存）")
 check(fake_n() == n0 + 1, "只调了一次百炼")
 req = fake_last()[0]
@@ -270,7 +274,118 @@ check(c.get("/api/tts").json()["cloud"]["month"]["n"] == m1 + 1 and fake_last()[
       "试听只花第一次的钱（记一笔），发的是那句固定的短句")
 check(c.post("/api/tts/cloud/try", json={"voice": "nobody"}).status_code == 400, "没有的音色：不试听")
 
-# ---------- 3. Key 不外泄 ----------
+# ---------- 3. 自己造音色、表达、读音词典（v1.8.12） ----------
+def until(fn, t=15):
+    t0 = time.time()
+    while time.time() - t0 < t:
+        v = fn()
+        if v:
+            return v
+        time.sleep(0.4)
+    return fn()
+
+
+def mine():
+    return c.get("/api/tts").json()["cloud"]["mine"]
+
+
+n0 = fake_n()
+r = c.post("/api/tts/cloud/design", json={"name": "科技解说", "prompt": "三十岁左右的男声，低沉有磁性，吐字清楚，语速平稳，适合科技解说", "lang": "zh"})
+v = r.json().get("voice") or {}
+req = fake_last()[0]
+check(r.status_code == 200 and v.get("status") == "DEPLOYING" and v["kind"] == "design" and v["id"].startswith("qwen-audio-3.1-tts-plus-vd-"),
+      "声音设计：写一段描述，百炼造了一个音色（先是审核中）")
+inp = req["body"]["input"]
+check(req["path"] == "custom" and req["body"]["model"] == "voice-enrollment" and inp["action"] == "create_voice" and inp["target_model"] == "qwen-audio-3.1-tts-plus"
+      and inp["preview_text"] == tts_cloud.DESIGN_TEXT and len(inp["prefix"]) <= 10 and inp["prefix"].isalnum() and req["body"]["parameters"]["response_format"] == "wav",
+      "发的是：音色描述、试听句、模型（和合成用的一样）、前缀（字母数字 10 个以内）")
+r1 = c.post("/api/tts/cloud/try", json={"voice": v["id"]})
+check(r1.status_code == 200 and r1.headers["x-cached"] == "1" and fake_n() == n0 + 1, "刚设计好、还在审核：先听百炼给的那段试听（不花钱，不再调接口）")
+r = c.post("/api/tts/gen", json={"engine": "cloud", "voice": v["id"], "text": TEXT})
+check(r.status_code == 400 and "审核" in r.json()["detail"], "审核通过之前不能用来生成")
+ok = until(lambda: [x for x in mine() if x["id"] == v["id"] and x["status"] == "OK"])
+check(bool(ok), "百炼审核通过：状态自己变成「能用」（后台每 2 秒查一次）")
+check(c.post("/api/tts/cloud/design", json={"prompt": ""}).status_code == 400 and c.post("/api/tts/cloud/design", json={"prompt": "男声", "text": "太短"}).status_code == 400,
+      "没写描述、试听句不到 15 字：不发")
+n0 = fake_n()
+r = c.post("/api/tts/gen", json={"engine": "cloud", "voice": v["id"], "text": TEXT, "rate": 1.25, "pitch": 1, "volume": 70, "lang": "zh"})
+j = wait()
+inp = fake_last()[0]["body"]["input"]
+check(r.status_code == 200 and j["job"]["st"] == "done" and inp["voice"] == v["id"] and inp["rate"] == 1.25 and inp["volume"] == 70 and inp["language_hints"] == ["zh"]
+      and "pitch" not in inp, "用造的音色生成；语速、音量、语言带上了，跟默认一样的（音调 1）不发")
+d = j["draft"]
+check(d["voice"]["vkind"] == "design" and d["voice"]["name"] == "科技解说" and d["voice"]["expr"] == {"rate": 1.25, "volume": 70, "language_hints": ["zh"]}
+      and abs(d["segments"][0]["end"] - d["segments"][0]["start"] - 1.54 / 1.25) < 0.05, "时间轴里记着音色和语速；语速快了，时间轴跟着变短")
+
+r = c.put("/api/tts/cloud/hotfix", json={"pronunciation": {"重庆": "chong2 qing4", "行长": "hang2 zhang3"}, "replace": {"LHY": "L H Y"}})
+check(r.status_code == 200 and r.json()["hotfix"]["pronunciation"]["重庆"] == "chong2 qing4", "读音词典存好了")
+check(c.put("/api/tts/cloud/hotfix", json={"pronunciation": {"重庆": "chongqing"}}).status_code == 400, "拼音没写声调：不存，说清楚怎么写")
+gen("我是 LHY，今天去重庆。")
+j = wait()
+hf = fake_last()[0]["body"]["input"].get("hot_fix") or {}
+check(j["job"]["st"] == "done" and hf == {"pronunciation": [{"重庆": "chong2 qing4"}], "replace": [{"LHY": "L H Y"}]},
+      f"生成时只把文案里出现的词发过去（「行长」没出现就不发）：{hf}")
+c.put("/api/tts/cloud/hotfix", json={})
+
+# 复刻：上传的录音
+sample = io.BytesIO()
+with wave.open(sample, "wb") as f:
+    f.setnchannels(1)
+    f.setsampwidth(2)
+    f.setframerate(24000)
+    f.writeframes((np.sin(np.arange(24000 * 12) * 0.05) * 6000).astype("<i2").tobytes())
+b64 = base64.b64encode(sample.getvalue()).decode()
+r = c.post("/api/tts/cloud/clone", json={"source": "upload", "data": "data:audio/wav;base64," + b64, "file": "我的录音.wav", "name": "复刻测试"})
+check(r.status_code == 400 and "自己的" in r.json()["detail"], "没确认是自己的或 AI 生成的声音：不复刻")
+n0 = fake_n()
+r = c.post("/api/tts/cloud/clone", json={"source": "upload", "data": "data:audio/wav;base64," + b64, "file": "我的录音.wav", "name": "复刻测试", "consent": True, "denoise": True})
+cv = r.json().get("voice") or {}
+inp = fake_last()[0]["body"]["input"]
+check(r.status_code == 200 and cv.get("kind") == "clone" and cv.get("dur") == 12.0 and fake_n() == n0 + 1 and inp["audio"].startswith("data:audio/wav;base64,")
+      and inp["enable_preprocess"] is True and inp["target_model"] == "qwen-audio-3.1-tts-plus", "复刻：录音按 Base64 发过去（不用传到网上），带上降噪；造好了（审核中）")
+short = io.BytesIO()
+with wave.open(short, "wb") as f:
+    f.setnchannels(1)
+    f.setsampwidth(2)
+    f.setframerate(24000)
+    f.writeframes(b"\0\0" * 24000)
+r = c.post("/api/tts/cloud/clone", json={"data": base64.b64encode(short.getvalue()).decode(), "consent": True})
+check(r.status_code == 400 and "太短" in r.json()["detail"], "录音太短（1 秒）：不发，说清楚")
+r = c.post("/api/tts/cloud/clone", json={"data": base64.b64encode(b"not audio at all" * 100).decode(), "consent": True})
+check(r.status_code == 400 and "WAV" in r.json()["detail"], "不是录音：不发")
+gen(("这是一句十个字的话。" * 3 + "\n\n") * 4)        # 120 字，大约 26 秒：拿它复刻要截到 20 秒以内
+wait()
+n0 = fake_n()
+r = c.post("/api/tts/cloud/clone", json={"source": "draft", "name": "AI 造的声音", "consent": True})
+cv2 = r.json().get("voice") or {}
+a = fake_last()[0]["body"]["input"]["audio"]
+check(r.status_code == 200 and "最近生成的配音" in cv2.get("src", "") and 12 <= (cv2.get("dur") or 0) <= 20.01, f"复刻最近生成的配音：截到 20 秒以内、在停顿处断开（{cv2.get('dur')} 秒）")
+until(lambda: all(x["status"] == "OK" for x in mine() if x["id"] in (cv["id"], cv2.get("id"))))
+check(sum(1 for x in mine() if x["status"] == "OK" and x["kind"] == "clone") >= 2, "复刻的音色审核通过，能用了")
+
+# 同步、删除
+httpx.post(FAKE + "/_fake/made", json={"voice_id": "qwen-audio-3.1-tts-plus-vd-web-abc123", "status": "OK"})
+r = c.post("/api/tts/cloud/sync").json()
+check(r["added"] == 1 and any(x["id"] == "qwen-audio-3.1-tts-plus-vd-web-abc123" for x in mine()), "同步：在百炼控制台造的音色也拿回来了：" + r["msg"])
+r = c.patch("/api/tts/cloud/voices/qwen-audio-3.1-tts-plus-vd-web-abc123", json={"name": "控制台造的"})
+check(any(x["name"] == "控制台造的" for x in r.json()["mine"]), "改名字（只改本机）")
+r = c.delete("/api/tts/cloud/voices/qwen-audio-3.1-tts-plus-vd-web-abc123")
+del_req = fake_last()[0]["body"]["input"]
+check(r.status_code == 200 and not any(x["id"] == "qwen-audio-3.1-tts-plus-vd-web-abc123" for x in r.json()["mine"]) and del_req["action"] == "delete_voice",
+      "删掉：百炼那边也删了（省配额）")
+flag("reject")
+r = c.post("/api/tts/cloud/design", json={"name": "会被拒的", "prompt": "一个声音描述，测试审核不通过"})
+bad_id = r.json()["voice"]["id"]
+check(bool(until(lambda: [x for x in mine() if x["id"] == bad_id and x["status"] == "UNDEPLOYED"])), "审核没通过：标出来，不能用")
+flag("reject", False)
+st = c.get("/api/tts").json()["cloud"]
+check(st["count"] >= 3 and st["quota"] == 1000 and any(v["id"] == v_ for v_ in [x["id"] for x in st["mine"]]) and len(st["voices"]) == 4,
+      f"配音页拿得到：现成的 4 个 + 自己造的 {len(st['mine'])} 个，用了多少配额")
+for x in mine():                                          # 测试造的都删掉（百炼那边、本机都删）
+    c.delete("/api/tts/cloud/voices/" + x["id"])
+check(mine() == [], "测试造的音色清干净了")
+
+# ---------- 4. Key 不外泄 ----------
 ex = c.get("/api/export").text
 hint = c.get("/api/settings").json()["secrets"].get("blKey")
 check(KEY not in ex and "blKey" not in ex, "导出设置里没有百炼 Key")

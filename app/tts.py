@@ -12,6 +12,7 @@
   输出完全一样（WAV、时间轴 JSON、SRT、文案），时间轴用百炼返回的字级时间戳，没有就按停顿对齐。
 """
 import asyncio
+import base64
 import io
 import json
 import os
@@ -162,6 +163,10 @@ def write_wav(path, sr, pcm):
 def safe_name(s, n=24):
     s = re.sub(r'[\\/:*?"<>|\r\n\t]+', "", str(s or "")).strip(" .")
     return s[:n] or "配音"
+
+
+def yuan(x):
+    return "不到 1 分钱" if 0 < x < 0.005 else f"¥{x:.2f}"
 
 
 def mmss(sec):
@@ -441,10 +446,13 @@ class TTS:
         if mode == "cloud":
             cv = tts_cloud.find_voice(req.get("voice"))
             if not cv:
-                raise HTTPException(400, "选一个云端音色")
+                raise HTTPException(400, "选一个云端音色（自己造的要等百炼审核通过才能用）")
             seed = seed if req.get("seed") not in (None, "") else random.randint(1, 65535)
+            opts = {k: req.get(k) for k in ("rate", "pitch", "volume", "lang") if req.get(k) not in (None, "")}
+            expr = {k: v for k, v in tts_cloud.expr_input(opts, "").items() if k != "hot_fix"}       # 跟默认一样的不记
             return {"mode": "cloud", "kind": "cloud", "voice": cv["id"], "name": cv["name"], "tone": tone[:100], "instruct": tone[:100],
-                    "lang": "Chinese", "seed": max(1, min(seed, 65535)), "label": cv["name"], "model": tts_cloud.model()}
+                    "lang": "Chinese", "seed": max(1, min(seed, 65535)), "label": cv["name"], "model": tts_cloud.model(),
+                    "vkind": cv.get("kind", "system"), "opts": opts, "expr": expr}
         if mode == "preset":
             spk = next((x["id"] for x in SPEAKERS if x["id"].lower() == str(req.get("speaker") or "").lower()), None)
             if not spk:
@@ -494,7 +502,7 @@ class TTS:
                     "engine": "cloud" if cloud else "local", "est": est, "cny": 0.0, "bill": 0, "align": ""}
         self._task = asyncio.get_event_loop().create_task(self._run(self.job, text, segs))
         if cloud:
-            feed.add(f"开始配音（百炼云端 {v['model']}）：{len(segs)} 句、{chars} 字，音色 {v['label']}，预估 ¥{est['cny']:.2f}", "head", job="配音")
+            feed.add(f"开始配音（百炼云端 {v['model']}）：{len(segs)} 句、{chars} 字，音色 {v['label']}，预估 {yuan(est['cny'])}", "head", job="配音")
         else:
             feed.add(f"开始配音：{len(segs)} 句、{chars} 字，音色 {v['label']}，" + ("整段一次生成" if whole else "一句一句生成") + ("（试同一个人）" if same else ""),
                      "head", job="配音")
@@ -607,7 +615,8 @@ class TTS:
                     job["eta"] = round(el / job["done_chars"] * (job["chars"] - job["done_chars"]))
 
             try:
-                r, asked = await tts_cloud.synth_once_more(text, v["voice"], v["instruct"], v["seed"], stop=lambda: bool(job["stop"]), progress=prog)
+                r, asked = await tts_cloud.synth_once_more(text, v["voice"], v["instruct"], v["seed"], stop=lambda: bool(job["stop"]), progress=prog,
+                                                           opts=v.get("opts"))
             except tts_cloud.Cancelled:
                 raise Stopped(job["stop"] or "停了") from None
             except tts_cloud.CloudError as e:
@@ -665,8 +674,8 @@ class TTS:
             meta = self._write_draft(job, text, sr, pcm, tl, gen)
             if job["engine"] == "cloud":
                 job.update(st="done", i=len(segs), cur="", eta=0,
-                           msg=f"好了：{mmss(meta['duration'])}音频，用了 {mmss(gen)}，花了约 ¥{job['cny']:.2f}（计费 {job['bill']} 字符）")
-                feed.add(f"配音好了（百炼云端）：{len(segs)} 句，{mmss(meta['duration'])}音频，用了 {mmss(gen)}，约 ¥{job['cny']:.2f}", "ok", job="配音")
+                           msg=f"好了：{mmss(meta['duration'])}音频，用了 {mmss(gen)}，花了约 {yuan(job['cny'])}（计费 {job['bill']} 字符）")
+                feed.add(f"配音好了（百炼云端）：{len(segs)} 句，{mmss(meta['duration'])}音频，用了 {mmss(gen)}，约 {yuan(job['cny'])}", "ok", job="配音")
                 return
             speed = {"audio_s": meta["duration"], "gen_s": round(gen, 1), "per_min": round(gen / max(meta["duration"], 0.1) * 60),
                      "attn": (self._h or {}).get("attn", ""), "kind": v["kind"], "whole": job["whole"], "ts": time.time()}
@@ -676,7 +685,7 @@ class TTS:
             feed.add(f"配音好了：{len(segs)} 句，{mmss(meta['duration'])}音频，生成用了 {mmss(gen)}" + ("（整段一次生成）" if job["whole"] else "（一句一句）"),
                      "ok", job="配音")
         except Stopped as e:
-            spent = f"；已经念完的部分百炼照样计费，约 ¥{job['cny']:.2f}" if job.get("cny") else ""
+            spent = f"；已经念完的部分百炼照样计费，约 {yuan(job['cny'])}" if job.get("cny") else ""
             job.update(st="stop", msg=f"停了：{e}（这次没生成完，没保存{spent}）")
             feed.add(f"配音停了：{e}", "warn", job="配音")
         except Exception as e:
@@ -687,7 +696,7 @@ class TTS:
         v = job["voice"]
         DRAFT.mkdir(parents=True, exist_ok=True)
         now = datetime.now()
-        voice = {k: v[k] for k in ("mode", "speaker", "voice", "desc", "name", "tone", "seed") if v.get(k) not in (None, "")}
+        voice = {k: v[k] for k in ("mode", "speaker", "voice", "vkind", "desc", "name", "tone", "seed", "expr") if v.get(k) not in (None, "", {})}
         cloud = job.get("engine") == "cloud"
         meta = {"app": "Agent 配音", "created": now.strftime("%Y-%m-%d %H:%M:%S"),
                 "name": f"{now:%Y-%m-%d_%H%M}_{safe_name(v['label'])}", "engine": "cloud" if cloud else "local",
@@ -865,6 +874,101 @@ async def tts_cloud_try(body: dict = Body(...)):
     except tts_cloud.CloudError as e:
         raise HTTPException(e.status if e.status in (400, 401, 403, 404, 429) else 502, str(e)) from None
     return Response(content=b, media_type="audio/wav", headers={"X-Cached": "1" if cached else "0", "Cache-Control": "no-store"})
+
+
+def _cloud_err(e):
+    return HTTPException(e.status if e.status in (400, 401, 403, 404, 429) else 502, str(e))
+
+
+def draft_sample(max_s=20.0, min_s=5.0):
+    """拿最近一次生成的配音当复刻的录音：超过 20 秒就在 12~20 秒之间的停顿处截断（不切在字中间）。返回 (WAV 字节, 说明)。"""
+    m = T.draft()
+    if not m:
+        raise HTTPException(404, "还没有生成过配音：先生成一段（比如用本地的描述音色造一个声音），再拿它来复刻")
+    sr, pcm = read_wav((DRAFT / "draft.wav").read_bytes())
+    dur = len(pcm) / 2 / sr
+    if dur < min_s:
+        raise HTTPException(400, f"最近一次的配音太短（{dur:.1f} 秒）：至少 5 秒，推荐 10~20 秒")
+    cut = dur
+    if dur > max_s:
+        ps = [p for p in find_pauses(pcm, sr) if 12.0 <= (p[0] + p[1]) / 2 <= max_s]
+        cut = ((ps[-1][0] + ps[-1][1]) / 2) if ps else max_s
+    b = io.BytesIO()
+    with wave.open(b, "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(sr)
+        f.writeframes(bytes(pcm[: int(cut * sr) * 2]))
+    who = (m.get("voice") or {}).get("name") or (m.get("voice") or {}).get("speaker") or "配音"
+    return b.getvalue(), f"最近生成的配音（{who}，{m.get('created', '')[5:16]}，取前 {cut:.0f} 秒）"
+
+
+@api.post("/api/tts/cloud/design")
+async def tts_cloud_design(body: dict = Body(...)):
+    """声音设计：一段描述 → 百炼造一个新音色（不要钱），返回音色（审核中）。试听用创建时给的那段，不花钱。"""
+    try:
+        v = await tts_cloud.design(body.get("name"), body.get("prompt"), body.get("text"), body.get("lang") or "zh", body.get("g") or "")
+    except tts_cloud.CloudError as e:
+        raise _cloud_err(e) from None
+    feed.add(f"声音设计：造了一个音色「{v['name']}」，百炼审核中（不要钱）", "ok", job="配音")
+    return {"voice": v, "msg": f"造好了「{v['name']}」：百炼审核一般几秒到一分钟，好了就能用"}
+
+
+@api.post("/api/tts/cloud/clone")
+async def tts_cloud_clone(body: dict = Body(...)):
+    """声音复刻：上传的录音（Base64）或者最近生成的配音 → 百炼照着这个声音造一个音色（不要钱）。只复刻自己的或 AI 生成的声音。"""
+    if not body.get("consent"):
+        raise HTTPException(400, "先确认：这段声音是你自己的，或者是 AI 生成的（不复刻别人的声音）")
+    if body.get("source") == "draft":
+        audio, src = draft_sample()
+    else:
+        try:
+            audio = base64.b64decode(str(body.get("data") or "").split(",")[-1], validate=False)
+        except Exception:
+            raise HTTPException(400, "录音没传上来，重新选一下文件") from None
+        src = "上传的录音" + (f"「{str(body.get('file'))[:40]}」" if body.get("file") else "")
+    try:
+        v = await tts_cloud.clone(body.get("name"), audio, body.get("lang") or "zh", bool(body.get("denoise")), src, body.get("g") or "")
+    except tts_cloud.CloudError as e:
+        raise _cloud_err(e) from None
+    feed.add(f"声音复刻：造了一个音色「{v['name']}」（{src}），百炼审核中（不要钱）", "ok", job="配音")
+    return {"voice": v, "msg": f"复刻好了「{v['name']}」：百炼审核一般几秒到一分钟，好了就能用"}
+
+
+@api.post("/api/tts/cloud/sync")
+async def tts_cloud_sync():
+    try:
+        r = await tts_cloud.sync()
+    except tts_cloud.CloudError as e:
+        raise _cloud_err(e) from None
+    return {**r, "msg": f"和百炼对过了：百炼上 {r['total']} 个音色" + (f"，新加 {r['added']} 个" if r["added"] else "") + (f"，{r['gone']} 个百炼上已经没了" if r["gone"] else "")}
+
+
+@api.patch("/api/tts/cloud/voices/{vid}")
+def tts_cloud_rename(vid: str, body: dict = Body(...)):
+    try:
+        tts_cloud.rename(vid, body.get("name"))
+    except tts_cloud.CloudError as e:
+        raise _cloud_err(e) from None
+    return {"mine": tts_cloud.mine()}
+
+
+@api.delete("/api/tts/cloud/voices/{vid}")
+async def tts_cloud_delete(vid: str):
+    try:
+        await tts_cloud.remove(vid)
+    except tts_cloud.CloudError as e:
+        raise _cloud_err(e) from None
+    return {"mine": tts_cloud.mine(), "msg": "删掉了（百炼那边也删了）"}
+
+
+@api.put("/api/tts/cloud/hotfix")
+def tts_cloud_hotfix(body: dict = Body(...)):
+    try:
+        h = tts_cloud.set_hotfix(body)
+    except tts_cloud.CloudError as e:
+        raise _cloud_err(e) from None
+    return {"hotfix": h, "msg": f"读音词典存好了：{len(h['pronunciation'])} 个读音、{len(h['replace'])} 个替换"}
 
 
 @api.post("/api/tts/voices")
