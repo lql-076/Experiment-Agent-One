@@ -145,7 +145,7 @@ var SECTIONS = [
     { k: 'kevPort', l: 'Kev 端口', t: 'number', d: 8091 },
     { note: '只用显卡跑模型：检测不到显卡时模型服务直接拒绝工作，不会偷偷用 CPU。这一条固定，改不了。' }
   ] },
-  { id: 'cloud', name: '云端', desc: 'DeepSeek 负责长对话和一般难题；特别难的事可以写好提示词让你带去问更强的模型（第三条路，用不用在下面选）。', custom: 'cloud', fields: [
+  { id: 'cloud', name: '云端', desc: 'DeepSeek 负责长对话和一般难题；特别难的事可以写好提示词让你带去问更强的模型（第三条路，用不用在下面选）。最下面是「配音」页用的百炼 Key。', custom: 'cloud', fields: [
     { k: 'strongOn', l: '第三条路「更强的模型」', t: 'choice', d: true, o: [[true, '接受：特别难的事写好提示词，我带去问'], [false, '不接受：特别难的事也交给 DeepSeek']], h: '问哪家都行：网页 Claude、ChatGPT、Gemini、Kimi、豆包……用你能稳定用上的最强的那个。带回来的总结只当参考资料，不进训练' },
     { k: 'strongName', l: '这条路叫什么', d: '更强的模型', ph: '更强的模型', h: '界面上显示的名字，比如改成「网页 Claude」' },
     { k: 'claudeTpl', l: '给更强的模型的提示词开头', t: 'textarea', d: '我在搭一个自己的本地 agent。下面是遇到的问题和相关背景，请帮我分析。聊完请输出一份简短的 Markdown 总结，方便我带回给 agent 学习。' },
@@ -158,6 +158,12 @@ var SECTIONS = [
     { k: 'searchRounds', l: '一个问题最多查几轮', t: 'number', u: '轮', d: 4, h: '一轮里可以同时搜几个词、读几个网页。一般 1~2 轮就够了' },
     { k: 'dsBase', l: '接口地址', d: 'https://api.deepseek.com', h: '联网搜索也走这个地址（/v1/tools/search、/v1/tools/fetch）' },
     { note: '花了多少钱是按官方价格自动估算的（闲时、忙时自动区分），不用你填。准确的数字以上面的余额为准。' },
+    { note: '下面是「配音」页的百炼云端引擎（阿里云百炼 中国站 · 北京，千问 Qwen-Audio-3.1-TTS-Plus）。只把配音页里贴的文案和语气发过去，别的一律不发。' },
+    { k: 'blKey', l: '百炼 API Key', t: 'secret', h: '在百炼控制台（北京地域）的 API Key 页面创建。加密保存在本机（Windows DPAPI），只有你这个 Windows 账号能解开；不写日志，导出设置时不包含' },
+    { k: 'blModel', l: '配音模型', d: 'qwen-audio-3.1-tts-plus', ph: 'qwen-audio-3.1-tts-plus', h: '默认 Plus（音质最好）。别用体验中心默认的 Next：自带背景音乐、人声糊。想便宜可以换 qwen-audio-3.1-tts-flash（音色多，按 token 计费，估价就不准了）' },
+    { k: 'blPrice', l: '单价（只用来估算）', t: 'number', u: '元/万字符', d: 1.4, h: '生成前按它估花多少，每次生成记一笔。以百炼账单为准，官方调价了改这里' },
+    { k: 'blMax', l: '一次最多发多少字', t: 'number', u: '字', d: 2000, h: '超过就按段落分几块念（同一个音色、语气、种子），最后拼成一个文件。百炼报「文本太长」就调小' },
+    { k: 'blBase', l: '百炼接口地址', d: 'https://dashscope.aliyuncs.com/api/v1', h: '中国站（北京）。要用业务空间专属地址，就填 https://你的业务空间ID.cn-beijing.maas.aliyuncs.com/api/v1（Key 也要是那个业务空间的）' },
   ] },
   { id: 'qq', name: 'QQ 通道', desc: '用 QQ 官方机器人和你说话，WebSocket 接入，不需要公网地址，不用非官方接口，没有封号风险。', fields: [
     { k: 'qqEnabled', l: '启用 QQ 通道', t: 'toggle', d: true },

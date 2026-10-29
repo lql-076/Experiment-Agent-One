@@ -1,7 +1,7 @@
 """设置与密钥。
 
 设置存在 data/settings.json，界面上改了就写进来。
-密钥（DeepSeek Key、QQ AppSecret）单独存在 data/secrets.bin，用 Windows 自带的 DPAPI 加密：
+密钥（DeepSeek Key、QQ AppSecret、百炼 Key）单独存在 data/secrets.bin，用 Windows 自带的 DPAPI 加密：
 只有你这个 Windows 账号在这台电脑上能解开，拷走文件也没用。导出设置时不包含密钥。
 """
 import base64
@@ -25,6 +25,9 @@ DEFAULTS = {
     # 配音（app/tts.py）：服务端口、闲置几分钟关掉、句子之间 / 段落之间停几秒、保存到哪（留空 = Agent 文件夹里的「配音输出」）
     "ttsPort": 8092, "ttsIdle": 10, "ttsGap": 0.35, "ttsParaGap": 0.7, "ttsOut": "", "ttsPython": "",
     "ttsWhole": True,                 # 整段一次生成（语气连贯，v1.8.9 默认）；关掉 = 一句一句生成
+    "ttsEngine": "local",             # 配音用哪个：local 本地 Qwen3-TTS / cloud 百炼云端（app/tts_cloud.py，v1.8.11）
+    # 百炼云端配音：接口地址（中国站 北京）、模型、单价（元/万字符，只用来估算）、一次最多发多少字（超过按段落分几块）
+    "blBase": "https://dashscope.aliyuncs.com/api/v1", "blModel": "qwen-audio-3.1-tts-plus", "blPrice": 1.4, "blMax": 2000,
     # 云端
     "dsBase": "https://api.deepseek.com", "dsModel": "deepseek-flash", "dsLow": 2, "usdCny": 7.2,
     "priceIn": 0.15, "priceHit": 0.003, "priceOut": 0.60, "peakX": 2, "dsThinking": "auto",
@@ -55,7 +58,7 @@ DEFAULTS = {
     "hwOn": False,          # 硬件监控助手：开着就跟着 Agent 一起启动（app/hwctl.py）
     "fpsSkip": "",          # 你说过"不是游戏"的程序（逗号分隔，比如 GamePP.exe），读帧数时跳过
 }
-SECRET_KEYS = ("dsKey", "qqSecret")
+SECRET_KEYS = ("dsKey", "qqSecret", "blKey")      # blKey：百炼 API Key（云端配音）
 LOCKED = {"gpuOnly": True, "privLocal": True}   # 这两条界面上改不了
 
 _lock = threading.Lock()

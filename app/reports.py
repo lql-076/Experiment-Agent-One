@@ -159,7 +159,8 @@ def tasks():
     j = tts.T.public()
     if j and j["st"] == "run":
         out.append({"k": "tts", "name": f"生成配音 · {j['voice']}",
-                    "phase": f"整段一次生成 · {j['n']} 句" if j.get("whole") else f"第 {min(j['i'] + 1, j['n'])}/{j['n']} 句",
+                    "phase": f"百炼云端 · {j['n']} 句" if j.get("engine") == "cloud" else f"整段一次生成 · {j['n']} 句" if j.get("whole")
+                    else f"第 {min(j['i'] + 1, j['n'])}/{j['n']} 句",
                     "pct": j.get("pct"), "speed": None, "eta": j["eta"]})
     return out
 

@@ -1,0 +1,291 @@
+"""配音的百炼云端引擎（v1.8.11）。沙箱连不上百炼：用假的接口（dev/fake_bailian.py，8097）和假 Key sk-test-0000。
+1. 不连后端：音色表、出错时的中文说明、标签（字幕里去掉、只有标签的一块并到前一句、标签后不补句号）、字级时间戳 → 每句的时间
+2. 连测试后端（dev/serve.sh start）：生成 → 发出去的只有文案和音色这些 → 时间轴按字级时间戳 → WAV / JSON / SRT / 文案 4 个文件 →
+   记用量、预估花费 → 长文案按段落分块（同一个音色、语气、种子）→ 没给时间戳按停顿对齐 → 音色不支持时间戳就去掉再试一次 →
+   Key 不对、欠费、断网、文本太长、没填 Key：中文说明、只试一次 → 停下 → 试听（念过的不花钱）
+3. Key 不落明文、不进导出、不进日志、不进时间轴；在玩游戏让路时不停云端的活
+用法：python dev/test_tts_cloud.py（要先 dev/serve.sh start）"""
+import io
+import pathlib
+import shutil
+import sys
+import time
+import wave
+
+import httpx
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from app import feed, settings, tts, tts_cloud  # noqa: E402
+from app.models import M  # noqa: E402
+
+bad = []
+feed.add = lambda *a, **k: None
+KEY = "sk-test-0000"
+RUN = ROOT / "dev" / ".run"
+
+
+def check(ok, msg):
+    print(("  ✓ " if ok else "  ✗ ") + msg, flush=True)
+    if not ok:
+        bad.append(msg)
+
+
+# ---------- 1. 不连后端 ----------
+plus = [v["id"] for v in tts_cloud.VOICES["qwen-audio-3.1-tts-plus"]]
+check(plus == ["longanlingxin_v3.1", "longanhuan_v3.1", "longanfengyue_v3.1", "xunanchuan_v3.1"], f"Plus 的 4 个音色（官方音色表）：{plus}")
+check(tts_cloud.DEFAULT_MODEL == "qwen-audio-3.1-tts-plus" and settings.DEFAULTS["blModel"] == "qwen-audio-3.1-tts-plus" and "next" not in settings.DEFAULTS["blModel"],
+      "默认模型是 Plus（不是体验中心默认的 Next），可以在设置里改")
+check(settings.DEFAULTS["blBase"] == "https://dashscope.aliyuncs.com/api/v1" and tts_cloud.PATH == "/services/audio/tts/SpeechSynthesizer",
+      "接口：百炼中国站（北京）")
+check("blKey" in settings.SECRET_KEYS and "blKey" not in settings.DEFAULTS, "百炼 Key 是密钥（DPAPI 加密存 data/secrets.bin），不在普通设置里")
+E = tts_cloud.explain
+cases = [(E(401, "InvalidApiKey"), "Key 不对"), (E(400, "Arrearage"), "欠费"), (E(429, "Throttling.RateQuota"), "限流"),
+         (E(400, "DataInspectionFailed"), "内容安全"), (E(403, "AccessDenied"), "不能调用"), (E(500, "InternalError"), "出错了"),
+         (E(400, "InvalidParameter", "text length exceeds the limit"), "调小")]
+check(all(w in str(e) for e, w in cases), "出错说人话：Key 不对 / 欠费 / 限流 / 内容拦截 / 没权限 / 服务端出错 / 文本太长（叫你调小单次字数）")
+check(tts_cloud.strip_tags("[excited]今天真开心！[laughing]") == "今天真开心！", "字幕里去掉 [excited] 这类标签")
+segs = tts_cloud.merge_tags(tts.split("好的。[laughing]\n\n[serious]下面说正事。"))
+check([s["text"] for s in segs] == ["好的。[laughing]", "[serious]下面说正事。"], "只有标签的一块并到前一句：" + " | ".join(s["text"] for s in segs))
+t, rg = tts.chunk_parts(segs, [0, 1])
+check(t == "好的。[laughing]\n[serious]下面说正事。" and [t[a:b] for a, b in rg] == ["好的。[laughing]", "[serious]下面说正事。"],
+      "标签后面不再补句号；每句在这一块里的位置记下来（拿来对字级时间戳）")
+check(tts.chunk_text(tts.split("标题没有标点\n\n正文一句。"), [0, 1]) == "标题没有标点。\n正文一句。", "本地那边照旧：没标点的行补一个句号")
+
+# 字级时间戳 → 每句的时间：时间从整段开始算、从这句开始算，两种都认
+TXT = "大家好，欢迎回来。今天聊三个工具！"
+sg = tts.split(TXT)
+t, rg = tts.chunk_parts(sg, [0, 1])
+
+
+def words(s, t0, rel_base=0.0):
+    out, tt = [], t0
+    for k, ch in enumerate(s):
+        if ch in "，。！":
+            continue
+        out.append({"text": ch, "begin_index": k, "end_index": k + 1, "begin_time": round((tt - rel_base) * 1000), "end_time": round((tt + 0.2 - rel_base) * 1000)})
+        tt += 0.2
+    return out
+
+
+s1, s2 = "大家好，欢迎回来。", "今天聊三个工具！"
+sents_abs = [{"text": s1, "a0": 0, "a1": 24000 * 2, "words": words(s1, 0.0)}, {"text": s2, "a0": 24000 * 2, "a1": 24000 * 4, "words": words(s2, 2.0)}]
+sents_rel = [{"text": s1, "a0": 0, "a1": 24000 * 2, "words": words(s1, 0.0)}, {"text": s2, "a0": 24000 * 2, "a1": 24000 * 4, "words": words(s2, 2.0, 2.0)}]
+r1, r2 = tts_cloud.word_spans(t, rg, sents_abs, 24000), tts_cloud.word_spans(t, rg, sents_rel, 24000)
+check(r1 and r2 and r1[0] == r2[0] and abs(r1[0][1][0] - 2.0) < 0.01 and abs(r1[0][0][1] - 1.4) < 0.01 and not any(r1[1]),
+      f"字级时间戳拼出每句的开始、结束（时间从整段算、从这句算都对）：{r1[0] if r1 else None}")
+check(tts_cloud.word_spans(t, rg, [dict(x, words=[]) for x in sents_abs], 24000) is None, "百炼没给时间戳：返回空，改按停顿对齐")
+M.yield_level, M.yield_reason = 1, "在玩游戏（test.exe）"
+tts.T.job = {"st": "run", "stop": "", "engine": "cloud"}
+tts.T.tick()
+check(tts.T.job["stop"] == "", "在玩游戏让路时：云端的活不停（不用显卡）")
+M.yield_level, M.yield_reason = 0, ""
+tts.T.job = None
+
+# ---------- 2. 连测试后端 ----------
+B = "http://127.0.0.1:8765"
+FAKE = "http://127.0.0.1:8097"
+c = httpx.Client(base_url=B, headers={"X-Agent": "1"}, timeout=30)
+OUT = RUN / "配音输出-测试云端"
+shutil.rmtree(OUT, ignore_errors=True)
+c.put("/api/settings", json={"ttsOut": str(OUT), "ttsGap": 0.35, "ttsParaGap": 0.7, "blBase": FAKE + "/api/v1", "blMax": 2000, "blPrice": 1.4,
+                             "blModel": "qwen-audio-3.1-tts-plus"})
+c.put("/api/secrets", json={"k": "blKey", "v": KEY})
+for f in RUN.glob("fake_bl_*.flag"):
+    f.unlink()
+
+
+def flag(n, on=True):
+    p = RUN / f"fake_bl_{n}.flag"
+    if on:
+        p.write_text("1")
+    elif p.exists():
+        p.unlink()
+
+
+def fake_n():
+    return httpx.get(FAKE + "/_fake/log", timeout=5).json()["n"]
+
+
+def fake_last(k=1):
+    return httpx.get(FAKE + "/_fake/log", timeout=5).json()["items"][-k:]
+
+
+def wait(t=60):
+    t0 = time.time()
+    while time.time() - t0 < t:
+        j = c.get("/api/tts").json()
+        if j["job"] and j["job"]["st"] != "run":
+            return j
+        time.sleep(0.25)
+    return c.get("/api/tts").json()
+
+
+def gen(text, voice="xunanchuan_v3.1", tone="", **kw):
+    return c.post("/api/tts/gen", json={"engine": "cloud", "voice": voice, "tone": tone, "text": text, **kw})
+
+
+st = c.get("/api/tts").json()
+cl = st["cloud"]
+check(cl["key"] and cl["model"] == "qwen-audio-3.1-tts-plus" and len(cl["voices"]) == 4 and cl["price"] == 1.4 and cl["max"] == 2000,
+      "配音页拿得到云端状态：Key 填了、模型、4 个音色、单价、单次字数")
+m0 = cl["month"]["n"]
+n0 = fake_n()
+TEXT = "大家好，欢迎回来。今天聊三个工具！\n\n第一个是配音。"
+r = gen(TEXT, tone="轻松一点")
+job = r.json().get("job") or {}
+check(r.status_code == 200 and job.get("engine") == "cloud" and job.get("est", {}).get("bill", 0) > 0 and job["est"]["cny"] > 0,
+      f"开始生成（百炼云端），带着预估：{job.get('est')}")
+j = wait()
+d = j["draft"]
+check(j["job"]["st"] == "done" and "花了约 ¥" in j["job"]["msg"] and "计费" in j["job"]["msg"], "生成好了，说清楚多长、用了多久、花了多少：" + j["job"]["msg"])
+check(not j["proc"], "云端生成不启动本地配音服务（不占显存）")
+check(fake_n() == n0 + 1, "只调了一次百炼")
+req = fake_last()[0]
+body = req["body"]
+check(set(body) == {"model", "input"} and set(body["input"]) <= {"text", "voice", "format", "sample_rate", "instruction", "seed", "word_timestamp_enabled"},
+      f"发出去的只有：模型、文案、音色、格式、采样率、语气、种子、要不要时间戳（{sorted(body['input'])}）")
+check(body["input"]["text"] == "大家好，欢迎回来。今天聊三个工具！\n第一个是配音。" and body["input"]["voice"] == "xunanchuan_v3.1"
+      and body["input"]["instruction"] == "轻松一点" and body["model"] == "qwen-audio-3.1-tts-plus",
+      "文案就是配音页贴的那段（换段处一个换行），音色、语气、模型对得上")
+check(req["auth_ok"] and req["sse"] == "enable" and body["input"]["format"] == "pcm" and body["input"]["sample_rate"] == 24000 and body["input"]["word_timestamp_enabled"],
+      "带着 Key（Bearer）、开流式 SSE、要 pcm 24kHz、要字级时间戳")
+w = c.get("/api/tts/draft.wav")
+with wave.open(io.BytesIO(w.content)) as f:
+    dur, sr = f.getnframes() / f.getframerate(), f.getframerate()
+s1, s2, s3 = d["segments"]
+check(sr == 24000 and abs(dur - d["duration"]) < 0.01 and dur >= s3["end"] - 0.01, f"WAV 24kHz，长度和时间轴对得上（{dur:.2f} 秒）")
+check(d["engine"] == "cloud" and d["model"] == "qwen-audio-3.1-tts-plus" and "百炼" in d["license"] and d["voice"]["voice"] == "xunanchuan_v3.1"
+      and d["voice"]["name"] == "许南川" and d["voice"]["tone"] == "轻松一点" and d["cost"]["billed_chars"] > 0,
+      "时间轴 JSON 里记着：云端、模型、协议、音色、语气、计费字符和花费")
+check("字级时间戳" in d["align"] and not any(x.get("est") for x in d["segments"]), "时间轴用的是百炼的字级时间戳（每句都对上了）")
+check(abs(s1["start"]) < 0.01 and abs(s1["end"] - 1.54) < 0.03 and abs(s2["end"] - s2["start"] - 1.4) < 0.03 and abs(s3["end"] - s3["start"] - 1.2) < 0.03,
+      "每句的开始、结束就是第一个字开口、最后一个字收声：" + "、".join(f"{x['start']:.2f}-{x['end']:.2f}" for x in d["segments"]))
+check(abs((s2["start"] - s1["end"]) - 0.35) < 0.03 and (s3["start"] - s2["end"]) >= 0.69, "停得比设置的短就补够：句间 0.35、换段 0.7（和本地一样）")
+st = c.get("/api/tts").json()
+check(st["cloud"]["month"]["n"] == m0 + 1 and st["cloud"]["month"]["cny"] > 0 and st["cloud"]["ratio"], "记了一笔用量；以后按百炼实际的计费比例估价")
+sv = c.post("/api/tts/save").json()
+dd = pathlib.Path(sv["dir"].replace("\\", "/"))
+base = dd.name
+files = sorted(p.name for p in dd.iterdir())
+check(base.endswith("_许南川") and files == sorted([f"{base}.wav", f"{base}_时间轴.json", f"{base}_字幕.srt", f"{base}_文案.txt"]),
+      f"保存：和本地一样 4 个文件（{files}）")
+srt = (dd / f"{base}_字幕.srt").read_text("utf-8")
+check(srt.count(" --> ") == 3 and (dd / f"{base}_文案.txt").read_text("utf-8").strip() == TEXT, "字幕 3 条、文案原样")
+
+# 标签：发过去原样，字幕里去掉
+gen("[excited]今天真开心！好的。[laughing]\n\n[serious]下面说正事。")
+j = wait()
+sent = fake_last()[0]["body"]["input"]["text"]
+check(j["job"]["st"] == "done" and [x["text"] for x in j["draft"]["segments"]] == ["今天真开心！", "好的。", "下面说正事。"]
+      and "[laughing]" in sent and "[laughing]。" not in sent, "情绪标签原样发给百炼（标签后不补句号），时间轴和字幕里去掉")
+
+# 长文案：按段落分块，同一个音色、语气、种子
+c.put("/api/settings", json={"blMax": 200})
+LONG = ("这是一句十个字的话。" * 12 + "\n\n") * 3                 # 360 字，3 段
+n0 = fake_n()
+gen(LONG, voice="longanhuan_v3.1", tone="平稳")
+j = wait(90)
+reqs = [x["body"] for x in fake_last(fake_n() - n0)]
+d = j["draft"]
+check(j["job"]["st"] == "done" and len(reqs) == 3 and all(len(x["input"]["text"]) <= 200 for x in reqs), f"超过单次字数（200）：按段落分成 {len(reqs)} 块念")
+check(len({(x["input"]["voice"], x["input"].get("instruction"), x["input"].get("seed")) for x in reqs}) == 1, "每块同一个音色、同一句语气、同一个种子")
+segs_ = d["segments"]
+check(len(segs_) == 36 and all(segs_[k + 1]["start"] >= segs_[k]["end"] for k in range(35)) and abs(d["duration"] - segs_[-1]["end"]) < 0.4,
+      "拼成一个文件：36 句的时间轴前后接得上")
+gap = segs_[12]["start"] - segs_[11]["end"]
+check(abs(gap - 0.7) < 0.05, f"块和块之间按换段停（{gap:.2f} 秒）")
+c.put("/api/settings", json={"blMax": 2000})
+
+# 没给时间戳 → 按停顿对齐；音色不支持时间戳 → 去掉再试一次
+flag("nowords")
+gen(TEXT)
+j = wait()
+check(j["job"]["st"] == "done" and "停顿" in j["draft"]["align"] and len(j["draft"]["segments"]) == 3
+      and abs(j["draft"]["segments"][1]["start"] - 1.89) < 0.06, "百炼没给时间戳：按音频里的停顿对齐（和本地整段生成一样）")
+flag("nowords", False)
+flag("wordserr")
+n0 = fake_n()
+gen(TEXT)
+j = wait()
+two = fake_last(2)
+check(j["job"]["st"] == "done" and fake_n() == n0 + 2 and two[0]["body"]["input"].get("word_timestamp_enabled") and "word_timestamp_enabled" not in two[1]["body"]["input"],
+      "音色不支持时间戳（报参数错）：去掉时间戳再试一次就好了，一共两次")
+flag("wordserr", False)
+
+# 出错：中文说明，只试一次
+c.put("/api/secrets", json={"k": "blKey", "v": "sk-wrong-1111"})
+n0 = fake_n()
+gen(TEXT)
+j = wait()
+check(j["job"]["st"] == "err" and "Key 不对" in j["job"]["msg"] and fake_n() == n0 + 1, "Key 不对：说清楚去哪重填，只试一次：" + j["job"]["msg"])
+c.put("/api/secrets", json={"k": "blKey", "v": KEY})
+flag("arrears")
+n0 = fake_n()
+gen(TEXT)
+j = wait()
+check(j["job"]["st"] == "err" and "欠费" in j["job"]["msg"] and fake_n() == n0 + 1, "欠费 / 余额不足：说清楚，只试一次：" + j["job"]["msg"])
+flag("arrears", False)
+c.put("/api/settings", json={"blBase": "http://127.0.0.1:1/api/v1"})
+t0 = time.time()
+gen(TEXT)
+j = wait()
+check(j["job"]["st"] == "err" and "连不上百炼" in j["job"]["msg"] and time.time() - t0 < 15, "断网（连不上）：马上说清楚，不重试：" + j["job"]["msg"])
+c.put("/api/settings", json={"blBase": FAKE + "/api/v1", "blMax": 5000})
+gen("这是一句十个字的话。" * 320)
+j = wait()
+check(j["job"]["st"] == "err" and "调小" in j["job"]["msg"], "文本太长（百炼报参数错）：叫你调小单次字数：" + j["job"]["msg"])
+c.put("/api/settings", json={"blMax": 2000})
+c.put("/api/secrets", json={"k": "blKey", "v": ""})
+r = gen(TEXT)
+check(r.status_code == 400 and "百炼 API Key" in r.json()["detail"] and not c.get("/api/tts").json()["cloud"]["key"], "没填 Key：不生成，告诉你去 设置 › 云端 填")
+c.put("/api/secrets", json={"k": "blKey", "v": KEY})
+r = gen(TEXT, voice="Vivian")
+check(r.status_code == 400, "不是这个模型的音色：不生成")
+
+# 停下
+ver = c.get("/api/tts").json()["draft"]["ver"]
+flag("slow")
+gen("一句话。" * 30)
+time.sleep(1.2)
+tk = [t for t in c.get("/api/tasks").json()["tasks"] if t["k"] == "tts"]
+check(tk and "百炼云端" in tk[0]["phase"], f"生成时常驻屏的后台任务里有它：{tk[0]['phase'] if tk else '没有'}")
+c.post("/api/tts/stop")
+t0 = time.time()
+j = wait(20)
+flag("slow", False)
+check(j["job"]["st"] == "stop" and time.time() - t0 < 5 and j["draft"]["ver"] == ver, f"点「停下」：马上断开，不覆盖上一次的试听（{j['job']['msg']}）")
+
+# 试听
+m1 = c.get("/api/tts").json()["cloud"]["month"]["n"]
+for f in (ROOT / "data" / "tts" / "try").glob("*longanfengyue*"):
+    f.unlink()
+r1 = c.post("/api/tts/cloud/try", json={"voice": "longanfengyue_v3.1"})
+r2 = c.post("/api/tts/cloud/try", json={"voice": "longanfengyue_v3.1"})
+with wave.open(io.BytesIO(r1.content)) as f:
+    tdur = f.getnframes() / f.getframerate()
+check(r1.status_code == 200 and r1.headers["x-cached"] == "0" and r2.headers["x-cached"] == "1" and r1.content == r2.content and tdur > 2,
+      f"试听：念一句固定的短句（{tdur:.1f} 秒），再点用存着的")
+check(c.get("/api/tts").json()["cloud"]["month"]["n"] == m1 + 1 and fake_last()[0]["body"]["input"]["text"] == tts_cloud.TRY_TEXT,
+      "试听只花第一次的钱（记一笔），发的是那句固定的短句")
+check(c.post("/api/tts/cloud/try", json={"voice": "nobody"}).status_code == 400, "没有的音色：不试听")
+
+# ---------- 3. Key 不外泄 ----------
+ex = c.get("/api/export").text
+hint = c.get("/api/settings").json()["secrets"].get("blKey")
+check(KEY not in ex and "blKey" not in ex, "导出设置里没有百炼 Key")
+check(hint == "••••0000", f"界面只拿得到最后 4 位：{hint}")
+leak = []
+for p in [ROOT / "data" / "settings.json", RUN / "backend.log", RUN / "mocks.log", *(ROOT / "data" / "logs").glob("*.log"), *(ROOT / "data" / "tts").glob("draft.*"), *OUT.rglob("*.*")]:
+    try:
+        if p.is_file() and KEY.encode() in p.read_bytes():
+            leak.append(p.name)
+    except OSError:
+        pass
+check(not leak, f"设置文件、日志、时间轴、保存的配音里都没有 Key{'：' + str(leak) if leak else ''}")
+fd = " | ".join(e["text"] for e in c.get("/api/feed?n=200").json()["items"])
+check(KEY not in fd and "sk-wrong" not in fd, "进展报告里也没有 Key")
+c.put("/api/settings", json={"ttsOut": "", "ttsEngine": "local"})
+
+print("不过的：", bad or "没有")
+sys.exit(1 if bad else 0)

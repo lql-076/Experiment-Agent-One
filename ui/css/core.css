@@ -1267,3 +1267,16 @@ html[data-orient="portrait"] .rs.tight2{--rsz:min(76vw,38vh);gap:1.75rem}
 #ttsWay button{padding:.4rem .75rem;min-height:2.25rem}
 .tts-gorow{align-items:center;gap:.75rem 1rem}
 .tts-wayhint{font-size:.8125rem;color:var(--text3)}
+/* 配音的云端引擎（v1.8.11）：标题旁选引擎，云端音色带「试听」，生成前显示预估花费 */
+.tts-eng button{padding:.35rem .9rem;min-height:2.25rem;font-size:.875rem}
+.tts .ph .tts-eng{flex:none}
+.tts .ph .sub{flex:1 1 16rem;min-width:0}
+.tts-cvl{overflow:auto;min-height:0}
+.tts-cvw{position:relative;display:flex}
+.tts-cvw .tts-sp{flex:1;padding-right:4.5rem;min-height:4.25rem}
+.tts-try{position:absolute;top:50%;right:.6rem;transform:translateY(-50%);min-height:2rem;padding:.2rem .7rem;font-size:.8125rem}
+.tts-est{border-color:var(--line2);background:var(--bg2)}
+.tts-est b{color:var(--text)}
+html[data-orient="portrait"] .tts-eng button{padding:.3rem .7rem}
+.tts-cvl.one{grid-template-columns:minmax(0,1fr)}
+.tts-cvl.one .tts-sp{min-height:3.75rem}

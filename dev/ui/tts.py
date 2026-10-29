@@ -1,6 +1,7 @@
 """配音页点一遍（连测试后端，配音服务是假的 dev/fake_tts.py）：
 贴文案 → 选音色 → 生成（进度、完成）→ 试听有声音、时间轴一句一行 → 点时间轴跳到那一句 → 保存 →
 切到描述音色 → 存成我的音色（出现在上面）→ 点它把描述和种子填回来 → 删掉 → 输入的东西刷新后还在 →
+换百炼云端：4 个音色、试听、预估花费、生成、刷新后还是云端、没填 Key 的提示、设置 › 云端 填 Key → 换回本地 →
 设置 › 本地模型 点「安装配音」看进度到装好 → 设置 › 自动化 有「开机自启」开关。
 用法：python dev/ui/tts.py 截图文件夹（要先 dev/serve.sh start）"""
 import sys
@@ -95,6 +96,50 @@ with sync_playwright() as pw:
     p.wait_for_timeout(800)
     check(p.locator("[data-voice]").count() == 0, "删掉我的音色")
     p.click('#ttsMode [data-mode="preset"]')
+
+    # 百炼云端（v1.8.11，测试后端连的是假的百炼 dev/fake_bailian.py，假 Key sk-test-0000）
+    p.click('#ttsEng [data-eng="cloud"]')
+    p.wait_for_selector("[data-cv]")
+    check(p.locator("[data-cv]").count() == 4 and "百炼" in p.inner_text(".tts .ph .sub") and p.locator("#ttsMode").count() == 0,
+          "点「百炼云端」：列出 4 个中文音色，标题旁写明只把文案和语气发给百炼")
+    p.fill("#ttsText", "大家好，欢迎回来。今天聊三个工具！\n\n第一个是配音。")
+    check("预估 ¥" in p.inner_text("#ttsCount") and "计费字符" in p.inner_text("#ttsEst"), "贴了文案：显示字数和预估花费：" + p.inner_text("#ttsEst").split("\n")[0])
+    p.click('[data-cvtry="longanlingxin_v3.1"]')
+    p.wait_for_function("TTS.tryAu && TTS.tryAu.readyState >= 1", timeout=20000)
+    check(p.evaluate("TTS.tryAu.duration") > 2, f"点「试听」：念一句固定的短句（{p.evaluate('TTS.tryAu.duration'):.1f} 秒）")
+    p.click('[data-cv="xunanchuan_v3.1"]')
+    check(p.get_attribute('[data-cv="xunanchuan_v3.1"]', "aria-pressed") == "true", "点音色：选中许南川")
+    p.fill("#ttsTone", "请用轻松的语气")
+    p.click('[data-act="gen"]')
+    p.wait_for_function("(document.querySelector('#ttsGen .tts-msg.ok') || {}).textContent && document.querySelector('#ttsGen .tts-msg.ok').textContent.indexOf('花了约') >= 0", timeout=30000)
+    p.wait_for_function("document.querySelectorAll('#ttsTl .tts-seg').length === 3 && document.querySelector('#ttsRes .hc-h').textContent.indexOf('许南川') >= 0", timeout=8000)
+    check(True, "生成好了：说了花多少，时间轴 3 句，试听那里写着许南川 · 百炼：" + p.inner_text("#ttsGen .tts-msg.ok"))
+    p.screenshot(path=f"{OUT}/tts-cloud.png")
+    p.wait_for_timeout(600)                 # 引擎 0.4 秒后才存进设置
+    p.reload()
+    p.wait_for_timeout(1500)
+    p.wait_for_function("!S.checking", timeout=30000)
+    p.evaluate("var b=document.getElementById('boot'); if (b.classList.contains('on')) b.click()")
+    p.evaluate("goView('tts')")
+    p.wait_for_selector("[data-cv]", timeout=8000)
+    check(p.get_attribute('#ttsEng [data-eng="cloud"]', "aria-pressed") == "true", "刷新以后还是百炼云端（存进了设置）")
+    p.evaluate("api('PUT', '/api/secrets', {k: 'blKey', v: ''}).then(function (j) { SECRETS = j.hints; return ttsLoad(); }).then(ttsSync)")
+    p.wait_for_selector('[data-act="gokey"]', timeout=8000)
+    check(p.is_disabled('[data-act="gen"]') and "还没填百炼 API Key" in p.inner_text("#ttsGen"), "没填百炼 Key：提示去 设置 › 云端，生成按钮灰着")
+    p.click('[data-act="gokey"]')
+    p.wait_for_selector("#f-blKey", timeout=5000)
+    p.fill("#f-blKey", "sk-test-0000")
+    p.click('[data-secret-save="blKey"]')
+    p.wait_for_function("(document.getElementById('f-blKey') || {}).placeholder && document.getElementById('f-blKey').placeholder.indexOf('0000') >= 0", timeout=8000)
+    check("••••0000" in p.get_attribute("#f-blKey", "placeholder") and p.input_value("#f-blKey") == "", "设置 › 云端 填百炼 Key、保存：只显示最后 4 位")
+    check(p.locator("#f-blModel").input_value() == "qwen-audio-3.1-tts-plus" and p.locator("#f-blPrice").count() == 1 and p.locator("#f-blMax").count() == 1,
+          "设置 › 云端 还能改模型名（默认 Plus）、单价、一次最多发多少字")
+    p.evaluate("goView('tts')")
+    p.wait_for_selector("#ttsEng")
+    p.click('#ttsEng [data-eng="local"]')
+    p.wait_for_selector("#ttsMode")
+    check(p.get_attribute('#ttsEng [data-eng="local"]', "aria-pressed") == "true", "换回本地 Qwen3-TTS")
+    p.wait_for_timeout(600)
     p.evaluate("api('PUT', '/api/settings', {ttsOut: ''})")
     p.wait_for_timeout(300)
 
