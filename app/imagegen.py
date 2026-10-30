@@ -1,24 +1,29 @@
-r"""生图（v1.8.15）：左边「生图」页的后端。
+r"""生图（v1.8.15 起；v1.8.16 重做成「渲染舱」）：左边「生图」页的后端。
 
-以前：视频窗口按《自媒体正本》出一份「生图清单」（这期的视觉方向 + 每张图的编号文件名、用在哪一段、比例、透明背景开不开、提示词），
-作者一条一条复制提示词去生成，再一张张按文件名存，麻烦，名字也不统一。
-现在：上传清单 Markdown → 认出每一条 → 按比例、透明背景调 API易（OpenAI 兼容的中转站）的 GPT Image 2.5 → 按清单里的文件名存进「生图输出」。
+四件事：
+- 单张：文生图，或者带参考图（最多十几张）+ 提示词生图（图生图）；一次出 1~4 张。
+- 批量：上传视频窗口出的「生图清单」Markdown（这期的视觉方向 + 每张的文件名、用在哪、比例、透明背景开不开、提示词），
+  一张一张出完，按清单里的文件名存好（以前作者要一条一条复制提示词去生成、再一张张按文件名存）。
+- 历史：出过的每一张（单张、批量）都记在 data\agent.db 的 img_history：提示词、模型、尺寸、花费、存在哪；能再来一张、当参考图。
+- 素材模板：把一套提示词 + 参考图 + 比例这些存起来（data\img\templates），下次一点就填好。
 
-- 只把清单里的提示词（你在页面上改过的就用改过的）发给 API易，别的一律不发。
-  Key 用 DPAPI 加密存在 data\secrets.bin（imgKey），不写日志、不进导出、不进时间轴和记录。
-- 模型（设置 › 云端 / 页面上「模型」那块能换）：
-  gpt-image-2.5-flare   默认。官转、按量（按 token）计费，最快；比例（size）、画质（quality）、透明背景（background）都能定
-  gpt-image-2.5-sunburst 官转、按量，细节和编辑精度更好，慢一点
-  gpt-image-2.5-all     官逆、按次 $0.025；不认 size、quality，比例只能写进提示词，透明背景不稳
-- 比例 → 尺寸（SIZES）：清单只写比例（正本规定的 10 种），这里换成 API 要的像素：16 的倍数、长边不超过 3840、0.65~8.3 百万像素；
-  「2K」档每张 200 多万像素（16:9 = 2048×1152，API易推荐的生产尺寸），「1K」档 100 多万像素、便宜一半多。
-- 透明背景开：background=transparent + png，提示词后面加一句「只画主体、背景透明、不要地面和投影」；存完看 PNG 有没有透明通道，没有就标出来。
-- 不放字：正本规矩 6（图里不放文字，AI 画的字容易乱码），默认在每条后面加一句「不要文字、logo、水印」（页面上能关）。
-- 视觉方向：正本要求每条提示词里已经写了统一画风，所以默认只显示、不发；页面上能打开「拼进每条提示词」。
-- 一次跑一批，同时出 imgConc 张（默认 3）。点「停下」：还没开始的不出了，正在出的出完再停——断开的话 API易照样计费、图却丢了。
-  只试一次，不自动重试（失败的那张点「重生成」）；Key 不对、余额不够就整批停下。
-- 存：生图输出\<日期>_<清单名>\<清单里的文件名>。重生成时旧的那张挪进同一个文件夹的「旧版」里（不删）。
-  清单原文（生图清单.md）、每张实际发出去的提示词、尺寸、用时、花费记在同一个文件夹的 生图记录.json。「打包 zip」只打图（不含旧版）。
+模型（页面上换，不一定要去设置）：默认 GPT Image 2.5 Sunburst VIP（作者挑的：按次 $0.03/张，画质够）。
+「刷新模型列表」用 API易 的 Key 调 GET /v1/models，挑出生图模型，按厂商分好（Google、OpenAI、Seedream、Flux……）；
+认识的模型（KNOWN）带着线路（官转 / 逆向）、计费（按次多少钱 / 按量）、大概多久、说明，和 API易 网页版「AI 图片大师」的列表一样。
+各家调用方式不一样，这里按厂商分四种（_call_*）：
+  openai   /v1/images/generations（JSON）；带参考图走 /v1/images/edits（multipart）。GPT Image 全家、Grok、没收录的都走这个
+  gemini   /v1beta/models/{id}:generateContent（Nano Banana）：aspectRatio + imageSize，参考图放 inlineData
+  seedream /v1/images/generations，size 写像素、watermark=false，参考图放 image 数组（data URI）
+  flux     /v1/images/generations，size 写像素（≤4MP），参考图放 input_image、input_image_2……；回来的是链接，马上下载
+尺寸：比例 × 档位（1K / 2K / 4K）用 API易 VIP 那 30 档（作者给视频窗口念过的那套，正本里的 10 种比例）；
+  Seedream 固定按 2K 那档（它最小 92 万像素），Flux 按 1K 那档（它最大 4MP）；All、Nano Banana 不写像素（比例写进提示词 / aspectRatio）。
+- 只把提示词和你给的参考图发给 API易，别的一律不发。Key 用 DPAPI 加密存在 data\secrets.bin（imgKey），不写日志、不进导出、不进记录。
+- 透明背景：GPT Image 2.5、VIP 这些发 background=transparent；别的模型只能在提示词里要（不一定真透明，存完看 PNG 有没有透明通道）。
+- 不放字：正本规矩 6，默认每条后面加一句「不要文字、logo、水印」。视觉方向默认不拼（每条提示词里已经写了画风）。
+- 一张一张出（imgConc，默认 1）。点「停下」：还没开始的不出了，正在出的出完——断开的话 API易 照样计费、图却丢了。
+  只试一次，不自动重试；Key 不对、余额不够、被限流整批停。
+- 存：批量 → 生图输出\<日期>_<清单名>\<清单里的文件名>；单张 → 生图输出\单张\<日期>\<时分秒>_<提示词开头>.png。
+  同名的旧图挪进「旧版」（不删）。每张实际发出去的提示词、尺寸、花费记在同一个文件夹的 生图记录.json。
 """
 import asyncio
 import base64
@@ -39,25 +44,26 @@ from fastapi.responses import FileResponse
 from . import db, feed, paths, settings
 
 RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]      # 正本第四节：能选的只有这 10 种
-SIZES = {                                                                                  # 都是 16 的倍数，长短边比不超过 3:1
-    "2k": {"16:9": (2048, 1152), "9:16": (1152, 2048), "1:1": (1536, 1536), "4:3": (1792, 1344), "3:4": (1344, 1792),
-           "3:2": (1920, 1280), "2:3": (1280, 1920), "5:4": (1600, 1280), "4:5": (1280, 1600), "21:9": (2240, 960)},
-    "1k": {"16:9": (1536, 864), "9:16": (864, 1536), "1:1": (1024, 1024), "4:3": (1280, 960), "3:4": (960, 1280),
-           "3:2": (1536, 1024), "2:3": (1024, 1536), "5:4": (1280, 1024), "4:5": (1024, 1280), "21:9": (1680, 720)},
+TIERS = ["1k", "2k", "4k"]
+SIZES = {                                                  # API易 VIP 的 30 档（10 种比例 × 1K/2K/4K），也合官转的规矩：16 的倍数、长边 ≤3840、0.65~8.3 百万像素
+    "1k": {"1:1": (1280, 1280), "2:3": (848, 1280), "3:2": (1280, 848), "3:4": (960, 1280), "4:3": (1280, 960), "4:5": (1024, 1280),
+           "5:4": (1280, 1024), "9:16": (720, 1280), "16:9": (1280, 720), "21:9": (1280, 544)},
+    "2k": {"1:1": (2048, 2048), "2:3": (1360, 2048), "3:2": (2048, 1360), "3:4": (1536, 2048), "4:3": (2048, 1536), "4:5": (1632, 2048),
+           "5:4": (2048, 1632), "9:16": (1152, 2048), "16:9": (2048, 1152), "21:9": (2048, 864)},
+    "4k": {"1:1": (2880, 2880), "2:3": (2336, 3520), "3:2": (3520, 2336), "3:4": (2480, 3312), "4:3": (3312, 2480), "4:5": (2560, 3216),
+           "5:4": (3216, 2560), "9:16": (2160, 3840), "16:9": (3840, 2160), "21:9": (3840, 1632)},
 }
-MODELS = [
-    {"id": "gpt-image-2.5-flare", "name": "GPT Image 2.5 Flare", "d": "最快 · 按量计费 · 比例、画质、透明背景都能定", "kind": "official"},
-    {"id": "gpt-image-2.5-sunburst", "name": "GPT Image 2.5 Sunburst", "d": "细节更好、慢一点 · 按量计费", "kind": "official"},
-    {"id": "gpt-image-2.5-all", "name": "GPT Image 2.5 All", "d": "按次 $0.025 · 不认比例和画质（比例写进提示词）· 透明背景不稳", "kind": "reverse", "per": 0.025},
-]
-QUALITY = [("low", "草稿"), ("medium", "标准"), ("high", "精细"), ("xhigh", "更精细"), ("max", "最高")]
-TOKENS_1K = {"low": 196, "medium": 439, "high": 1756, "xhigh": 3122, "max": 7024, "auto": 439}    # 1024² 一张的输出 token（API易 文档）
-USD_OUT, USD_IN = 30 / 1e6, 5 / 1e6                                                        # 输出 $30、输入 $5 每百万 token（粗算）
+QUALITY = {"auto": "自动", "low": "低", "medium": "中", "high": "高", "xhigh": "更高", "max": "最高"}
+TOKENS_1K = {"low": 196, "medium": 439, "high": 1756, "xhigh": 3122, "max": 7024, "auto": 439}    # 官转 1024² 一张的输出 token（API易 文档）
+USD_OUT, USD_IN = 30 / 1e6, 5 / 1e6                                                        # 官转：输出 $30、输入 $5 每百万 token（粗算）
 TRANS_TAIL = "只画主体本身，背景完全透明：不要场景、不要地面、不要投影。（isolated subject on a transparent background, no scenery, no ground, no shadow）"
 NOTEXT_TAIL = "画面里不要出现任何文字、字母、数字、水印或 logo。"
 TIMEOUT = 360.0                                                                            # 高画质 + 2K 要 3~5 分钟（API易 文档：别用 120 秒）
-BOARD = paths.DATA / "img" / "board.json"
-LOG_NAME, MD_NAME, OLD = "生图记录.json", "生图清单.md", "旧版"
+DEFAULT_MODEL = "gpt-image-2.5-sunburst-vip"
+IMGD = paths.DATA / "img"
+BOARD, REFS, TPL = IMGD / "board.json", IMGD / "refs", IMGD / "templates"
+LOG_NAME, MD_NAME, OLD, SINGLE = "生图记录.json", "生图清单.md", "旧版", "单张"
+MAX_REF_BYTES = 10 << 20
 JOBN = "生图"
 
 
@@ -278,20 +284,145 @@ def parse(md, name=""):
     return {"title": title[:60], "direction": direction[:2000], "items": out, "warn": warn}
 
 
-# ---------------- 尺寸、提示词、花费 ----------------
-def model_info(m=None):
-    m = m or settings.S.get("imgModel") or MODELS[0]["id"]
-    return next((x for x in MODELS if x["id"] == m), {"id": m, "name": m, "d": "自己填的模型（按官转的参数发）", "kind": "official"})
+
+# ---------------- 模型：认识的（带线路、价格、说明）+ 从 API易 拉的列表 ----------------
+VENDORS = [("google", "Google"), ("openai", "OpenAI"), ("seedream", "Seedream"), ("flux", "Flux"), ("microsoft", "Microsoft"), ("xai", "xAI"), ("other", "其他")]
+Q4, Q6, Q3 = ["auto", "low", "medium", "high"], ["auto", "low", "medium", "high", "xhigh", "max"], ["low", "medium", "high"]
 
 
-def size_of(ratio, res=None):
-    return SIZES.get(res or settings.S.get("imgRes") or "2k", SIZES["2k"]).get(ratio, SIZES["2k"]["16:9"])
+def _m(v, name, route, price, sec, d, proto="openai", size="preset", q=None, trans="prompt", refs=4, warn=""):
+    return {"v": v, "name": name, "route": route, "price": price, "sec": sec, "d": d, "proto": proto, "size": size, "q": q, "trans": trans,
+            "refs": refs, "warn": warn}
 
 
+KNOWN = {      # 按 API易 文档和网页版「AI 图片大师」的列表（2026-10）；价格是每张美元，None = 按量（按 token）
+    "gpt-image-2.5-sunburst-vip": _m("openai", "GPT Image 2.5 Sunburst VIP", "逆向", .03, 80, "高质量 2.5 Adobe 线路，画质与编辑精度优先；30 档尺寸（1K/2K/4K）、4 档画质、透明背景",
+                                     q=Q4, trans="api", refs=8, warn="当前不稳定"),
+    "gpt-image-2.5-flare-vip": _m("openai", "GPT Image 2.5 Flare VIP", "逆向", .03, 60, "高质量 2.5 Adobe 线路，速度优先、画面偏软；30 档尺寸、4 档画质、透明背景",
+                                  q=Q4, trans="api", refs=8, warn="当前不稳定"),
+    "gpt-image-2-vip": _m("openai", "GPT Image 2 VIP", "逆向", .03, 90, "Codex 线路，10 个比例 × 1K/2K/4K 三档分辨率", q=Q4, trans="api", refs=8),
+    "gpt-image-2.5-all": _m("openai", "GPT Image 2.5 All", "逆向", .03, 60, "ChatGPT 网页版线路（Images 2.5），文字还原度好、内容限制少；不认尺寸，比例写进提示词",
+                            size="prompt", refs=5),
+    "gpt-image-2-all": _m("openai", "GPT Image 2 All", "逆向", .025, 90, "ChatGPT 网页版线路；不认尺寸，比例写进提示词", size="prompt", refs=5),
+    "gpt-image-2.5-sunburst": _m("openai", "GPT Image 2.5 Sunburst", "官转", None, 40, "画质优先，按 token 计费（画质开高很贵）；5 档画质", q=Q6, trans="api", refs=8),
+    "gpt-image-2.5-flare": _m("openai", "GPT Image 2.5 Flare", "官转", None, 20, "速度优先，按 token 计费；5 档画质", q=Q6, trans="api", refs=8),
+    "gpt-image-2": _m("openai", "GPT Image 2", "官转", None, 90, "上一代官转，按 token 计费", q=Q4, refs=8),
+    "gpt-image-1.5": _m("openai", "GPT Image 1.5", "官转", None, 40, "按 token 计费", q=Q3, trans="api", refs=8),
+    "gpt-image-1": _m("openai", "GPT Image 1", "官转", None, 40, "按 token 计费", q=Q3, trans="api", refs=8),
+    "gpt-image-1-mini": _m("openai", "GPT Image 1 Mini", "官转", None, 20, "按 token 计费，便宜", q=Q3, trans="api", refs=8),
+    "gemini-3-pro-image-preview": _m("google", "Nano Banana Pro", "", .09, 30, "Google，1K/2K/4K，按原图比例编辑", proto="gemini", size="gemini", refs=14),
+    "gemini-3.1-flash-image": _m("google", "Nano Banana 2", "", .055, 15, "Google，0.5K~4K、14 种比例、最多 14 张参考图", proto="gemini", size="gemini", refs=14),
+    "gemini-2.5-flash-image": _m("google", "Nano Banana", "", .02, 10, "Google，便宜、快", proto="gemini", size="gemini", refs=3),
+    "seedream-5-0-pro-260628": _m("seedream", "Seedream 5.0 Pro", "", .12, 40, "字节，出 PNG，最多 10 张参考图", proto="seedream", size="seedream", refs=10),
+    "seedream-5-0-flash-260915": _m("seedream", "Seedream 5.0 Flash", "", .018, 15, "字节，快、便宜（默认加水印，这里关掉）", proto="seedream", size="seedream", refs=10),
+    "seedream-5-0-260128": _m("seedream", "Seedream 5.0", "", .035, 25, "字节 5.0 Lite", proto="seedream", size="seedream", refs=10),
+    "seedream-4-5-251128": _m("seedream", "Seedream 4.5", "", .04, 25, "字节，只出 JPEG", proto="seedream", size="seedream", refs=10),
+    "seedream-4-0-250828": _m("seedream", "Seedream 4.0", "", .03, 25, "字节，只出 JPEG", proto="seedream", size="seedream", refs=10),
+    "flux-2-max": _m("flux", "FLUX.2 Max", "", .07, 15, "BFL 最高质量，最多 8 张参考图", proto="flux", size="flux", refs=8),
+    "flux-2-pro": _m("flux", "FLUX.2 Pro", "", .03, 10, "BFL，最多 8 张参考图", proto="flux", size="flux", refs=8),
+    "flux-2-flex": _m("flux", "FLUX.2 Flex", "", .06, 30, "BFL，能调步数", proto="flux", size="flux", refs=8),
+    "flux-2-klein-9b": _m("flux", "FLUX.2 Klein 9B", "", .01, 3, "BFL，一秒出图，最多 4 张参考图", proto="flux", size="flux", refs=4),
+    "flux-2-klein-4b": _m("flux", "FLUX.2 Klein 4B", "", .01, 3, "BFL，一秒出图，最多 4 张参考图", proto="flux", size="flux", refs=4),
+    "grok-imagine-image": _m("xai", "Grok Imagine", "", .02, 15, "xAI（要对应分组的 Key）", size="preset", refs=4),
+    "grok-imagine-image-quality": _m("xai", "Grok Imagine Quality", "", .045, 25, "xAI 高质量（要对应分组的 Key）", size="preset", refs=4),
+}
+VENDOR_RE = [("google", r"gemini|nano-banana|imagen"), ("openai", r"gpt-image|dall-e|gpt-4o-image|chatgpt-image"), ("seedream", r"seedream|seededit"),
+             ("flux", r"flux|kontext"), ("microsoft", r"mai-image|microsoft"), ("xai", r"grok")]
+IMG_RE = re.compile(r"gpt-image|dall-e|-image|image-|seedream|seededit|flux|kontext|nano-banana|imagen|mai-image|grok-imagine|midjourney|^mj|ideogram|recraft|qwen-image", re.I)
+PROTO_OF = {"google": "gemini", "seedream": "seedream", "flux": "flux"}
+
+
+def vendor_of(mid):
+    if mid in KNOWN:
+        return KNOWN[mid]["v"]
+    return next((v for v, pat in VENDOR_RE if re.search(pat, mid, re.I)), "other")
+
+
+def card(mid=None):
+    """一个模型的说明卡：厂商、名字、线路、价格、大概多久、怎么调、认哪些参数。没收录的按厂商猜。"""
+    mid = (mid or settings.S.get("imgModel") or DEFAULT_MODEL).strip()
+    if mid in KNOWN:
+        return dict(KNOWN[mid], id=mid, known=True)
+    v = vendor_of(mid)
+    proto = PROTO_OF.get(v, "openai")
+    return dict(_m(v, mid, "", None, 60, "没收录的模型：按「" + dict(VENDORS)[v] + "」的方式调，先试一张看看", proto=proto,
+                   size={"gemini": "gemini", "seedream": "seedream", "flux": "flux"}.get(proto, "preset")), id=mid, known=False)
+
+
+def tiers_of(c):
+    return TIERS if c["size"] in ("preset", "gemini") else ["2k"] if c["size"] == "seedream" else ["1k"] if c["size"] == "flux" else []
+
+
+def dims(c, ratio, tier):
+    if c["size"] == "preset":
+        return SIZES.get(tier if tier in TIERS else "2k", SIZES["2k"]).get(ratio, SIZES["2k"]["16:9"])
+    if c["size"] == "seedream":
+        return SIZES["2k"].get(ratio, SIZES["2k"]["16:9"])
+    if c["size"] == "flux":
+        return SIZES["1k"].get(ratio, SIZES["1k"]["16:9"])
+    return None
+
+
+def est_usd(c, ratio, tier, quality):
+    """一张大概多少美元；按次的就是那个价，官转按 token 粗算，不知道的 None。"""
+    if c["price"] is not None:
+        return c["price"]
+    if c["route"] == "官转" and c["proto"] == "openai":
+        w, h = dims(c, ratio, tier) or (1024, 1024)
+        return TOKENS_1K.get(quality or "medium", 439) * (w * h / 1048576) * USD_OUT
+    return None
+
+
+def catalog():
+    """按厂商分好的模型列表：认识的排前面；listed = 这个 Key 在 API易 上能用（拉过列表才知道）。"""
+    cache = db.kv_get("img_models") or {}
+    ids = cache.get("ids") or []
+    allids = list(KNOWN) + sorted(set(ids) - set(KNOWN))
+    cur = settings.S.get("imgModel") or DEFAULT_MODEL
+    if cur not in allids:
+        allids.append(cur)
+    groups = []
+    for v, name in VENDORS:
+        ms = []
+        for mid in allids:
+            if vendor_of(mid) != v:
+                continue
+            c = card(mid)
+            ms.append({k: c[k] for k in ("id", "name", "route", "price", "sec", "d", "warn", "known", "proto", "refs", "trans")} |
+                      {"listed": (mid in ids) if ids else None, "q": c["q"], "tiers": tiers_of(c)})
+        if ms:
+            groups.append({"v": v, "name": name, "models": ms})
+    return {"groups": groups, "ts": cache.get("ts"), "err": cache.get("err", ""), "n": len(ids), "default": DEFAULT_MODEL}
+
+
+async def refresh_models():
+    """用 Key 调 API易 的 GET /v1/models，挑出生图模型存起来（kv img_models）。"""
+    k = settings.get_secret("imgKey")
+    if not k:
+        raise HTTPException(400, "先到 设置 › 云端 填 API易 Key，才能拉模型列表")
+    url = (settings.S.get("imgBase") or "https://api.apiyi.com/v1").rstrip("/") + "/models"
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(url, headers={"Authorization": f"Bearer {k}"})
+    except httpx.HTTPError as e:
+        raise HTTPException(502, "连不上 API易：" + _scrub(type(e).__name__, k)) from None
+    if r.status_code != 200:
+        raise HTTPException(502, str(explain(r.status_code, r.text, k)))
+    try:
+        data = r.json().get("data") or []
+    except Exception:
+        raise HTTPException(502, "API易 返回的模型列表看不懂") from None
+    ids = sorted({str(x.get("id")) for x in data if isinstance(x, dict) and x.get("id") and IMG_RE.search(str(x.get("id")))})
+    db.kv_set("img_models", {"ts": time.time(), "ids": ids, "all": len(data), "err": ""})
+    feed.add(f"拉了一遍 API易 的模型列表：{len(data)} 个模型里有 {len(ids)} 个生图的", "info", job=JOBN)
+    return catalog()
+
+
+# ---------------- 提示词、图片文件、报错 ----------------
 def build_prompt(it, direction="", with_dir=False, no_text=True, kind="official"):
-    """实际发出去的提示词：（视觉方向）+ 这一条 +（透明背景那句）+（不要文字那句）；官逆模型把比例写在最前面。"""
+    """实际发出去的提示词：（视觉方向）+ 这一条 +（透明背景那句）+（不要文字那句）；不认尺寸的模型把比例写在最前面。"""
     parts = []
-    if kind == "reverse":
+    if kind in ("reverse", "prompt"):
         w, h = (int(x) for x in it["ratio"].split(":"))
         parts.append(f"画面比例 {it['ratio']}（{'横版' if w > h else '竖版' if w < h else '正方形'}）。")
     if with_dir and direction:
@@ -302,15 +433,6 @@ def build_prompt(it, direction="", with_dir=False, no_text=True, kind="official"
     if no_text:
         parts.append(NOTEXT_TAIL)
     return "\n\n".join(p for p in parts if p)
-
-
-def est_usd(it, model=None, quality=None, res=None):
-    info = model_info(model)
-    if info.get("per"):
-        return info["per"]
-    w, h = size_of(it["ratio"], res)
-    q = quality or settings.S.get("imgQuality") or "medium"
-    return TOKENS_1K.get(q, 439) * (w * h / 1048576) * USD_OUT
 
 
 def png_info(b):
@@ -336,13 +458,16 @@ def png_info(b):
     raise ImgError("API易返回的不是图片（PNG / JPEG / WEBP 都不是）")
 
 
+MIME = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}
+
+
 def _scrub(s, k):
     s = str(s or "")
     return s.replace(k, "***") if k else s
 
 
 def explain(status, raw, k=""):
-    """API易 / OpenAI 的报错 → 一句中文。fatal：整批都会失败的（Key 不对、余额不够），就别接着出了。"""
+    """API易 / OpenAI 的报错 → 一句中文。fatal：后面的也都会失败（Key 不对、余额不够、限流），就别接着出了。"""
     msg = ""
     try:
         j = json.loads(raw)
@@ -357,19 +482,144 @@ def explain(status, raw, k=""):
     if status == 402 or "quota" in low or "余额" in msg or "insufficient" in low or "balance" in low:
         return ImgError("API易 余额不够了：去 API易 控制台充值，再点「只补没出的」", status, True)
     if status == 403 or "moderation" in low or "safety" in low or "content_policy" in low:
-        return ImgError("内容审核没过：改一改这条提示词再重生成（别写真人、品牌、敏感的东西）" + (f"（{msg}）" if msg else ""), status)
+        return ImgError("内容审核没过：改一改提示词再重生成（别写真人、品牌、敏感的东西）" + (f"（{msg}）" if msg else ""), status)
     if status == 429:
-        return ImgError("太快了，被限流：过一会再点「只补没出的」，或者把 设置 › 云端 的「同时出几张」调小", status, True)
+        return ImgError("被限流了 / 上游太忙：过一会再点「只补没出的」" + (f"（{msg}）" if msg else ""), status, True)
     if status == 404:
-        return ImgError(f"API易 说没有这个模型或接口：看 设置 › 云端 的生图模型、接口地址（{msg}）", status, True)
+        return ImgError(f"API易 说没有这个模型或接口：换个模型，或者看 设置 › 云端 的接口地址（{msg}）", status, True)
     if status == 400:
         return ImgError("参数不对：" + (msg or "看 生图记录.json 里发出去的是什么"), status)
     if status >= 500:
-        return ImgError(f"API易 / OpenAI 那边出错了（{status}）：过一会再点重生成", status)
+        return ImgError(f"API易 / 上游出错了（{status}）：过一会再点重生成" + (f"（{msg}）" if msg else ""), status)
     return ImgError(f"出错了（{status}）：{msg}", status)
 
 
-# ---------------- 一批 ----------------
+def data_uri(b):
+    fmt = png_info(b)["fmt"]
+    return f"data:{MIME[fmt]};base64," + base64.b64encode(b).decode()
+
+
+def read_uri(u):
+    """界面传来的参考图（data:image/...;base64,...）→ 字节；只认 PNG / JPEG / WEBP，单张 10MB 以内。"""
+    m = re.match(r"data:image/[\w.+-]+;base64,(.+)$", str(u or ""), re.S)
+    if not m:
+        raise HTTPException(400, "参考图格式不对（要 PNG / JPEG / WEBP）")
+    try:
+        b = base64.b64decode(m.group(1), validate=False)
+    except Exception:
+        raise HTTPException(400, "参考图读不出来") from None
+    if len(b) > MAX_REF_BYTES:
+        raise HTTPException(400, "参考图太大了：一张最多 10MB")
+    try:
+        png_info(b)
+    except ImgError:
+        raise HTTPException(400, "参考图只认 PNG / JPEG / WEBP") from None
+    return b
+
+
+# ---------------- 四种调用方式 ----------------
+async def _post(c, url, k, **kw):
+    try:
+        r = await c.post(url, headers={"Authorization": f"Bearer {k}"}, **kw)
+    except httpx.ConnectError:
+        raise ImgError("连不上 API易：看看网，或者 设置 › 云端 的接口地址", 0, True) from None
+    except httpx.TimeoutException:
+        raise ImgError(f"{int(TIMEOUT // 60)} 分钟没回音：这张算没出来（可能已经计费），过一会点重生成") from None
+    except httpx.HTTPError as e:
+        raise ImgError("和 API易 的连接断了：" + _scrub(type(e).__name__, k)) from None
+    if r.status_code != 200:
+        raise explain(r.status_code, r.text, k)
+    try:
+        return r.json()
+    except Exception:
+        raise ImgError("API易 返回的不是 JSON") from None
+
+
+async def _fetch(c, url):
+    try:
+        r = await c.get(url, timeout=60)
+    except httpx.HTTPError as e:
+        raise ImgError("图的下载链接打不开：" + type(e).__name__) from None
+    if r.status_code != 200:
+        raise ImgError(f"图的下载链接打不开（{r.status_code}）")
+    return r.content
+
+
+async def _image_of(c, j):
+    d = (j.get("data") or [{}])[0] if isinstance(j, dict) else {}
+    b64 = d.get("b64_json") or ""
+    if b64:
+        return base64.b64decode(b64.split(",", 1)[1] if b64.startswith("data:") else b64)
+    if d.get("url"):
+        return await _fetch(c, d["url"])
+    raise ImgError("API易 返回成功，但里面没有图")
+
+
+async def _call_openai(c, base, k, cd, prompt, ratio, tier, quality, transparent, refs):
+    f = {"model": cd["id"], "prompt": prompt}
+    wh = dims(cd, ratio, tier)
+    if wh:
+        f["size"] = f"{wh[0]}x{wh[1]}"
+    if cd["q"] and quality in cd["q"]:
+        f["quality"] = quality
+    if cd["trans"] == "api":
+        f["background"] = "transparent" if transparent else "opaque"
+    if cd["route"] == "官转":
+        f["output_format"] = "png"
+    else:
+        f["response_format"] = "b64_json"               # VIP、All：明着要 base64（默认给什么随负载变）
+    if refs:
+        name = "image[]" if len(refs) > 1 else "image"
+        files = [(name, (f"ref{i + 1}.{png_info(b)['fmt']}", b, MIME[png_info(b)["fmt"]])) for i, b in enumerate(refs)]
+        j = await _post(c, base + "/images/edits", k, data=f, files=files)
+    else:
+        j = await _post(c, base + "/images/generations", k, json=f)
+    return await _image_of(c, j), j.get("usage"), f
+
+
+async def _call_gemini(c, base, k, cd, prompt, ratio, tier, quality, transparent, refs):
+    root = re.sub(r"/v1/?$", "", base)
+    parts = [{"text": prompt}] + [{"inlineData": {"mimeType": MIME[png_info(b)["fmt"]], "data": base64.b64encode(b).decode()}} for b in refs]
+    body = {"contents": [{"parts": parts}], "generationConfig": {"responseModalities": ["IMAGE"], "imageConfig": {"aspectRatio": ratio, "imageSize": (tier or "2k").upper()}}}
+    j = await _post(c, f"{root}/v1beta/models/{cd['id']}:generateContent", k, json=body)
+    cand = (j.get("candidates") or [{}])[0]
+    img = None
+    for p in (cand.get("content") or {}).get("parts") or []:
+        d = p.get("inlineData") or p.get("inline_data")
+        if d and d.get("data"):
+            img = d["data"]                                     # 取最后一张（复杂的会先给草稿）
+    if not img:
+        why = cand.get("finishReason") or (j.get("promptFeedback") or {}).get("blockReason") or "没给图"
+        raise ImgError(f"Google 没出图（{why}）：多半是被安全审核拦了，改一改提示词再试（被拦的不扣钱）")
+    return base64.b64decode(img), None, {"model": cd["id"], "aspectRatio": ratio, "imageSize": (tier or "2k").upper(), "refs": len(refs)}
+
+
+async def _call_seedream(c, base, k, cd, prompt, ratio, tier, quality, transparent, refs):
+    w, h = dims(cd, ratio, tier)
+    f = {"model": cd["id"], "prompt": prompt, "size": f"{w}x{h}", "watermark": False, "response_format": "b64_json"}
+    if cd["id"].startswith("seedream-5"):
+        f["output_format"] = "png"
+    if refs:
+        f["image"] = [data_uri(b) for b in refs]
+        if not re.search(r"5-0-(pro|flash)", cd["id"]):
+            f["sequential_image_generation"] = "disabled"
+    j = await _post(c, base + "/images/generations", k, json=f)
+    return await _image_of(c, j), None, {x: f[x] for x in f if x != "image"} | {"refs": len(refs)}
+
+
+async def _call_flux(c, base, k, cd, prompt, ratio, tier, quality, transparent, refs):
+    w, h = dims(cd, ratio, tier)
+    f = {"model": cd["id"], "prompt": prompt, "size": f"{w}x{h}"}
+    for i, b in enumerate(refs[:8]):
+        f["input_image" if i == 0 else f"input_image_{i + 1}"] = data_uri(b)
+    j = await _post(c, base + "/images/generations", k, json=f)
+    return await _image_of(c, j), None, {x: f[x] for x in f if not x.startswith("input_image")} | {"refs": len(refs)}
+
+
+CALL = {"openai": _call_openai, "gemini": _call_gemini, "seedream": _call_seedream, "flux": _call_flux}
+
+
+# ---------------- 生图页的管家 ----------------
 class Gen:
     def __init__(self):
         self.board = self._load()
@@ -383,6 +633,9 @@ class Gen:
     def key(self):
         return settings.get_secret("imgKey")
 
+    def base(self):
+        return (self.s.get("imgBase") or "https://api.apiyi.com/v1").rstrip("/")
+
     def out_root(self):
         return paths.resolve(self.s.get("imgOut", ""), paths.IMG_OUT)
 
@@ -392,7 +645,7 @@ class Gen:
     def busy(self):
         return bool(self.job and self.job["st"] == "run")
 
-    # ---------- 存、读 ----------
+    # ---------- 当前这份清单：存、读 ----------
     def _load(self):
         try:
             b = json.loads(BOARD.read_text("utf-8"))
@@ -439,7 +692,7 @@ class Gen:
         d = self.out_root() / f"{datetime.now():%Y-%m-%d}_{safe}"
         for it in p["items"]:
             it.update(st="idle", err="", warn="", w=0, h=0, alpha=None, sec=None, usd=None, ver=0, edited=False)
-        self.job = None                                              # 上一份清单的那批结果不留在新清单上
+        self.job = None
         self.board = {"id": int(time.time() * 1000), "title": p["title"], "direction": p["direction"], "md": md, "md_name": (name or "")[:80],
                       "warn": p["warn"], "dir": str(d), "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "items": p["items"]}
         self._scan()
@@ -451,7 +704,9 @@ class Gen:
     def clear(self):
         if self.busy():
             raise HTTPException(409, "正在出图，先点「停下」")
-        self.board, self.job = None, None
+        self.board = None
+        if self.job and self.job.get("kind") == "batch":
+            self.job = None
         try:
             BOARD.unlink()
         except FileNotFoundError:
@@ -478,20 +733,33 @@ class Gen:
             it["ratio"] = body["ratio"]
         if "transparent" in body:
             it["transparent"] = bool(body["transparent"])
-        if "use" in body:
-            it["use"] = str(body["use"] or "")[:80]
         it["edited"] = it["prompt"] != it.get("src")
         self._save()
         return it
 
-    # ---------- 出图 ----------
-    def start(self, ids=None, only_missing=False):
+    # ---------- 开始一批 ----------
+    def _ready(self):
         if self.busy():
             raise HTTPException(409, "正在出图，等这批出完或者先点「停下」")
-        if not self.board or not self.board.get("items"):
-            raise HTTPException(400, "先上传生图清单")
         if not self.key():
             raise HTTPException(400, "还没填 API易 的 Key：到 设置 › 云端 填好再生成")
+
+    def _new_job(self, kind, tasks):
+        cd = card()
+        q, tier = self.s.get("imgQuality") or "high", self.s.get("imgRes") or "2k"
+        est = [est_usd(cd, t["ratio"], tier, q) for t in tasks]
+        self.job = {"id": int(time.time() * 1000), "st": "run", "kind": kind, "n": len(tasks), "done": 0, "fail": 0, "t0": time.time(), "t1": 0.0,
+                    "stop": False, "usd": 0.0, "est": None if None in est else round(sum(est), 4), "model": cd["id"], "mname": cd["name"], "quality": q,
+                    "tier": tier, "conc": max(1, min(4, int(self.s.get("imgConc") or 1))), "msg": "", "fatal": "", "results": [], "cur": None}
+        feed.add(f"开始生图（{'批量' if kind == 'batch' else '单张'}）：{len(tasks)} 张，{cd['name']}、{QUALITY.get(q, q)}、{tier.upper()}" +
+                 (f"，预估约 ${self.job['est']:.2f}" if self.job["est"] is not None else ""), "head", job=JOBN)
+        self._task = asyncio.get_running_loop().create_task(self._run(self.job, tasks))
+        return self.public()
+
+    def start(self, ids=None, only_missing=False):
+        self._ready()
+        if not self.board or not self.board.get("items"):
+            raise HTTPException(400, "先上传生图清单")
         items = self.board["items"]
         if ids:
             want = {str(x) for x in ids}
@@ -503,19 +771,46 @@ class Gen:
         todo = [it for it in todo if it["prompt"].strip()]
         if not todo:
             raise HTTPException(400, "没有要出的：都出好了（要重出点那张的「重生成」），或者提示词是空的")
-        conc = max(1, min(6, int(self.s.get("imgConc") or 3)))
-        info = model_info()
-        q, res = self.s.get("imgQuality") or "medium", self.s.get("imgRes") or "2k"
-        est = sum(est_usd(it, info["id"], q, res) for it in todo)
-        self.job = {"id": int(time.time() * 1000), "st": "run", "n": len(todo), "done": 0, "fail": 0, "t0": time.time(), "t1": 0.0,
-                    "stop": False, "usd": 0.0, "est": round(est, 4), "model": info["id"], "quality": q, "res": res, "conc": conc, "msg": "", "fatal": ""}
+        d = self.folder()
+        tasks = []
         for it in todo:
             it["prev"] = it["st"]
             it.update(st="queue", err="", warn="")
+            tasks.append({"kind": "batch", "item": it, "label": it["file"], "prompt": it["prompt"], "ratio": it["ratio"], "transparent": it["transparent"],
+                          "dir": d, "name": it["file"], "refs": [], "use": it.get("use", ""), "title": self.board.get("title", "")})
         self._save()
-        feed.add(f"开始生图：{len(todo)} 张，{info['name']}、{dict(QUALITY).get(q, q)}、{res.upper()}，同时出 {conc} 张，预估约 ${est:.2f}", "head", job=JOBN)
-        self._task = asyncio.get_running_loop().create_task(self._run(self.job, todo))
-        return self.public()
+        return self._new_job("batch", tasks)
+
+    def single(self, body):
+        """单张：文生图 / 带参考图生图，一次 1~4 张。参考图先存一份到 data\\img\\refs（历史里能看到用了几张）。"""
+        self._ready()
+        prompt = str(body.get("prompt") or "").strip()
+        if not prompt:
+            raise HTTPException(400, "写一句提示词")
+        if len(prompt) > 8000:
+            raise HTTPException(400, "提示词太长了（最多 8000 字）")
+        ratio = body.get("ratio") if body.get("ratio") in RATIOS else "1:1"
+        n = max(1, min(4, int(body.get("n") or 1)))
+        cd = card()
+        refs_in = body.get("refs") or []
+        if len(refs_in) > max(1, cd["refs"]):
+            raise HTTPException(400, f"{cd['name']} 最多 {cd['refs']} 张参考图")
+        refs = [read_uri(u) for u in refs_in]
+        rp = []
+        if refs:
+            REFS.mkdir(parents=True, exist_ok=True)
+            stamp = int(time.time() * 1000)
+            for i, b in enumerate(refs):
+                p = REFS / f"{stamp}_{i + 1}.{png_info(b)['fmt']}"
+                p.write_bytes(b)
+                rp.append(p)
+        day = self.out_root() / SINGLE / datetime.now().strftime("%Y-%m-%d")
+        head = re.sub(r'[\\/:*?"<>|\r\n\t\s，。、；：！？,.;:!?]+', "", prompt)[:12] or "单张"
+        stamp = datetime.now().strftime("%H%M%S")
+        tasks = [{"kind": "single", "item": None, "label": f"{stamp}_{head}" + (f"_{i + 1}" if n > 1 else "") + ".png", "prompt": prompt, "ratio": ratio,
+                  "transparent": bool(body.get("transparent")), "dir": day, "name": f"{stamp}_{head}" + (f"_{i + 1}" if n > 1 else "") + ".png",
+                  "refs": rp, "use": "单张" + (f" · {len(rp)} 张参考图" if rp else ""), "title": "单张"} for i in range(n)]
+        return self._new_job("single", tasks)
 
     def stop(self):
         if self.busy():
@@ -523,96 +818,96 @@ class Gen:
             self.job["msg"] = "停下：没开始的不出了，正在出的出完就停（断开的话照样计费、图却丢了）"
         return self.public()
 
-    async def _run(self, job, todo):
+    async def _run(self, job, tasks):
         sem = asyncio.Semaphore(job["conc"])
-        d = self.folder()
-        d.mkdir(parents=True, exist_ok=True)
-        self._write_md(d)
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=15.0, read=TIMEOUT, write=60.0, pool=None)) as c:
-            async def one(it):
+        if job["kind"] == "batch":
+            d = self.folder()
+            d.mkdir(parents=True, exist_ok=True)
+            self._write_md(d)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=15.0, read=TIMEOUT, write=120.0, pool=None)) as c:
+            async def one(t):
                 async with sem:
                     if job["stop"]:
-                        it["st"] = it.pop("prev", "idle") if it.get("prev") in ("ok", "err") else "idle"
+                        it = t["item"]
+                        if it is not None:
+                            it["st"] = it.pop("prev", "idle") if it.get("prev") in ("ok", "err") else "idle"
                         return
-                    await self._one(c, job, it, d)
-            await asyncio.gather(*(one(it) for it in todo))
-        job.update(st="stop" if job["stop"] else "done", t1=time.time())
+                    await self._one(c, job, t)
+            await asyncio.gather(*(one(t) for t in tasks))
+        job.update(st="stop" if job["stop"] else "done", t1=time.time(), cur=None)
         took = job["t1"] - job["t0"]
         mins = f"{int(took // 60)} 分 {int(took % 60):02d} 秒" if took >= 60 else f"{int(took)} 秒"
         job["msg"] = (f"{'停了' if job['stop'] else '好了'}：出了 {job['done']} 张" + (f"，{job['fail']} 张没出来" if job["fail"] else "") +
                       f"，用了 {mins}，约 ${job['usd']:.2f}（≈¥{job['usd'] * float(self.s.get('usdCny') or 7.2):.2f}）" + (f"。{job['fatal']}" if job["fatal"] else ""))
-        self._save()
+        if job["kind"] == "batch":
+            self._save()
         feed.add("生图" + job["msg"], "warn" if job["fail"] or job["stop"] else "ok", job=JOBN)
 
-    async def _one(self, c, job, it, d):
-        info = model_info(job["model"])
-        it.update(st="run", t0=time.time(), err="", warn="")
-        it.pop("prev", None)
-        prompt = build_prompt(it, self.board.get("direction", ""), bool(self.s.get("imgWithDir")), bool(self.s.get("imgNoText", True)), info["kind"])
-        w, h = size_of(it["ratio"], job["res"])
-        body = {"model": info["id"], "prompt": prompt}
-        if info["kind"] == "reverse":
-            body["response_format"] = "b64_json"
-        else:
-            body.update(size=f"{w}x{h}", quality=job["quality"], output_format="png", n=1,
-                        background="transparent" if it["transparent"] else "opaque")
+    async def _one(self, c, job, t):
+        cd = card(job["model"])
+        it = t["item"]
+        t0 = time.time()
+        job["cur"] = {"label": t["label"], "prompt": t["prompt"], "ratio": t["ratio"], "transparent": t["transparent"], "use": t["use"], "t0": t0,
+                      "sec": cd["sec"], "refs": len(t["refs"]), "size": "×".join(map(str, dims(cd, t["ratio"], job["tier"]) or ())) or t["ratio"]}
+        if it is not None:
+            it.update(st="run", t0=t0, err="", warn="")
+            it.pop("prev", None)
+        kind = "prompt" if cd["size"] == "prompt" else "official"
+        direction = self.board.get("direction", "") if (t["kind"] == "batch" and self.board) else ""
+        prompt = build_prompt(t, direction, bool(self.s.get("imgWithDir")), bool(self.s.get("imgNoText", True)), kind)
         k = self.key()
-        url = (self.s.get("imgBase") or "https://api.apiyi.com/v1").rstrip("/") + "/images/generations"
+        res = {"label": t["label"], "ok": False, "item": it["id"] if it else None, "ratio": t["ratio"], "transparent": t["transparent"]}
         try:
             if job["fatal"]:
                 raise ImgError(job["fatal"])
-            try:
-                r = await c.post(url, json=body, headers={"Authorization": f"Bearer {k}", "Content-Type": "application/json"})
-            except httpx.ConnectError:
-                raise ImgError("连不上 API易：看看网，或者 设置 › 云端 的生图接口地址", 0, True) from None
-            except httpx.TimeoutException:
-                raise ImgError(f"{int(TIMEOUT // 60)} 分钟没回音：这张算没出来（可能已经计费），过一会点重生成") from None
-            except httpx.HTTPError as e:
-                raise ImgError("和 API易 的连接断了：" + _scrub(type(e).__name__, k)) from None
-            if r.status_code != 200:
-                raise explain(r.status_code, r.text, k)
-            j = r.json()
-            data = (j.get("data") or [{}])[0]
-            b64 = data.get("b64_json") or ""
-            if b64:
-                img = base64.b64decode(b64.split(",", 1)[1] if b64.startswith("data:") else b64)
-            elif data.get("url"):
-                r2 = await c.get(data["url"])
-                if r2.status_code != 200:
-                    raise ImgError(f"图的下载链接打不开（{r2.status_code}）")
-                img = r2.content
-            else:
-                raise ImgError("API易返回成功，但里面没有图")
+            refs = [p.read_bytes() for p in t["refs"]]
+            img, usage, sent = await CALL.get(cd["proto"], _call_openai)(c, self.base(), k, cd, prompt, t["ratio"], job["tier"], job["quality"], t["transparent"], refs)
             pi = png_info(img)
-            u = j.get("usage") or {}
-            usd = info["per"] if info.get("per") else (float(u.get("output_tokens") or 0) * USD_OUT + float(u.get("input_tokens") or 0) * USD_IN
-                                                     if u else est_usd(it, info["id"], job["quality"], job["res"]))
-            name = it["file"] if pi["fmt"] == "png" else re.sub(r"\.png$", "." + pi["fmt"], it["file"])
-            self._put(d, name, img)
-            sec = round(time.time() - it["t0"], 1)
+            if usage and cd["price"] is None:
+                usd = float(usage.get("output_tokens") or 0) * USD_OUT + float(usage.get("input_tokens") or 0) * USD_IN
+            else:
+                usd = cd["price"] if cd["price"] is not None else (est_usd(cd, t["ratio"], job["tier"], job["quality"]) or 0.0)
+            name = t["name"] if pi["fmt"] == "png" else re.sub(r"\.png$", "." + pi["fmt"], t["name"])
+            t["dir"].mkdir(parents=True, exist_ok=True)
+            path = self._put(t["dir"], name, img)
+            sec = round(time.time() - t0, 1)
             warn = []
-            if it["transparent"] and not pi["alpha"]:
-                warn.append("要透明背景，但出来的图没有透明通道：点重生成，或者换 Sunburst")
-            if pi["w"] and pi["h"] and abs(math.log((pi["w"] / pi["h"]) / (int(it["ratio"].split(":")[0]) / int(it["ratio"].split(":")[1])))) > 0.05:
-                warn.append(f"出来的比例是 {pi['w']}×{pi['h']}，不是 {it['ratio']}")
-            if name != it["file"]:
+            if t["transparent"] and not pi["alpha"]:
+                warn.append("要透明背景，但出来的图没有透明通道：点重生成" + ("" if cd["trans"] == "api" else "，或者换个认透明背景的模型（GPT Image 2.5 / VIP）"))
+            rw, rh = (int(x) for x in t["ratio"].split(":"))
+            if pi["w"] and pi["h"] and abs(math.log((pi["w"] / pi["h"]) / (rw / rh))) > 0.05:
+                warn.append(f"出来的比例是 {pi['w']}×{pi['h']}，不是 {t['ratio']}")
+            if name != t["name"]:
                 warn.append(f"API易给的是 {pi['fmt'].upper()}，存成了 {name}")
-            it.update(st="ok", w=pi["w"], h=pi["h"], alpha=pi["alpha"], sec=sec, usd=round(usd, 4), ver=int(time.time() * 1000), warn="；".join(warn),
-                      saved=name, old=False)
+            hid = db.insert("img_history", {"ts": time.time(), "kind": t["kind"], "title": t["title"], "file": name, "path": str(path), "model": cd["id"],
+                                            "prompt": t["prompt"], "sent": prompt, "ratio": t["ratio"], "tier": job["tier"], "quality": job["quality"],
+                                            "transparent": int(bool(t["transparent"])), "w": pi["w"], "h": pi["h"], "alpha": int(bool(pi["alpha"])),
+                                            "usd": round(usd, 4), "sec": sec, "refs": len(t["refs"])})
+            ver = int(time.time() * 1000)
+            if it is not None:
+                it.update(st="ok", w=pi["w"], h=pi["h"], alpha=pi["alpha"], sec=sec, usd=round(usd, 4), ver=ver, warn="；".join(warn), saved=name, old=False, hid=hid)
+            res.update(ok=True, hid=hid, w=pi["w"], h=pi["h"], alpha=pi["alpha"], usd=round(usd, 4), sec=sec, warn="；".join(warn), file=name)
             job["done"] += 1
             job["usd"] += usd
-            self._log(d, it, prompt, info, job, pi, usd, sec, name)
+            self._log(t["dir"], t, prompt, cd, job, pi, usd, sec, name, sent)
             self._month(usd)
         except ImgError as e:
-            it.update(st="err", err=str(e), sec=round(time.time() - it["t0"], 1))
+            if it is not None:
+                it.update(st="err", err=str(e), sec=round(time.time() - t0, 1))
+            res.update(err=str(e))
             job["fail"] += 1
             if e.fatal and not job["fatal"]:
                 job["fatal"] = str(e)
                 job["stop"] = True
         except Exception as e:                                       # 意外的：写清楚，不让整批卡住
-            it.update(st="err", err=_scrub(f"出错了：{type(e).__name__} {e}", k)[:200])
+            msg = _scrub(f"出错了：{type(e).__name__} {e}", k)[:200]
+            if it is not None:
+                it.update(st="err", err=msg)
+            res.update(err=msg)
             job["fail"] += 1
-        self._save()
+        job["results"].append(res)
+        if t["kind"] == "batch":
+            self._save()
 
     def _put(self, d, name, img):
         """存图：同名的旧图挪进「旧版」（不删），新的原子地写进去。"""
@@ -644,22 +939,24 @@ class Gen:
         except Exception:
             pass
 
-    def _log(self, d, it, prompt, info, job, pi, usd, sec, name):
+    def _log(self, d, t, prompt, cd, job, pi, usd, sec, name, sent):
         p = d / LOG_NAME
         try:
             log = json.loads(p.read_text("utf-8")) if p.exists() else {}
         except Exception:
             log = {}
         log.setdefault("app", "Agent 生图")
-        log["title"], log["direction"] = self.board.get("title"), self.board.get("direction")
-        order = {x["file"]: k for k, x in enumerate(self.board["items"])}
+        if t["kind"] == "batch" and self.board:
+            log["title"], log["direction"] = self.board.get("title"), self.board.get("direction")
+            order = {x["file"]: k for k, x in enumerate(self.board["items"])}
+        else:
+            order = {}
         imgs = log.setdefault("images", {})
-        imgs[it["file"]] = {
-            "file": name, "use": it.get("use", ""), "ratio": it["ratio"], "transparent": it["transparent"], "size": f"{pi['w']}x{pi['h']}",
-            "alpha": pi["alpha"], "model": info["id"], "quality": None if info["kind"] == "reverse" else job["quality"],
-            "prompt_sent": prompt, "edited": bool(it.get("edited")), "seconds": sec, "usd": round(usd, 4),
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-        log["images"] = dict(sorted(imgs.items(), key=lambda kv: order.get(kv[0], 999)))         # 按清单的顺序
+        imgs[t["name"]] = {"file": name, "use": t.get("use", ""), "ratio": t["ratio"], "transparent": t["transparent"], "size": f"{pi['w']}x{pi['h']}",
+                           "alpha": pi["alpha"], "model": cd["id"], "tier": job["tier"], "quality": job["quality"] if cd["q"] else None,
+                           "refs": len(t["refs"]), "prompt_sent": prompt, "params": sent, "seconds": sec, "usd": round(usd, 4),
+                           "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        log["images"] = dict(sorted(imgs.items(), key=lambda kv: (order.get(kv[0], 999), kv[1].get("time", ""))))
         try:
             tmp = p.with_suffix(".tmp")
             tmp.write_text(json.dumps(log, ensure_ascii=False, indent=2), "utf-8")
@@ -675,6 +972,91 @@ class Gen:
         x["usd"] = round(x["usd"] + usd, 4)
         u[m] = x
         db.kv_set("img_usage", {k: u[k] for k in sorted(u)[-12:]})
+
+    # ---------- 历史、模板 ----------
+    def history(self, q="", limit=60, before=0):
+        sql, args = "SELECT id,ts,kind,title,file,path,model,prompt,ratio,tier,quality,transparent,w,h,alpha,usd,sec,refs FROM img_history", []
+        cond = []
+        if q:
+            cond.append("(prompt LIKE ? OR file LIKE ? OR title LIKE ?)")
+            args += [f"%{q}%"] * 3
+        if before:
+            cond.append("id < ?")
+            args.append(int(before))
+        if cond:
+            sql += " WHERE " + " AND ".join(cond)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(max(1, min(200, int(limit))))
+        out = []
+        for r in db.q(sql, tuple(args)):
+            x = dict(r)
+            x["exists"] = Path(x.pop("path") or "").exists()
+            x["transparent"], x["alpha"] = bool(x["transparent"]), bool(x["alpha"])
+            out.append(x)
+        return out
+
+    def hpath(self, hid):
+        r = db.one("SELECT path FROM img_history WHERE id=?", (int(hid),))
+        p = Path(r["path"]) if r and r["path"] else None
+        if not p or not p.exists():
+            raise HTTPException(404, "这张图找不到了（文件被挪走或删了）")
+        return p
+
+    def templates(self):
+        return db.kv_get("img_templates") or []
+
+    def save_tpl(self, body):
+        name = str(body.get("name") or "").strip()[:40]
+        prompt = str(body.get("prompt") or "").strip()[:8000]
+        if not name:
+            raise HTTPException(400, "给模板起个名字")
+        if not prompt and not body.get("refs"):
+            raise HTTPException(400, "模板里至少要有提示词或者参考图")
+        refs = [read_uri(u) for u in (body.get("refs") or [])[:14]]
+        tid = str(int(time.time() * 1000))
+        TPL.mkdir(parents=True, exist_ok=True)
+        files = []
+        for i, b in enumerate(refs):
+            f = f"{tid}_{i + 1}.{png_info(b)['fmt']}"
+            (TPL / f).write_bytes(b)
+            files.append(f)
+        tpl = {"id": tid, "name": name, "prompt": prompt, "model": str(body.get("model") or settings.S.get("imgModel") or DEFAULT_MODEL),
+               "ratio": body.get("ratio") if body.get("ratio") in RATIOS else "1:1", "tier": body.get("tier") if body.get("tier") in TIERS else "2k",
+               "quality": body.get("quality") if body.get("quality") in QUALITY else "high", "transparent": bool(body.get("transparent")),
+               "n": max(1, min(4, int(body.get("n") or 1))), "refs": files, "ts": time.time()}
+        ts = [x for x in self.templates() if x["name"] != name]
+        for x in self.templates():
+            if x["name"] == name:
+                self._del_tpl_files(x)
+        ts.insert(0, tpl)
+        db.kv_set("img_templates", ts[:60])
+        return tpl
+
+    def _del_tpl_files(self, x):
+        for f in x.get("refs") or []:
+            try:
+                (TPL / f).unlink()
+            except OSError:
+                pass
+
+    def del_tpl(self, tid):
+        ts = self.templates()
+        x = next((t for t in ts if t["id"] == str(tid)), None)
+        if not x:
+            raise HTTPException(404, "没有这个模板")
+        self._del_tpl_files(x)
+        db.kv_set("img_templates", [t for t in ts if t["id"] != str(tid)])
+        return self.templates()
+
+    def tpl_ref(self, tid, k):
+        x = next((t for t in self.templates() if t["id"] == str(tid)), None)
+        try:
+            p = TPL / x["refs"][int(k)]
+        except (TypeError, IndexError, ValueError):
+            raise HTTPException(404, "没有这张参考图") from None
+        if not p.exists():
+            raise HTTPException(404, "这张参考图找不到了")
+        return p
 
     # ---------- 打开、打包 ----------
     def file(self, iid):
@@ -706,11 +1088,13 @@ class Gen:
     # ---------- 给界面 ----------
     def public(self):
         j = self.job
-        out = None
-        if j:
-            out = {k: j.get(k) for k in ("id", "st", "n", "done", "fail", "msg", "est", "model", "quality", "res", "conc", "fatal")}
-            out["usd"] = round(j["usd"], 4)
-            out["elapsed"] = round((j["t1"] or time.time()) - j["t0"])
+        if not j:
+            return None
+        out = {k: j.get(k) for k in ("id", "st", "kind", "n", "done", "fail", "msg", "est", "model", "mname", "quality", "tier", "conc", "fatal", "results")}
+        out["usd"] = round(j["usd"], 4)
+        out["elapsed"] = round((j["t1"] or time.time()) - j["t0"])
+        cur = j.get("cur")
+        out["cur"] = dict(cur, run_s=round(time.time() - cur["t0"], 1)) if cur else None
         return out
 
     def status(self):
@@ -724,15 +1108,19 @@ class Gen:
             board["dir"] = paths.show(Path(b["dir"])) if b.get("dir") else ""
             board["exists"] = bool(b.get("dir") and Path(b["dir"]).exists())
             board["items"] = [dict({k: it.get(k) for k in ("id", "file", "use", "ratio", "transparent", "prompt", "st", "err", "warn", "w", "h", "alpha",
-                                                          "sec", "usd", "ver", "edited", "old")},
+                                                          "sec", "usd", "ver", "edited", "old", "hid")},
                                    run_s=round(now - it["t0"]) if it.get("st") == "run" and it.get("t0") else None) for it in b["items"]]
-        return {"board": board, "job": self.public(), "models": MODELS, "ratios": RATIOS, "sizes": {r: {k: f"{w}×{h}" for k, (w, h) in v.items()} for r, v in SIZES.items()},
-                "quality": QUALITY, "tokens": TOKENS_1K, "usd_out": USD_OUT,
-                "cfg": {"model": self.s.get("imgModel"), "quality": self.s.get("imgQuality"), "res": self.s.get("imgRes"), "conc": self.s.get("imgConc"),
-                        "notext": bool(self.s.get("imgNoText", True)), "withdir": bool(self.s.get("imgWithDir")), "key": bool(hint), "hint": hint,
-                        "base": self.s.get("imgBase")},
+        cd = card()
+        return {"board": board, "job": self.public(), "ratios": RATIOS, "tiers": TIERS, "quality": QUALITY,
+                "sizes": {t: {r: f"{w}×{h}" for r, (w, h) in v.items()} for t, v in SIZES.items()},
+                "model": {k: cd[k] for k in ("id", "name", "route", "price", "sec", "d", "warn", "known", "proto", "refs", "trans", "size", "v")} |
+                         {"q": cd["q"], "tiers": tiers_of(cd), "vendor": dict(VENDORS)[cd["v"]]},
+                "tokens": TOKENS_1K, "usd_out": USD_OUT,
+                "cfg": {"model": cd["id"], "quality": self.s.get("imgQuality") or "high", "tier": self.s.get("imgRes") or "2k", "notext": bool(self.s.get("imgNoText", True)),
+                        "withdir": bool(self.s.get("imgWithDir")), "key": bool(hint), "hint": hint, "base": self.s.get("imgBase")},
                 "usdCny": float(self.s.get("usdCny") or 7.2), "month": (db.kv_get("img_usage") or {}).get(m) or {"n": 0, "usd": 0.0},
-                "out": paths.show(self.out_root())}
+                "out": paths.show(self.out_root()), "templates": [dict(t, refs=len(t.get("refs") or [])) for t in self.templates()],
+                "recent": self.history(limit=12)}
 
 
 G = Gen()
@@ -742,6 +1130,16 @@ api = APIRouter()
 @api.get("/api/img")
 def img_status():
     return G.status()
+
+
+@api.get("/api/img/models")
+def img_models():
+    return catalog()
+
+
+@api.post("/api/img/models/refresh")
+async def img_models_refresh():
+    return await refresh_models()
 
 
 @api.post("/api/img/load")
@@ -760,6 +1158,11 @@ async def img_run(body: dict = Body(default={})):
     return {"job": G.start(body.get("ids"), bool(body.get("missing")))}
 
 
+@api.post("/api/img/single")
+async def img_single(body: dict = Body(...)):
+    return {"job": G.single(body)}
+
+
 @api.post("/api/img/stop")
 def img_stop():
     return {"job": G.stop()}
@@ -773,13 +1176,42 @@ def img_clear():
 
 @api.get("/api/img/file/{iid}")
 def img_file(iid: str):
-    p = G.file(iid)
-    return FileResponse(p, headers={"Cache-Control": "private, max-age=31536000"})     # 地址里带着版本号，换了图地址就变
+    return FileResponse(G.file(iid), headers={"Cache-Control": "private, max-age=31536000"})     # 地址里带着版本号，换了图地址就变
+
+
+@api.get("/api/img/hist")
+def img_hist(q: str = "", limit: int = 60, before: int = 0):
+    return {"items": G.history(q, limit, before)}
+
+
+@api.get("/api/img/hfile/{hid}")
+def img_hfile(hid: int):
+    return FileResponse(G.hpath(hid), headers={"Cache-Control": "private, max-age=31536000"})
+
+
+@api.post("/api/img/templates")
+def img_tpl_save(body: dict = Body(...)):
+    return {"template": G.save_tpl(body), "templates": [dict(t, refs=len(t.get("refs") or [])) for t in G.templates()]}
+
+
+@api.delete("/api/img/templates/{tid}")
+def img_tpl_del(tid: str):
+    return {"templates": [dict(t, refs=len(t.get("refs") or [])) for t in G.del_tpl(tid)]}
+
+
+@api.get("/api/img/tplref/{tid}/{k}")
+def img_tpl_ref(tid: str, k: int):
+    return FileResponse(G.tpl_ref(tid, k))
 
 
 @api.post("/api/img/open")
-def img_open():
-    d = G.folder() if G.folder() and G.folder().exists() else G.out_root()
+def img_open(body: dict = Body(default={})):
+    if body.get("hid"):
+        d = G.hpath(body["hid"]).parent
+    elif body.get("single"):
+        d = G.out_root() / SINGLE
+    else:
+        d = G.folder() if G.folder() and G.folder().exists() else G.out_root()
     d.mkdir(parents=True, exist_ok=True)
     if paths.IS_WIN:
         os.startfile(str(d))          # 打开资源管理器（不是黑窗口）

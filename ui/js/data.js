@@ -165,11 +165,7 @@ var SECTIONS = [
     { k: 'blMax', l: '一次最多发多少字', t: 'number', u: '字', d: 2000, h: '超过就按段落分几块念（同一个音色、语气、种子），最后拼成一个文件。百炼报「文本太长」就调小' },
     { k: 'blBase', l: '百炼接口地址', d: 'https://dashscope.aliyuncs.com/api/v1', h: '中国站（北京）。要用业务空间专属地址，就填 https://你的业务空间ID.cn-beijing.maas.aliyuncs.com/api/v1（Key 也要是那个业务空间的）' },
     { note: '下面是「生图」页用的 API易（OpenAI 兼容的中转站，GPT Image 2.5）。只把生图清单里的提示词发过去，别的一律不发。' },
-    { k: 'imgKey', l: 'API易 Key', t: 'secret', h: '在 API易 控制台的「令牌」页面创建（sk- 开头）。加密保存在本机（Windows DPAPI），只有你这个 Windows 账号能解开；不写日志，导出设置时不包含' },
-    { k: 'imgModel', l: '生图模型', t: 'select', d: 'gpt-image-2.5-flare', o: [['gpt-image-2.5-flare', 'GPT Image 2.5 Flare：最快，按量计费（默认）'], ['gpt-image-2.5-sunburst', 'GPT Image 2.5 Sunburst：细节更好，慢一点'], ['gpt-image-2.5-all', 'GPT Image 2.5 All：按次 $0.025，比例写进提示词、透明背景不稳']], h: '「生图」页上「模型」那块也能换' },
-    { k: 'imgQuality', l: '画质', t: 'select', d: 'medium', o: [['low', '草稿（最便宜，先看构图）'], ['medium', '标准（默认）'], ['high', '精细（贵 4 倍）'], ['xhigh', '更精细'], ['max', '最高（最贵）']], h: 'All 模型不认画质' },
-    { k: 'imgRes', l: '尺寸', t: 'select', d: '2k', o: [['2k', '2K：每张 200 多万像素，16:9 是 2048×1152（默认）'], ['1k', '1K：100 多万像素，便宜一半多']] },
-    { k: 'imgConc', l: '同时出几张', t: 'number', u: '张', d: 3, h: '1~6。报「太快了，被限流」就调小' },
+    { k: 'imgKey', l: 'API易 Key', t: 'secret', h: '在 API易 控制台的「令牌」页面创建（sk- 开头）。加密保存在本机（Windows DPAPI），只有你这个 Windows 账号能解开；不写日志，导出设置时不包含。模型、画质、尺寸在「生图」页右上角换' },
     { k: 'imgBase', l: 'API易 接口地址', d: 'https://api.apiyi.com/v1', h: '一般不用改' },
   ] },
   { id: 'qq', name: 'QQ 通道', desc: '用 QQ 官方机器人和你说话，WebSocket 接入，不需要公网地址，不用非官方接口，没有封号风险。', fields: [

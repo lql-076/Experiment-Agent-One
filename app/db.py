@@ -44,6 +44,9 @@ CREATE TABLE IF NOT EXISTS categories(
 CREATE TABLE IF NOT EXISTS chunks(
   hash TEXT PRIMARY KEY, file TEXT, text TEXT, private INTEGER DEFAULT 0, vec BLOB, mtime REAL);
 CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS img_history(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, kind TEXT, title TEXT, file TEXT, path TEXT, model TEXT, prompt TEXT, sent TEXT,
+  ratio TEXT, tier TEXT, quality TEXT, transparent INTEGER, w INTEGER, h INTEGER, alpha INTEGER, usd REAL, sec REAL, refs INTEGER);
 """
 
 

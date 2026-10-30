@@ -56,7 +56,7 @@
 - 真实下载：PyTorch、模型、Kev 权重、配音模型
 - 真的配音（Qwen3-TTS）：沙箱里没有显卡，配音服务换成假的 `dev/fake_tts.py`；音质、显存、速度、同一个人像不像都要在作者电脑上听
 - 真的时间轴对齐（Qwen3-ForcedAligner-0.6B，v1.8.14）：沙箱里用假的对齐器；能不能装上、对得准不准、要几秒、占多少显存要在作者电脑上试
-- 真的生图（API易 GPT Image 2.5，v1.8.15）：沙箱连不上 API易，用假的接口；出图多久、透明背景透不透、花费、限流要在作者电脑上试
+- 真的生图（API易 Sunburst VIP 等，v1.8.15 / v1.8.16）：沙箱连不上 API易，用假的接口；出图多久、透明背景透不透、带参考图的字段名、`/v1/models` 回什么、别家模型调不调得通、渲染舱动画的帧率要在作者电脑上试
 - 真的百炼云端配音：沙箱连不上百炼，用假接口 `dev/fake_bailian.py` + 假 Key；真 Key 调不调得通、音色、时间戳给不给、单次字数上限、实际计费都要在作者电脑上试
 - Edge 专有的样式
 
@@ -70,9 +70,9 @@
 | `serve.sh` | 起 / 停测试环境：假服务加测试后端，后端在 8765 |
 | `test_backend.py` | 测试后端：和真的一样，只是一键补齐的每一步换成假步骤；配音服务的启动命令换成 `fake_tts.py` |
 | `fake_tts_install.py` | 假的「安装配音」：输出和 `scripts/install_tts.py` 一样（讲解、pip、魔搭进度），几秒就完；`dev/.run/fake_tts_install_fail.flag` 在就装到一半失败一次，`fake_tts_install_slow.flag` 在就慢慢走 |
-| `fake_apiyi.py` | 假的 API易 生图接口（`mocks.py` 挂在 8096）：和 API易 一样收 JSON、回 `b64_json` + `usage`，按 size 出纯色 PNG（透明的带透明通道），size 不合规矩回 400；Key 只认 `sk-test-0000`；提示词里有「【拦截】」回 403 审核没过；`dev/.run/fake_img_slow.flag`（慢，测停下）、`fake_img_quota.flag`（余额不够）、`fake_img_opaque.flag`（要透明也不透明）；`GET /_fake/img/log` 看收到的请求 |
+| `fake_apiyi.py` | 假的 API易 生图接口（`mocks.py` 挂在 8096）：`GET /v1/models`（混着聊天模型和一个没收录的生图模型）；`/v1/images/generations`（JSON）、`/v1/images/edits`（multipart，带参考图）、`/v1beta/models/{id}:generateContent`（Nano Banana）；VIP 只认那 30 档、不许带 n；Seedream 要关水印、4.x 出 JPEG；Flux 只回链接（`/_fake/img/dl/…`）；按 size 出渐变 PNG（透明的带透明通道）；Key 只认 `sk-test-0000`；提示词里有「【拦截】」审核没过；`dev/.run/fake_img_slow.flag`（慢，里面写秒数；测停下、看动画）、`fake_img_quota.flag`（余额不够）、`fake_img_opaque.flag`（要透明也不透明）；`GET /_fake/img/log` 看收到的请求 |
 | `fake_bailian.py` | 假的百炼语音合成接口（`mocks.py` 挂在 8097）：和百炼一样 SSE 流式返回 pcm 和字级时间戳，Key 只认 `sk-test-0000`；`dev/.run/fake_bl_nowords.flag`（不给时间戳）、`fake_bl_wordserr.flag`（开时间戳就报参数错）、`fake_bl_arrears.flag`（欠费）、`fake_bl_slow.flag`（慢，测停下）、`fake_bl_reltime.flag`（字的时间从这一句开头算）、`fake_bl_wordsinc.flag`（字跟着音频一段一段给）、`fake_bl_pipeline.flag`（先发下一句的开头）；自己设计、复刻的音色和真百炼一样不给字级时间戳；读音词典的替换会照着换；`GET /_fake/log` 看收到的请求；还有音色管理接口（设计、复刻、查状态、列表、删除，`fake_bl_reject.flag` 审核不通过；`POST /_fake/made` 在「百炼上」放一个音色测同步） |
-| `test_img.py` | 生图：认清单（几种写法、没写全的提醒）、比例 → 尺寸、发出去的提示词、出图存图（文件名、尺寸、透明通道）、只发提示词和参数、改了重生成（旧的进旧版）、审核没过只坏一张、余额不够整批停、停下、官逆模型、重新上传认得出、打包 zip、Key 不外泄 |
+| `test_img.py` | 生图：认清单（几种写法、没写全的提醒）、比例 × 档位 → 尺寸（VIP 30 档）、模型说明卡和没收录的按名字猜、只挑生图模型、老设置迁移；连后端：模型列表（按厂商分、拉 /v1/models）、批量（存图、尺寸、透明、只发提示词和参数、历史、重生成、审核没过、补齐、余额不够、停下、All、官转）、单张（文生图、带参考图走 edits）、Nano Banana / Seedream / Flux / 没收录的模型、素材模板、Key 不外泄 |
 | `test_tts_cloud.py` | 配音的百炼云端：只发文案、字级时间戳拼时间轴、分块、用量和预估、出错说明只试一次、停下、试听不重复花钱、声音设计和复刻（要确认、截 20 秒）、同步和删除、语速这些和读音词典、Key 不进导出和日志 |
 | `fake_tts.py` | 假的配音服务：接口和 `app/tts_server.py` 一样，念出来是一段"嘟——"（一个字 0.2 秒，句号后停 0.3、换行停 0.5、逗号停 0.14 秒，像真模型一样自己停），用来查拼接、按停顿对齐、时间轴；`/align` 是假的对齐器（v1.8.14，按"有声音的一段"和原文里标点隔开的一小段一一对上，句子级是准的），`dev/.run/fake_tts_noalign.flag` 在就当对齐模型没下 |
 | `fake_step.py` | 假的安装步骤：输出和真脚本一样（进展报告、进度、pip、tqdm），第一次跑 models 会故意失败一次 |
@@ -91,7 +91,7 @@
 | `test_kev.py` | Kev 权重在不在本机：没有、LoRA 缺底座、都在、有半截文件 |
 | `test_route.py` | 第三条路「更强的模型」：指定去向、不接受时并进 DeepSeek、换它重做、隐私的事要确认才发出本机 |
 | `test_tts.py` | 配音：切句子、字幕时间、音色参数、配音服务算我们自己的显存、让路和闲置时关掉、不进仓库；连测试后端生成 → 拼接停顿 → 时间轴对得上 WAV → 保存 → 我的音色 → 试同一个人 → 停下；「安装配音」按钮：后台装、进展报告、失败再点、改走 hf-mirror、停下 |
-| `ui/img.py` | 生图页点一遍：拖放区、粘贴清单、五个节点、改比例 / 透明背景 / 提示词、换画质、全部生成（线上在流）、图显示出来、看大图、选文件换清单、三套风格和竖屏截图、清掉 |
+| `ui/img.py` | 生图页「渲染舱」点一遍：开机、拖放区、粘贴清单、点一行改比例 / 透明背景 / 提示词、换画质和档位、批量生成（核心在转、图落进格子）、看大图、单张带参考图生成、存为模板 / 套用、换模型（刷新列表、换 Seedream 再换回来）、历史「再来一张」、三套风格和竖屏截图、删模板、清掉 |
 | `ui/tts.py` | 配音页点一遍：生成、试听、点时间轴跳过去、保存、描述音色、存我的音色、刷新后输入还在；设置 › 本地模型 点「安装配音」到装好；设置 › 自动化 有开机自启开关 |
 | `ui/rtasks.py` | 常驻屏的后台任务进度条：没任务不显示；真的点一次安装（假安装放慢走，`dev/.run/fake_tts_install_slow.flag`）看进度条出来、数字在走、横竖屏 × 三套风格 × 字 130% 都在一屏里、停下后消失 |
 | `test_autostart.py` | 开机自启开关：写当前用户的启动项、认出开机自启.bat 建的旧任务、关掉时删旧任务（点「否」说清楚）、启动项指向别的文件夹、launch.py 依赖变了交给 启动.bat |

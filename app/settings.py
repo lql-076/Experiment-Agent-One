@@ -28,9 +28,9 @@ DEFAULTS = {
     "ttsEngine": "local",             # 配音用哪个：local 本地 Qwen3-TTS / cloud 百炼云端（app/tts_cloud.py，v1.8.11）
     # 百炼云端配音：接口地址（中国站 北京）、模型、单价（元/万字符，只用来估算）、一次最多发多少字（超过按段落分几块）
     "blBase": "https://dashscope.aliyuncs.com/api/v1", "blModel": "qwen-audio-3.1-tts-plus", "blPrice": 1.4, "blMax": 2000,
-    # 生图（app/imagegen.py，v1.8.15）：API易（OpenAI 兼容中转）的接口地址、模型、画质、尺寸档（2k / 1k）、同时出几张、存到哪（留空 = 「生图输出」）、
-    # 每条后面加「不要文字」、把视觉方向拼进每条提示词
-    "imgBase": "https://api.apiyi.com/v1", "imgModel": "gpt-image-2.5-flare", "imgQuality": "medium", "imgRes": "2k", "imgConc": 3,
+    # 生图（app/imagegen.py，v1.8.15；v1.8.16 起模型、画质、档位在生图页上换）：API易 的接口地址、模型（默认 Sunburst VIP，按次 $0.03/张）、
+    # 画质、尺寸档（1k / 2k / 4k）、同时出几张（默认一张一张出）、存到哪（留空 = 「生图输出」）、每条后面加「不要文字」、把视觉方向拼进每条提示词
+    "imgBase": "https://api.apiyi.com/v1", "imgModel": "gpt-image-2.5-sunburst-vip", "imgQuality": "high", "imgRes": "2k", "imgConc": 1,
     "imgOut": "", "imgNoText": True, "imgWithDir": False,
     # 云端
     "dsBase": "https://api.deepseek.com", "dsModel": "deepseek-flash", "dsLow": 2, "usdCny": 7.2,
@@ -74,14 +74,20 @@ _listeners = []
 
 def load():
     paths.ensure_dirs()
+    raw = {}
     try:
-        S.update(json.loads(_FILE.read_text("utf-8")))
+        raw = json.loads(_FILE.read_text("utf-8"))
+        S.update(raw)
     except FileNotFoundError:
         pass
     except Exception as e:  # 文件坏了就用默认值，旧文件留着
         _FILE.rename(_FILE.with_suffix(".bad.json"))
         print("设置文件读不了，已改名保存，改用默认设置：", e)
     S.update(LOCKED)
+    if raw.get("imgMig") != 1816:      # v1.8.16：生图换成按次 $0.03 的 Sunburst VIP、高画质、2K、一张一张出（v1.8.15 默认的按量模型会多花钱）
+        S.update(imgModel=DEFAULTS["imgModel"], imgQuality=DEFAULTS["imgQuality"], imgRes=DEFAULTS["imgRes"], imgConc=DEFAULTS["imgConc"], imgMig=1816)
+        if raw:
+            save()
     if S.get("bright") == 92:          # 旧版默认 92% 会一直盖一层暗色，现在默认不调暗
         S["bright"] = 100
     for k in ("nightAuto", "nightStart", "nightEnd", "nightBright", "quietStart", "quietEnd", "nightlyAt", "trainStart",
