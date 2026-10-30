@@ -1,6 +1,6 @@
 """一页内容一屏放下（作者的规矩：闲下来"一眼看"的页，信息不靠鼠标滚轮翻）。
 每个页面、每个设置分区，横屏 1680×1000 和竖屏 1080×1860 都看一遍：除了本来就是长列表的地方
-（聊天记录、事件列表、后台日志、说明文档、报告里的两张清单、事件的回复正文、配音的文案框和时间轴；配音页本地、云端两种引擎都看），别的地方都不该出现滚动。
+（聊天记录、事件列表、后台日志、说明文档、报告里的两张清单、事件的回复正文、配音的文案框和时间轴、生图页的图格子；配音页本地、云端两种引擎都看），别的地方都不该出现滚动。
 要动手操作的页可以滚（作者说的：用它时手本来就在鼠标上），列在 SCROLL_OK 里，不查。
 用法：python dev/ui/fit.py 截图文件夹（要先 dev/serve.sh start）"""
 import sys
@@ -11,7 +11,7 @@ from common import launch
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "dev/.run/shots"
 SCROLL_OK = {"prep", "remind", "models", "cloud"}   # 整备、提醒列表、本地模型（v1.8.7 加了「安装配音」）、云端（v1.8.11 加了百炼 Key）：要动手操作的页，可以上下滚（v1.8.1 起）
-LISTS = "#chatLog, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2, #ttsText, .tts-tl, .tts-vb"   # .tts-vb：配音页的音色面板（音色列表、设计、复刻表单，v1.8.12）
+LISTS = "#chatLog, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2, #ttsText, .tts-tl, .tts-vb, .ig-grid"   # .tts-vb：配音页的音色面板（音色列表、设计、复刻表单，v1.8.12）；.ig-grid：生图页一格一张图（v1.8.15）
 JS = """(lists) => { const out = []; document.querySelectorAll('#content *, #content').forEach(el => {
   if (!el.offsetParent && el.id !== 'content') return;
   if (el.closest(lists)) return;
@@ -29,7 +29,7 @@ with sync_playwright() as pw:
         p.wait_for_timeout(1500)
         p.wait_for_function("!S.checking", timeout=30000)
         p.evaluate("var b=document.getElementById('boot'); if (b.classList.contains('on')) b.click()")
-        targets = [("view", v) for v in ("chat", "home", "events", "monitor", "brains", "reports", "tts", "tts-cloud")]
+        targets = [("view", v) for v in ("chat", "home", "events", "monitor", "brains", "reports", "tts", "tts-cloud", "img")]
         targets += [("sec", s) for s in p.evaluate("SECTIONS.map(function (s) { return s.id; })") if s not in SCROLL_OK]
         for kind, k in targets:
             if k.startswith("tts"):                     # 配音页的两种引擎都看（v1.8.11 加了百炼云端；只在这页切，不存进设置）

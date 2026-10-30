@@ -28,6 +28,10 @@ DEFAULTS = {
     "ttsEngine": "local",             # 配音用哪个：local 本地 Qwen3-TTS / cloud 百炼云端（app/tts_cloud.py，v1.8.11）
     # 百炼云端配音：接口地址（中国站 北京）、模型、单价（元/万字符，只用来估算）、一次最多发多少字（超过按段落分几块）
     "blBase": "https://dashscope.aliyuncs.com/api/v1", "blModel": "qwen-audio-3.1-tts-plus", "blPrice": 1.4, "blMax": 2000,
+    # 生图（app/imagegen.py，v1.8.15）：API易（OpenAI 兼容中转）的接口地址、模型、画质、尺寸档（2k / 1k）、同时出几张、存到哪（留空 = 「生图输出」）、
+    # 每条后面加「不要文字」、把视觉方向拼进每条提示词
+    "imgBase": "https://api.apiyi.com/v1", "imgModel": "gpt-image-2.5-flare", "imgQuality": "medium", "imgRes": "2k", "imgConc": 3,
+    "imgOut": "", "imgNoText": True, "imgWithDir": False,
     # 云端
     "dsBase": "https://api.deepseek.com", "dsModel": "deepseek-flash", "dsLow": 2, "usdCny": 7.2,
     "priceIn": 0.15, "priceHit": 0.003, "priceOut": 0.60, "peakX": 2, "dsThinking": "auto",
@@ -58,7 +62,7 @@ DEFAULTS = {
     "hwOn": False,          # 硬件监控助手：开着就跟着 Agent 一起启动（app/hwctl.py）
     "fpsSkip": "",          # 你说过"不是游戏"的程序（逗号分隔，比如 GamePP.exe），读帧数时跳过
 }
-SECRET_KEYS = ("dsKey", "qqSecret", "blKey")      # blKey：百炼 API Key（云端配音）
+SECRET_KEYS = ("dsKey", "qqSecret", "blKey", "imgKey")      # blKey：百炼 API Key（云端配音）；imgKey：API易 Key（生图，v1.8.15）
 LOCKED = {"gpuOnly": True, "privLocal": True}   # 这两条界面上改不了
 
 _lock = threading.Lock()

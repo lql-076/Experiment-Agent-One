@@ -1389,3 +1389,115 @@ html[data-orient="portrait"] .tts-stage{height:8rem}
 .tts-chk .tts-link{font-weight:600;margin-left:.25rem}
 .tts-chk .tts-link:disabled{opacity:.6;text-decoration:none}
 .tts-chk .cap{color:var(--text3)}
+
+/* ===== 生图页（v1.8.15，ui/js/img.js）：上面一条 ComfyUI 那样的工作流（清单 → 视觉方向 → 模型 → 出图 → 输出，节点之间连线，出图时线上在流），
+   下面一格一张图（在自己里面滚）。颜色全用主题变量，三套风格都跟着变；竖屏节点排成三列、不画线 ===== */
+.page.fill.ig{height:100%;display:flex;flex-direction:column;max-width:none;padding-bottom:1.25rem;position:relative}
+.ig-top{margin-bottom:1rem;align-items:center;flex-wrap:nowrap}
+.ig-top h1{flex:none}
+.ig-top .sub{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ig-pills{display:flex;gap:.5rem;flex:none}
+.ig-flow{display:flex;align-items:stretch;margin-bottom:1rem;flex:none}
+.ig-node{--nc:var(--accent);position:relative;flex:1 1 0;min-width:0;display:flex;flex-direction:column;border:1px solid var(--line2);border-radius:var(--r);
+  background:color-mix(in srgb,var(--bg2) 94%,transparent);transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
+.ig-node.n-src{--nc:var(--c-neu)}
+.ig-node.n-dir{--nc:color-mix(in srgb,var(--accent) 45%,var(--c-neu))}
+.ig-node.n-run{--nc:var(--ok)}
+.ig-node.n-out{--nc:color-mix(in srgb,var(--ok) 50%,var(--accent))}
+.ig-node.live{border-color:color-mix(in srgb,var(--nc) 65%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--nc) 35%,transparent),0 0 1.6rem -.5rem var(--nc)}
+.ig-node:not(.n-src)::before,.ig-node:not(.n-out)::after{content:"";position:absolute;top:1.05rem;width:.7rem;height:.7rem;border-radius:50%;background:var(--bg);border:2px solid var(--nc);z-index:1}
+.ig-node::before{left:-.45rem}
+.ig-node::after{right:-.45rem}
+.ig-nh{display:flex;align-items:center;gap:.5rem;padding:.55rem .85rem;border-bottom:1px solid var(--line);border-radius:var(--r) var(--r) 0 0;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--nc) 18%,transparent),transparent 75%);font-size:.875rem;min-width:0}
+.ig-nh i{width:.5rem;height:.5rem;border-radius:50%;background:var(--nc);box-shadow:0 0 .5rem var(--nc);flex:none}
+.ig-nh b{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ig-nk{font-size:.6875rem;color:var(--text3);letter-spacing:.08em;font-family:var(--fn);flex:none}
+.ig-nb{flex:1;display:flex;flex-direction:column;gap:.5rem;padding:.7rem .85rem .8rem;min-height:0;font-size:.875rem}
+.ig-link{flex:0 0 1.9rem;align-self:flex-start;margin-top:1.33rem;height:2px;opacity:.6;
+  background:repeating-linear-gradient(90deg,var(--accent) 0 7px,transparent 7px 12px);background-size:24px 2px}
+.ig-flow.run .ig-link{opacity:1;animation:igflow .7s linear infinite;filter:drop-shadow(0 0 3px var(--accent))}
+@keyframes igflow{to{background-position:24px 0}}
+.ig-kpi{display:flex;align-items:baseline;gap:.4rem}
+.ig-kpi b{font-family:var(--fc);font-weight:var(--fcw);font-size:1.75rem;line-height:1}
+.ig-kpi span{color:var(--text3);font-size:.8125rem}
+.ig-src,.ig-path{font-family:var(--mono);font-size:.8125rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ig-warn{font-size:.8125rem;color:var(--c-neu);line-height:1.5}
+.ig-jmsg{font-size:.8125rem;line-height:1.5}
+.ig-jmsg.ok{color:var(--ok)}
+.ig-jmsg.bad{color:var(--c-neu)}
+.ig-btns{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:auto}
+.ig-btns .btn{min-height:2.125rem;padding:.25rem .8rem}
+.ig-x{padding:.25rem .55rem!important;display:grid;place-items:center;color:var(--text2)}
+.ig-x svg{width:1rem;height:1rem}
+.ig-dir{margin:0;font-size:.8125rem;line-height:1.55;color:var(--text2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ig-sws{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:auto}
+.ig-sw,.ig-tp{border:1px solid var(--line2);background:transparent;color:var(--text3);border-radius:1rem;padding:.2rem .7rem;font-size:.8125rem;min-height:1.875rem;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.ig-sw[aria-pressed="true"],.ig-tp[aria-pressed="true"]{color:var(--text);border-color:color-mix(in srgb,var(--accent) 60%,transparent);background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.ig-model{min-height:2.25rem;padding:.25rem .6rem}
+.ig-md{font-size:.75rem;color:var(--text3);line-height:1.45}
+.ig-segs{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:auto}
+.ig-seg button{padding:.25rem .6rem;min-height:2rem;font-size:.8125rem}
+.ig-bar{margin:.1rem 0}
+/* 一格一张图 */
+.ig-grid{flex:1;min-height:0;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(17.5rem,1fr));gap:1rem;align-content:start;padding:2px 4px 4px 2px}
+.ig-grid.empty{display:flex;align-items:center;justify-content:center;border:1.5px dashed var(--line2);border-radius:var(--r)}
+.ig-empty{display:flex;flex-direction:column;align-items:center;gap:.6rem;max-width:34rem;text-align:center;color:var(--text2);line-height:1.6;padding:1.5rem}
+.ig-empty b{font-size:1.125rem;color:var(--text)}
+.ig-empty .ig-btns{justify-content:center;margin-top:.4rem}
+.ig-eic{width:9rem;height:5rem;opacity:.8}
+.ig-card{display:flex;flex-direction:column;gap:.5rem;padding:.75rem;border:1px solid var(--line2);border-radius:var(--r);background:color-mix(in srgb,var(--bg2) 94%,transparent);min-width:0;
+  animation:soft .35s var(--ease) both;animation-delay:calc(var(--i) * 30ms);transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
+.ig-card.st-run{border-color:color-mix(in srgb,var(--accent) 60%,transparent);box-shadow:0 0 1.4rem -.6rem var(--accent)}
+.ig-card.st-err{border-color:color-mix(in srgb,var(--bad) 45%,transparent)}
+.ig-ch{display:flex;align-items:center;gap:.5rem;min-width:0}
+.ig-no{font-size:.75rem;color:var(--text3);border:1px solid var(--line2);border-radius:.35rem;padding:0 .3rem;flex:none}
+.ig-fn{font-family:var(--mono);font-size:.8125rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.ig-dot{width:.55rem;height:.55rem;border-radius:50%;background:var(--text3);opacity:.5;flex:none}
+.st-ok .ig-dot{background:var(--ok);opacity:1;box-shadow:0 0 .45rem var(--ok)}
+.st-run .ig-dot,.st-queue .ig-dot{background:var(--accent);opacity:1;animation:igpulse 1.2s ease-in-out infinite}
+@keyframes igpulse{50%{opacity:.35}}
+.st-err .ig-dot{background:var(--bad);opacity:1}
+.ig-use{font-size:.75rem;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:-.25rem}
+.ig-pv{position:relative;height:8.5rem;border-radius:calc(var(--r) - .25rem);border:1px solid var(--line);background:var(--bg);overflow:hidden;padding:0;display:flex;align-items:center;justify-content:center;color:inherit;flex:none}
+.st-ok .ig-pv{cursor:zoom-in}
+.ig-pv.t-on,.ig-big.t-on{background:repeating-conic-gradient(color-mix(in srgb,var(--text) 9%,transparent) 0 25%,transparent 0 50%) 50%/14px 14px,var(--bg)}
+.ig-pv img{width:100%;height:100%;object-fit:contain;display:block}
+.ig-ph{width:86%;height:80%}
+.ig-ph rect{fill:color-mix(in srgb,var(--accent) 5%,transparent);stroke:var(--line2);stroke-width:1.2;stroke-dasharray:4 3;vector-effect:non-scaling-stroke}
+.ig-ph text{fill:var(--text3);font-family:var(--fn);text-anchor:middle;dominant-baseline:central}
+.st-run .ig-pv::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,color-mix(in srgb,var(--accent) 22%,transparent) 50%,transparent 70%);background-size:220% 100%;animation:igshim 1.5s linear infinite}
+@keyframes igshim{from{background-position:120% 0}to{background-position:-120% 0}}
+.ig-runx{position:absolute;left:.5rem;bottom:.4rem;font-size:.75rem;color:var(--text2)}
+.ig-errx{padding:.75rem 1rem;color:var(--bad);font-size:.8125rem;line-height:1.55;text-align:left}
+.ig-tag{position:absolute;right:.4rem;top:.4rem;font-size:.6875rem;padding:.05rem .45rem;border-radius:1rem;background:color-mix(in srgb,var(--bg) 75%,transparent);color:var(--ok);border:1px solid color-mix(in srgb,var(--ok) 50%,transparent)}
+.ig-tag.bad{color:var(--c-neu);border-color:color-mix(in srgb,var(--c-neu) 50%,transparent)}
+.ig-demo{position:absolute;inset:12%;border-radius:.4rem;background:linear-gradient(135deg,hsl(var(--h) 70% 55% / .75),hsl(calc(var(--h) + 60) 70% 45% / .5))}
+.ig-ctl{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.ig-ratio{width:auto;min-height:1.875rem;padding:.1rem .4rem;font-size:.8125rem;font-family:var(--fn)}
+.ig-ed{font-size:.6875rem;color:var(--c-neu);border:1px solid color-mix(in srgb,var(--c-neu) 45%,transparent);border-radius:1rem;padding:0 .45rem}
+.ig-pr{min-height:4.4rem;resize:vertical;font-size:.8125rem;line-height:1.55;padding:.4rem .6rem}
+.ig-cf{display:flex;align-items:center;justify-content:space-between;gap:.5rem;font-size:.75rem;color:var(--text2);margin-top:auto}
+.ig-stx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ig-bad{color:var(--bad)}
+.ig-go{min-height:2rem;padding:.2rem .8rem;flex:none}
+/* 拖清单进来时盖一层 */
+.ig-drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;border:2px dashed var(--accent);border-radius:var(--r);background:color-mix(in srgb,var(--bg) 70%,transparent);z-index:5;pointer-events:none}
+.ig-drop.on{display:flex}
+.ig-drop b{font-size:1.25rem}
+/* 看大图、粘贴清单 */
+.ig-box{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center}
+.ig-bbg{position:absolute;inset:0;background:color-mix(in srgb,#000 62%,transparent);backdrop-filter:blur(4px)}
+.ig-bp{position:relative;width:min(40rem,92vw);max-height:90vh;display:flex;flex-direction:column;gap:.9rem;padding:1.25rem;border-radius:var(--r);border:1px solid var(--line2);background:var(--bg2);box-shadow:0 1.5rem 4rem -1rem #000;animation:soft .25s var(--ease) both}
+.ig-bp.wide{width:min(86rem,94vw)}
+.ig-big{position:relative;flex:1 1 auto;min-height:0;height:62vh;border-radius:calc(var(--r) - .25rem);border:1px solid var(--line);background:var(--bg);display:flex;align-items:center;justify-content:center;overflow:hidden}
+.ig-big img{max-width:100%;max-height:100%;object-fit:contain;display:block}
+.ig-bi{display:flex;flex-direction:column;gap:.45rem;min-height:0}
+.ig-bi b{font-family:var(--mono)}
+.ig-bpr{margin:0;font-size:.8125rem;line-height:1.6;color:var(--text2);max-height:5.5rem;overflow:auto}
+.ig-ptx{min-height:16rem;font-family:var(--mono);font-size:.8125rem;line-height:1.55;resize:vertical}
+html[data-orient="portrait"] .ig-flow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem}
+html[data-orient="portrait"] .ig-link,html[data-orient="portrait"] .ig-node::before,html[data-orient="portrait"] .ig-node::after{display:none}
+html[data-orient="portrait"] .ig-node.n-out{grid-column:span 2}
+html[data-orient="portrait"] .ig-top .sub{display:none}

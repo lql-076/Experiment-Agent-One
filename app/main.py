@@ -15,11 +15,11 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import (agent, agentstate, autostart, checks, db, deepseek, docs, events, exam, feed, growth, hw, hwctl, memory, monitor, nightly, osd,
-               paths, reminders, reports, router, safety, settings, setup, tts, tts_install, websearch)
+               imagegen, paths, reminders, reports, router, safety, settings, setup, tts, tts_install, websearch)
 from .models import M
 from .qq import BOT
 
-VERSION = "1.8.14"
+VERSION = "1.8.15"
 PORT = 8765
 _bg = []
 
@@ -167,6 +167,7 @@ async def lifespan(app):
 app = FastAPI(title="Agent", lifespan=lifespan)
 app.include_router(tts.api)                       # 配音页的接口（app/tts.py）
 app.include_router(tts_install.api)               # 设置 › 本地模型 的「安装配音」（app/tts_install.py）
+app.include_router(imagegen.api)                  # 「生图」页的接口（app/imagegen.py，v1.8.15）
 app.include_router(autostart.api)                 # 设置 › 自动化 的「开机自启」（app/autostart.py）
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}", "127.0.0.1", "localhost"}
 

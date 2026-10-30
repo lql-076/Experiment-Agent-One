@@ -1,4 +1,4 @@
-"""测试用的假服务：模型服务、Kev、LHM、DeepSeek、百炼语音合成（dev/fake_bailian.py，8097）。只在沙箱里用。"""
+"""测试用的假服务：模型服务、Kev、LHM、DeepSeek、百炼语音合成（dev/fake_bailian.py，8097）、API易 生图（dev/fake_apiyi.py，8096）。只在沙箱里用。"""
 import hashlib
 import json
 import math
@@ -202,9 +202,10 @@ def serve(app, port):
 
 if __name__ == "__main__":
     import sys
+    from fake_apiyi import app as yi
     from fake_bailian import app as bl
     apps = ((k, 8091), (ds, 8099), (lhm, 8085)) if "--no-model" in sys.argv else ((m, 8090), (k, 8091), (ds, 8099), (lhm, 8085))
-    apps += ((bl, 8097),)
+    apps += ((bl, 8097), (yi, 8096))
     for app, port in apps:
         threading.Thread(target=serve, args=(app, port), daemon=True).start()
     while True:

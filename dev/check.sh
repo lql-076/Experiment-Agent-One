@@ -29,6 +29,8 @@ step "对话页、Agent 状态、游戏内显示设置" "$PY" dev/ui/chat.py dev
 step "配音：切句子、拼接停顿、时间轴、保存、我的音色、让路和闲置关掉、安装配音" "$PY" dev/test_tts.py
 step "配音的百炼云端引擎：只发文案、字级时间戳、分块、用量、出错说明、Key 不外泄" "$PY" dev/test_tts_cloud.py
 step "配音页点一遍（本地和百炼云端）、设置里的安装配音、百炼 Key 和开机自启" "$PY" dev/ui/tts.py dev/.run/shots
+step "生图：认清单、按比例和透明背景出图、按文件名存、重生成、停下、打包、Key 不外泄" "$PY" dev/test_img.py
+step "生图页点一遍：粘贴清单、改卡片、全部生成、看大图" "$PY" dev/ui/img.py dev/.run/shots
 step "开机自启开关" "$PY" dev/test_autostart.py
 step "常驻屏的后台任务进度条" "$PY" dev/ui/rtasks.py dev/.run/shots
 step "一页一屏放下（不靠滚轮）" "$PY" dev/ui/fit.py dev/.run/shots
