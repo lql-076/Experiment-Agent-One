@@ -9,6 +9,7 @@
 用法：python dev/test_tts_cloud.py（要先 dev/serve.sh start）"""
 import base64
 import io
+import json
 import pathlib
 import shutil
 import sys
@@ -163,6 +164,12 @@ check(d["engine"] == "cloud" and d["model"] == "qwen-audio-3.1-tts-plus" and "�
       and d["voice"]["name"] == "许南川" and d["voice"]["tone"] == "轻松一点" and d["cost"]["billed_chars"] > 0,
       "时间轴 JSON 里记着：云端、模型、协议、音色、语气、计费字符和花费")
 check("字级时间戳" in d["align"] and not any(x.get("est") for x in d["segments"]), "时间轴用的是百炼的字级时间戳（每句都对上了）")
+ck = d.get("check") or {}
+check(ck.get("method") == "百炼逐字时间戳" and ck.get("exact") == 3 and ck.get("estimated") == 0 and ck.get("bounds") == 2 and ck.get("bounds_in_silence") == 2,
+      f"时间轴 JSON 里写着准不准：{ck}")
+dump = json.loads((ROOT / "data" / "tts" / "last_bailian.json").read_text("utf-8"))
+check(len(dump["sentences"]) == 3 and dump["sentences"][0]["words_n"] > 0 and KEY not in json.dumps(dump), "百炼返回的时间戳原样记了一份（data/tts/last_bailian.json，查问题用，没有 Key）")
+BASE = [(x["start"], x["end"]) for x in d["segments"]]
 check(abs(s1["start"]) < 0.01 and abs(s1["end"] - 1.54) < 0.03 and abs(s2["end"] - s2["start"] - 1.4) < 0.03 and abs(s3["end"] - s3["start"] - 1.2) < 0.03,
       "每句的开始、结束就是第一个字开口、最后一个字收声：" + "、".join(f"{x['start']:.2f}-{x['end']:.2f}" for x in d["segments"]))
 check(abs((s2["start"] - s1["end"]) - 0.35) < 0.03 and (s3["start"] - s2["end"]) >= 0.69, "停得比设置的短就补够：句间 0.35、换段 0.7（和本地一样）")
@@ -176,6 +183,26 @@ check(base.endswith("_许南川") and files == sorted([f"{base}.wav", f"{base}_�
       f"保存：和本地一样 4 个文件（{files}）")
 srt = (dd / f"{base}_字幕.srt").read_text("utf-8")
 check(srt.count(" --> ") == 3 and (dd / f"{base}_文案.txt").read_text("utf-8").strip() == TEXT, "字幕 3 条、文案原样")
+
+# 百炼文档没写清楚的几种给法（v1.8.13）：字的时间从这一句开头算 / 字跟着音频一段一段给 / 先发下一句的开头。哪种都要对得上
+for fl, base_ in (("reltime", "rel"), ("wordsinc", "abs"), ("pipeline", "abs"), ("reltime wordsinc pipeline", "rel")):
+    for f_ in fl.split():
+        flag(f_)
+    gen(TEXT, tone="轻松一点")
+    j = wait()
+    for f_ in fl.split():
+        flag(f_, False)
+    d2 = j["draft"]
+    got_ = [(x["start"], x["end"]) for x in d2["segments"]]
+    diff = max(abs(a - b) for p_, q_ in zip(got_, BASE) for a, b in zip(p_, q_)) if len(got_) == len(BASE) else 99
+    check(j["job"]["st"] == "done" and diff < 0.03 and (d2.get("check") or {}).get("time_base") == base_ and not any(x.get("est") for x in d2["segments"]),
+          f"百炼{'、'.join({'reltime': '字的时间从这一句开头算', 'wordsinc': '字一段一段给', 'pipeline': '先发下一句开头'}[f_] for f_ in fl.split())}：时间轴照样对得上（最多差 {diff:.3f} 秒）")
+c.put("/api/tts/cloud/hotfix", json={"replace": {"LHY": "L H Y"}})
+gen("大家好，我是 LHY。今天聊三个工具！")
+j = wait()
+c.put("/api/tts/cloud/hotfix", json={})
+check(j["job"]["st"] == "done" and not any(x.get("est") for x in j["draft"]["segments"]) and j["draft"]["check"]["exact"] == 2,
+      "读音词典把字换了（百炼返回的原文和发的不一样）：时间轴照样对得上")
 
 # 标签：发过去原样，字幕里去掉
 gen("[excited]今天真开心！好的。[laughing]\n\n[serious]下面说正事。")

@@ -1380,3 +1380,8 @@ html[data-orient="portrait"] .tts-eng{width:auto;min-width:0;flex:1 1 auto;max-w
 html[data-orient="portrait"] .tts-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:minmax(13rem,.6fr) minmax(0,1.4fr)}
 html[data-orient="portrait"] .tts-text{grid-column:1/-1}
 html[data-orient="portrait"] .tts-stage{height:8rem}
+/* 时间轴准不准（v1.8.13） */
+.tts-chk{font-size:.8125rem;line-height:1.5;display:flex;gap:.45rem;align-items:baseline}
+.tts-chk::before{content:"";flex:none;width:.5rem;height:.5rem;border-radius:50%;background:currentColor;transform:translateY(-.05rem)}
+.tts-chk.ok{color:var(--ok)}
+.tts-chk.warn{color:var(--c-neu)}

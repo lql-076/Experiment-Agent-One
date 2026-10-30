@@ -596,6 +596,7 @@ class TTS:
         chunks = whole_chunks(segs, limit)
         job["chunks"] = len(chunks)
         pcm, sr, tl, hows = bytearray(), tts_cloud.SR, [], set()
+        job["chk"] = {"quiet": 0, "bounds": 0, "base": set()}
         for ci, idx in enumerate(chunks):
             if job["stop"]:
                 raise Stopped(job["stop"])
@@ -625,10 +626,13 @@ class TTS:
             bill, cny = tts_cloud.record(v["voice"], text, r["usage"], "生成", len(frames) / 2 / sr)
             job["bill"] += bill
             job["cny"] += cny
-            got_tl = tts_cloud.word_spans(text, ranges, r["sents"], sr) if asked else None
+            got_tl = tts_cloud.word_spans(text, ranges, r["sents"], sr, frames) if asked else None
             if got_tl:
-                spans, est_flags, got = got_tl
+                spans, est_flags, got, ck = got_tl
                 hows.add("words")
+                job["chk"]["quiet"] += ck["quiet"]
+                job["chk"]["bounds"] += ck["bounds"]
+                job["chk"]["base"].add(ck["base"])
             else:
                 spans, est_flags, got = whole_timeline(frames, sr, segs, idx)
                 hows.add("pause")
@@ -642,6 +646,11 @@ class TTS:
                 pcm += bytes(2 * int(sr * segs[idx[-1]]["gap"]))
             job["done_chars"] = base_done + nc
             job["audio_s"] = round(len(pcm) / 2 / sr, 2)
+        n_est = sum(1 for x in tl if x.get("est"))
+        ck = job["chk"]
+        job["check"] = {"method": "百炼逐字时间戳" if hows == {"words"} else "按停顿对齐" if hows == {"pause"} else "百炼逐字时间戳 + 按停顿对齐",
+                        "sentences": len(tl), "exact": len(tl) - n_est, "estimated": n_est,
+                        **({"bounds_in_silence": ck["quiet"], "bounds": ck["bounds"], "time_base": "/".join(sorted(ck["base"]))} if ck["bounds"] else {})}
         job["align"] = ("百炼云端：每句的开始、结束用百炼返回的字级时间戳拼出来（带 est 的是没对上、夹在前后两句中间估的）" if hows == {"words"}
                         else "百炼云端：百炼没返回字级时间戳，每句的开始、结束按音频里的停顿对齐（带 est 的是按字数估的）" if hows == {"pause"}
                         else "百炼云端：有的块用百炼的字级时间戳，有的块按音频里的停顿对齐（带 est 的是估的）")
@@ -708,6 +717,8 @@ class TTS:
                           else "一句一句生成：每句的开始、结束是准的"),
                 "gaps": {"sentence": float(self.s.get("ttsGap", 0.35)), "paragraph": float(self.s.get("ttsParaGap", 0.7))},
                 **({"cost": {"billed_chars": job["bill"], "cny": round(job["cny"], 4), "chunks": job["chunks"]}} if cloud else {}),
+                "check": job.get("check") or {"method": "按停顿对齐" if job["whole"] else "一句一句生成（准的）", "sentences": len(tl),
+                                              "exact": sum(1 for x in tl if not x.get("est")), "estimated": sum(1 for x in tl if x.get("est"))},
                 "segments": tl}
         tmp = DRAFT / "draft.tmp.wav"
         write_wav(tmp, sr, pcm)

@@ -68,7 +68,7 @@
 | `serve.sh` | 起 / 停测试环境：假服务加测试后端，后端在 8765 |
 | `test_backend.py` | 测试后端：和真的一样，只是一键补齐的每一步换成假步骤；配音服务的启动命令换成 `fake_tts.py` |
 | `fake_tts_install.py` | 假的「安装配音」：输出和 `scripts/install_tts.py` 一样（讲解、pip、魔搭进度），几秒就完；`dev/.run/fake_tts_install_fail.flag` 在就装到一半失败一次，`fake_tts_install_slow.flag` 在就慢慢走 |
-| `fake_bailian.py` | 假的百炼语音合成接口（`mocks.py` 挂在 8097）：和百炼一样 SSE 流式返回 pcm 和字级时间戳，Key 只认 `sk-test-0000`；`dev/.run/fake_bl_nowords.flag`（不给时间戳）、`fake_bl_wordserr.flag`（开时间戳就报参数错）、`fake_bl_arrears.flag`（欠费）、`fake_bl_slow.flag`（慢，测停下）；`GET /_fake/log` 看收到的请求；还有音色管理接口（设计、复刻、查状态、列表、删除，`fake_bl_reject.flag` 审核不通过；`POST /_fake/made` 在「百炼上」放一个音色测同步） |
+| `fake_bailian.py` | 假的百炼语音合成接口（`mocks.py` 挂在 8097）：和百炼一样 SSE 流式返回 pcm 和字级时间戳，Key 只认 `sk-test-0000`；`dev/.run/fake_bl_nowords.flag`（不给时间戳）、`fake_bl_wordserr.flag`（开时间戳就报参数错）、`fake_bl_arrears.flag`（欠费）、`fake_bl_slow.flag`（慢，测停下）、`fake_bl_reltime.flag`（字的时间从这一句开头算）、`fake_bl_wordsinc.flag`（字跟着音频一段一段给）、`fake_bl_pipeline.flag`（先发下一句的开头）；读音词典的替换会照着换；`GET /_fake/log` 看收到的请求；还有音色管理接口（设计、复刻、查状态、列表、删除，`fake_bl_reject.flag` 审核不通过；`POST /_fake/made` 在「百炼上」放一个音色测同步） |
 | `test_tts_cloud.py` | 配音的百炼云端：只发文案、字级时间戳拼时间轴、分块、用量和预估、出错说明只试一次、停下、试听不重复花钱、声音设计和复刻（要确认、截 20 秒）、同步和删除、语速这些和读音词典、Key 不进导出和日志 |
 | `fake_tts.py` | 假的配音服务：接口和 `app/tts_server.py` 一样，念出来是一段"嘟——"（一个字 0.2 秒，句号后停 0.3、换行停 0.5、逗号停 0.14 秒，像真模型一样自己停），用来查拼接、按停顿对齐、时间轴 |
 | `fake_step.py` | 假的安装步骤：输出和真脚本一样（进展报告、进度、pip、tqdm），第一次跑 models 会故意失败一次 |

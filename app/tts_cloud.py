@@ -15,6 +15,7 @@
 """
 import asyncio
 import base64
+import difflib
 import io
 import json
 import re
@@ -23,6 +24,7 @@ import wave
 from datetime import datetime
 
 import httpx
+import numpy as np
 
 from . import db, paths, settings
 
@@ -286,7 +288,7 @@ async def synth(text, voice, instruction="", seed=0, words=True, stop=None, prog
     inp.update(expr_input(opts, text))
     body = {"model": model(), "input": inp}
     hdr = {"Authorization": f"Bearer {k}", "Content-Type": "application/json", "X-DashScope-SSE": "enable"}
-    pcm, sents, by_i, usage, url, done_chars = bytearray(), [], {}, {}, "", 0
+    pcm, sents, by_i, usage, url, done_chars, last = bytearray(), [], {}, {}, "", 0, None
     tmo = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
     try:
         async with httpx.AsyncClient(timeout=tmo) as c:
@@ -312,17 +314,26 @@ async def synth(text, voice, instruction="", seed=0, words=True, stop=None, prog
                     sen = o.get("sentence") or {}
                     idx = sen.get("index")
                     if idx is not None and idx not in by_i:
-                        by_i[idx] = {"text": o.get("original_text") or "", "a0": len(pcm) // 2, "a1": None, "words": []}
+                        by_i[idx] = {"index": idx, "text": o.get("original_text") or "", "a0": len(pcm) // 2, "a1": None, "words": [], "bytes": 0,
+                                     "wd": {}, "ev": []}
                         sents.append(by_i[idx])
-                    cur = by_i.get(idx)
+                    cur = by_i.get(idx if idx is not None else last)
+                    if idx is not None:
+                        last = idx
                     if cur is not None:
                         if o.get("original_text") and not cur["text"]:
                             cur["text"] = o["original_text"]
+                        for w in sen.get("words") or []:          # 字可能一次给全，也可能跟着音频一段一段给：按位置合起来，不覆盖
+                            if isinstance(w, dict):
+                                cur["wd"][(w.get("begin_index"), w.get("end_index"), w.get("text"))] = w
                         if sen.get("words"):
-                            cur["words"] = sen["words"]
+                            cur["ev"].append(o.get("type") or "?")
                     data = (o.get("audio") or {}).get("data")
                     if data:
-                        pcm += base64.b64decode(data)
+                        chunk = base64.b64decode(data)
+                        pcm += chunk
+                        if cur is not None:
+                            cur["bytes"] += len(chunk)
                     if (o.get("audio") or {}).get("url"):
                         url = o["audio"]["url"]
                     if cur is not None and o.get("type") == "sentence-end":
@@ -349,7 +360,27 @@ async def synth(text, voice, instruction="", seed=0, words=True, stop=None, prog
     for s in sents:
         if s["a1"] is None:
             s["a1"] = len(pcm) // 2
+        s["words"] = sorted(s.pop("wd").values(), key=lambda w: (float(w.get("begin_time") or 0), int(w.get("begin_index") or 0)))
+    # 每句从哪开始：按这句自己的音频块累加（不看事件到达的先后，百炼先发下一句的开头也不怕）；块上没标句子的，退回按到达时算
+    sents.sort(key=lambda x: x["index"])
+    if sents and sum(x["bytes"] for x in sents) == len(pcm):
+        acc = 0
+        for x in sents:
+            x["a0"], x["a1"] = acc // 2, (acc + x["bytes"]) // 2
+            acc += x["bytes"]
+    _dump(sents)
     return {"pcm": pcm, "sr": SR, "sents": sents, "usage": usage}
+
+
+def _dump(sents):
+    """最近一次百炼返回的时间戳原样记一份（data\\tts\\last_bailian.json，只留最近一次），时间轴再对不上时拿它查。不含 Key。"""
+    try:
+        DUMP.parent.mkdir(parents=True, exist_ok=True)
+        out = [{"index": x["index"], "text": x["text"], "a0": x["a0"], "a1": x["a1"], "words_n": len(x["words"]), "words_in": sorted(set(x["ev"])),
+                "head": x["words"][:3], "tail": x["words"][-2:]} for x in sents]
+        DUMP.write_text(json.dumps({"ts": time.time(), "sr": SR, "sentences": out}, ensure_ascii=False, indent=1), "utf-8")
+    except Exception:
+        pass
 
 
 async def synth_once_more(text, voice, instruction="", seed=0, stop=None, progress=None, opts=None):
@@ -362,9 +393,13 @@ async def synth_once_more(text, voice, instruction="", seed=0, stop=None, progre
     return await synth(text, voice, instruction, seed, False, stop, progress, opts), False
 
 
-# ---------------- 字级时间戳 → 每句的开始、结束 ----------------
+# ---------------- 字级时间戳 → 每句的开始、结束（v1.8.13 重写） ----------------
+# 百炼文档没写清楚的三件事，这里都不赌：
+#   1. 字的时间是从整段开头算，还是从这一句开头算 → 两种都算一遍，看哪种和音频对得上（句子边界落在没声音的地方、不超出音频、不倒着走）
+#   2. 字是 sentence-end 一次给全，还是跟着音频一段一段给 → synth 里按位置合起来
+#   3. 百炼返回的句子原文和我们发的不完全一样（标点、读音词典的替换、标签）→ 去掉标点空白标签后按最长公共片段对位置，不要求一字不差
 def _norm(s):
-    """去掉空白和 [标签]，返回 (留下的字, 原文每个位置之前留下了几个字)。"""
+    """只留字母、数字、汉字（英文转小写），去掉 [标签]、标点、空白。返回 (留下的字, 原文每个位置之前留下了几个字)。"""
     s = s or ""
     tag = [False] * len(s)
     for m in TAG_RE.finditer(s):
@@ -373,69 +408,122 @@ def _norm(s):
     keep, before = [], []
     for i, ch in enumerate(s):
         before.append(len(keep))
-        if not tag[i] and not ch.isspace():
-            keep.append(ch)
+        if not tag[i] and ch.isalnum():
+            keep.append(ch.lower())
     before.append(len(keep))
     return "".join(keep), before
 
 
-def word_spans(text, ranges, sents, sr):
+def _rms(pcm, sr):
+    a = np.frombuffer(bytes(pcm), dtype="<i2").astype(np.float32) / 32768
+    hop = max(1, int(sr * 0.01))
+    n = len(a) // hop
+    if n < 3:
+        return None, 0.0
+    r = np.sqrt((a[: n * hop].reshape(n, hop) ** 2).mean(axis=1))
+    return r, float(np.percentile(r, 90)) or 1e-6
+
+
+def _quiet(r, p90, t0, t1):
+    """这一段（秒）里是不是基本没声音：取最小的 30 毫秒窗口的音量，比响的地方小很多就算。"""
+    if r is None:
+        return True
+    a, b = max(0, int(t0 * 100) - 2), min(len(r), int(t1 * 100) + 3)
+    if b - a < 3:
+        return False
+    w = np.convolve(r[a:b], np.ones(3) / 3, mode="valid")
+    return bool(w.min() < p90 * 0.12)
+
+
+def _spans(items, owner_n, total, base):
+    t0, t1 = [None] * owner_n, [None] * owner_n
+    for si, b, e, off in items:
+        if base == "rel":
+            b, e = b + off, e + off
+        t0[si] = b if t0[si] is None else min(t0[si], b)
+        t1[si] = e if t1[si] is None else max(t1[si], e)
+    spans, est = [], []
+    for i in range(owner_n):
+        if t0[i] is not None:
+            spans.append([t0[i], max(t0[i], t1[i])])
+            est.append(False)
+        else:                                            # 没对上时间戳的句子：夹在前后两句中间（标 est）
+            prev = spans[-1][1] if spans else 0.0
+            nxt = next((t0[k] for k in range(i + 1, owner_n) if t0[k] is not None), total)
+            spans.append([prev, max(prev, nxt)])
+            est.append(True)
+    return spans, est
+
+
+def _score(spans, est, total, r, p90):
+    """越小越好：超出音频、前后倒着走重罚；句子边界落在有声音的地方也罚。返回 (分数, 边界在静音处的个数, 边界数)。"""
+    bad = sum(max(0.0, en - total - 0.08) + max(0.0, -st) for st, en in spans) * 20
+    bad += sum(1 for i in range(len(spans) - 1) if spans[i + 1][0] < spans[i][1] - 0.08) * 5
+    quiet, n = 0, 0
+    for i in range(len(spans) - 1):
+        if est[i] or est[i + 1]:
+            continue
+        n += 1
+        if _quiet(r, p90, spans[i][1], max(spans[i][1], spans[i + 1][0])):
+            quiet += 1
+    return bad + (n - quiet), quiet, n
+
+
+def word_spans(text, ranges, sents, sr, pcm=None):
     """用百炼返回的字级时间戳算每句（ranges：每句在 text 里的 [开始, 结束) 位置）的开始、结束（秒，相对这一块）。
-    返回 (spans, est, got)，和 tts.whole_timeline 一样；时间戳不够用（一半以上的句子对不上）返回 None，调用的地方改按停顿对齐。"""
+    返回 (spans, est, got, check)；时间戳不够用（一半以上的句子对不上）返回 None，调用的地方改按停顿对齐。
+    check：{base: abs / rel（时间从哪算的）, words: 对上时间戳的句数, quiet: 句子边界落在停顿处的个数, bounds: 边界数}"""
     N, before = _norm(text)
     owner = []
     for si, (a, b) in enumerate(ranges):
         owner += [si] * (before[b] - before[a])
-    if len(owner) != len(N):
+    if not ranges or not N or len(owner) != len(N):
         return None
-    t0 = [None] * len(ranges)
-    t1 = [None] * len(ranges)
-    cursor = 0
-    for s in sents:
-        ws = s.get("words") or []
-        if not ws:
-            continue
-        ns, sb = _norm(s.get("text") or "")
-        at = N.find(ns, cursor) if ns else -1
-        if at < 0:
-            continue
-        cursor = at + len(ns)
-        off = s["a0"] / sr
-        rel = off > 0.3 and float(ws[0].get("begin_time") or 0) / 1000 < off * 0.5     # 时间是从这句开始算的，还是从整段开始算的
-        for w in ws:
+    T, starts = "", []
+    for x in sents:
+        ns, sb = _norm(x.get("text") or "")
+        starts.append((len(T), sb))
+        T += ns
+    if not T:
+        return None
+    t2n = {}
+    for a, b, size in difflib.SequenceMatcher(None, T, N, autojunk=False).get_matching_blocks():
+        for d in range(size):
+            t2n[a + d] = b + d
+    items = []                                           # (我们的第几句, 开始, 结束, 这一句音频从哪开始)
+    for k, x in enumerate(sents):
+        base_t, sb = starts[k]
+        off = (x.get("a0") or 0) / sr
+        for w in x.get("words") or []:
             try:
                 bi = int(w.get("begin_index") or 0)
                 b, e = float(w["begin_time"]) / 1000, float(w["end_time"]) / 1000
             except (KeyError, TypeError, ValueError):
                 continue
-            p = at + sb[min(max(bi, 0), len(sb) - 1)]
-            if p >= len(owner):
-                continue
-            if rel:
-                b, e = b + off, e + off
-            si = owner[p]
-            t0[si] = b if t0[si] is None else min(t0[si], b)
-            t1[si] = e if t1[si] is None else max(t1[si], e)
-    have = sum(1 for x in t0 if x is not None)
-    if not ranges or have * 2 < len(ranges):
+            pt = base_t + sb[min(max(bi, 0), len(sb) - 1)]
+            if pt in t2n:
+                items.append((owner[t2n[pt]], b, e, off))
+    if not items:
         return None
-    total = max((s["a1"] or 0) for s in sents) / sr if sents else 0.0       # 没对上时间戳的句子：夹在前后两句中间（标 est）
-    spans, est = [], []
-    for i in range(len(ranges)):
-        if t0[i] is not None:
-            spans.append([t0[i], max(t0[i], t1[i])])
-            est.append(False)
-        else:
-            prev = spans[-1][1] if spans else 0.0
-            nxt = next((t0[k] for k in range(i + 1, len(ranges)) if t0[k] is not None), total)
-            spans.append([prev, max(prev, nxt)])
-            est.append(True)
+    total = max([(x.get("a1") or 0) for x in sents] + [len(pcm or b"") // 2]) / sr
+    r, p90 = _rms(pcm, sr) if pcm else (None, 1.0)
+    best = None
+    for base in ("abs", "rel"):
+        spans, est = _spans(items, len(ranges), total, base)
+        sc, quiet, n = _score(spans, est, total, r, p90)
+        if best is None or sc < best[0] - 1e-9:
+            best = (sc, base, spans, est, quiet, n)
+    _, base, spans, est, quiet, n = best
+    have = sum(1 for e in est if not e)
+    if have * 2 < len(ranges):
+        return None
     got = [(spans[i][1], max(spans[i][1], spans[i + 1][0])) for i in range(len(spans) - 1)]
-    return spans, est, got
+    return spans, est, got, {"base": base, "words": have, "quiet": quiet, "bounds": n}
 
 
 # ---------------- 试听 ----------------
 TRY_DIR = paths.DATA / "tts" / "try"
+DUMP = paths.DATA / "tts" / "last_bailian.json"
 _try_lock = asyncio.Lock()
 
 

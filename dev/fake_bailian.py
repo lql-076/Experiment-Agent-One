@@ -6,6 +6,9 @@ Key 只认 sk-test-0000。几个开关（dev/.run 里放文件）：
   fake_bl_wordserr.flag 开时间戳就报参数错（测去掉时间戳再试一次）
   fake_bl_arrears.flag  欠费（400 Arrearage）
   fake_bl_slow.flag     每句慢一点（测停下）
+  fake_bl_reltime.flag  字的时间从这一句开头算（默认从整段开头算；百炼文档没写是哪种，两种都测）
+  fake_bl_wordsinc.flag 字跟着音频一段一段给（默认在 sentence-end 一次给全）
+  fake_bl_pipeline.flag 先发下一句的 sentence-begin，再发这一句最后一块声音
 文案超过 3000 字 → 400 InvalidParameter（文本太长）。
 POST /api/v1/services/audio/tts/customization（v1.8.12）：声音设计 / 复刻 / 查状态 / 列表 / 删除，和百炼一样（model = voice-enrollment）。
 新造的音色第一次查是 DEPLOYING，之后 OK；fake_bl_reject.flag 在就 UNDEPLOYED（审核没过）。合成时 rate 会让声音变快变慢。
@@ -95,37 +98,65 @@ async def synth(req: Request):
     slow = flag("slow")
     nowords = flag("nowords")
 
+    rel, inc, pipe = flag("reltime"), flag("wordsinc"), flag("pipeline")
+    for kv in ((inp.get("hot_fix") or {}).get("replace") or []):        # 读音词典的替换：照着换了再念，返回的原文也是换过的
+        for w_, t_ in kv.items():
+            sents = [x.replace(w_, t_) for x in sents]
+    plan, t_ms = [], 0.0                                   # 先把每句的声音和字的时间都算好，再按要的方式发出去
+    for si, s_ in enumerate(sents):
+        audio, words = b"", []
+        spoken = TAG.sub(lambda m: "\0" * len(m.group()), s_)          # 标签不念（位置留着，下标和原文对得上）
+        for k, ch in enumerate(spoken):
+            if ch in "，,、；;：:":
+                audio += b"\0\0" * int(SR * 0.14)
+            elif ch in "。！？!?…\n\0 ”“\"'" or ch.isspace():
+                continue
+            else:
+                b_rel = len(audio) / 2 / SR * 1000
+                audio += tone(0.2 / rate)
+                b0 = b_rel if rel else t_ms + b_rel
+                words.append({"text": ch, "begin_index": k, "end_index": k + 1, "begin_time": round(b0), "end_time": round(b0 + 200 / rate),
+                              "_at": int(b_rel / 1000 * SR) * 2})
+        if si < len(sents) - 1:
+            audio += b"\0\0" * int(SR * 0.3)
+        t_ms += len(audio) / 2 / SR * 1000
+        plan.append((s_, audio, words))
+
+    def clean(ws):
+        return [{k: v for k, v in w.items() if k != "_at"} for w in ws]
+
     def gen():
-        n, t_ms, done = 0, 0.0, 0
-        for si, s in enumerate(sents):
+        n, done = 0, 0
+        evs = []                                           # (句子, 事件)；pipeline：下一句的 begin 插在这一句最后一块声音前面
+        for si, (s_, audio, words) in enumerate(plan):
+            if not (pipe and si > 0):
+                evs.append((si, "begin"))
+            chunks = [(si, ("chunk", a)) for a in range(0, len(audio), 9600)]
+            if pipe and si + 1 < len(plan) and chunks:
+                evs += chunks[:-1] + [(si + 1, "begin"), chunks[-1]]
+            else:
+                evs += chunks
+                if pipe and si + 1 < len(plan):
+                    evs.append((si + 1, "begin"))
+            evs.append((si, "end"))
+        for si, kind in evs:
+            s_, audio, words = plan[si]
             n += 1
-            yield ev(n, {"finish_reason": "null", "type": "sentence-begin", "original_text": s, "sentence": {"index": si, "words": []},
-                         "audio": {"data": "", "id": "a"}}, {"characters": done})
-            audio, words = b"", []
-            spoken = TAG.sub(lambda m: "\0" * len(m.group()), s)          # 标签不念（位置留着，下标和原文对得上）
-            for k, ch in enumerate(spoken):
-                if ch in "，,、；;：:":
-                    audio += b"\0\0" * int(SR * 0.14)
-                elif ch in "。！？!?…\n\0 ”“\"'" or ch.isspace():
-                    continue
-                else:
-                    b0 = t_ms + len(audio) / 2 / SR * 1000
-                    audio += tone(0.2 / rate)
-                    words.append({"text": ch, "begin_index": k, "end_index": k + 1, "begin_time": round(b0), "end_time": round(b0 + 200 / rate)})
-            if si < len(sents) - 1:
-                audio += b"\0\0" * int(SR * 0.3)
-            for a in range(0, len(audio), 9600):
-                n += 1
+            if kind == "begin":
+                yield ev(n, {"finish_reason": "null", "type": "sentence-begin", "original_text": s_, "sentence": {"index": si, "words": []},
+                             "audio": {"data": "", "id": "a"}}, {"characters": done})
+            elif kind == "end":
+                done += sum(2 if re.match(r"[一-鿿]", c) else 1 for c in re.sub(r"\s", "", s_))
+                yield ev(n, {"finish_reason": "null", "type": "sentence-end", "original_text": s_,
+                             "sentence": {"index": si, "words": [] if (nowords or not words_on or inc) else clean(words)}, "audio": {"data": "", "id": "a"}},
+                         {"characters": done})
+            else:
+                a = kind[1]
                 if slow:
                     time.sleep(0.25)
-                yield ev(n, {"finish_reason": "null", "type": "sentence-synthesis", "sentence": {"index": si, "words": []},
+                ws = clean([w for w in words if a <= w["_at"] < a + 9600]) if (inc and words_on and not nowords) else []
+                yield ev(n, {"finish_reason": "null", "type": "sentence-synthesis", "sentence": {"index": si, "words": ws},
                              "audio": {"data": base64.b64encode(audio[a:a + 9600]).decode(), "id": "a"}}, {"characters": done})
-            t_ms += len(audio) / 2 / SR * 1000
-            done += sum(2 if re.match(r"[一-鿿]", c) else 1 for c in re.sub(r"\s", "", s))
-            n += 1
-            yield ev(n, {"finish_reason": "null", "type": "sentence-end", "original_text": s,
-                         "sentence": {"index": si, "words": [] if (nowords or not words_on) else words}, "audio": {"data": "", "id": "a"}},
-                     {"characters": done})
         n += 1
         yield ev(n, {"finish_reason": "stop", "audio": {"data": "", "url": "", "id": "a", "expires_at": 0}}, {"characters": bill})
 

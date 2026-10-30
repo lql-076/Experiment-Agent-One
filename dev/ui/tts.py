@@ -130,6 +130,7 @@ with sync_playwright() as pw:
     p.wait_for_function("(document.querySelector('#ttsGen .tts-msg.ok') || {}).textContent && document.querySelector('#ttsGen .tts-msg.ok').textContent.indexOf('花了约') >= 0", timeout=30000)
     p.wait_for_function("document.querySelectorAll('#ttsTl .tts-seg').length === 3 && document.querySelector('#ttsRes .hc-h').textContent.indexOf('许南川') >= 0", timeout=8000)
     check(True, "生成好了：说了花多少，时间轴 3 句，试听那里写着许南川 · 百炼：" + p.inner_text("#ttsGen .tts-msg.ok"))
+    check("百炼逐字时间戳" in p.inner_text("#ttsChk") and "3 句都是准的" in p.inner_text("#ttsChk"), "波形下面写着时间轴准不准：" + p.inner_text("#ttsChk"))
     last = httpx.get(FAKE + "/_fake/log").json()["items"][-1]["body"]["input"]
     check(httpx.get(FAKE + "/_fake/log").json()["n"] == n0 + 1 and last.get("rate") == 1.2 and last.get("instruction") == "请用轻松的语气", "发给百炼的带着语速 1.2 和语气")
     p.wait_for_function("TTS.wave && TTS.wave.peaks && TTS.wave.peaks.length > 100", timeout=8000)

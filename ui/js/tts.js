@@ -335,7 +335,8 @@ function ttsSyncRes(s) {
   TTS.resVer = ver;
   var r = '<div class="hc-h"><span class="label">试听</span>' + (d ? '<span class="cap num">' + esc(d.created.slice(5, 16)) + ' · ' + esc(ttsVoiceName(d)) + ' · ' + ttsDur(d.duration) + ' · ' + d.segments.length + ' 句</span>' : '') + '</div>' +
     '<div class="tts-stage' + (s.job && s.job.st === 'run' ? ' busy' : '') + '" id="ttsStage"><canvas id="ttsWave" aria-label="波形：点哪听哪"></canvas>' +
-      (d ? '' : '<div class="tts-empty">生成好的配音画在这里：波形上一段是一句，点哪听哪。<br>满意了点「保存」，存到 ' + esc(s.out) + '（一次一个文件夹：WAV、时间轴、字幕、文案）</div>') + '</div>';
+      (d ? '' : '<div class="tts-empty">生成好的配音画在这里：波形上一段是一句，点哪听哪。<br>满意了点「保存」，存到 ' + esc(s.out) + '（一次一个文件夹：WAV、时间轴、字幕、文案）</div>') + '</div>' +
+    (d && d.check ? ttsChkHTML(d.check) : '');
   if (d) {
     r += (d.same_test ? '<div class="tts-msg">试同一个人：两段完全不相干的话，听前后像不像一个人。</div>' : '') +
       '<div class="tts-transport"><button class="tts-play" id="ttsPlay" data-act="play" aria-label="播放 / 暂停（空格键）">' + TTS_IC.play + '</button>' +
@@ -353,6 +354,14 @@ function ttsSyncRes(s) {
   }
   ttsStageWatch();
   if (d && !s.demo) ttsWaveLoad(d); else { TTS.wave = null; ttsDraw(); }
+}
+
+/* 时间轴准不准（v1.8.13）：用的哪种办法、几句是准的、句子边界是不是都落在停顿上 */
+function ttsChkHTML(c) {
+  var off = c.bounds ? c.bounds - (c.bounds_in_silence || 0) : 0, warn = c.estimated || off;
+  var t = '时间轴：' + esc(c.method) + '，' + (c.estimated ? c.exact + '/' + c.sentences + ' 句是准的，' + c.estimated + ' 句是估的（时间前面带 ≈）' : c.sentences + ' 句都是准的') +
+    (off ? '；' + off + ' 处句子边界没落在停顿上，那里可能偏了' : '');
+  return '<div class="tts-chk' + (warn ? ' warn' : ' ok') + '" id="ttsChk">' + t + '</div>';
 }
 
 /* ---------- 波形 ---------- */
