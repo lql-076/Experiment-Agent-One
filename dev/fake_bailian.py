@@ -2,7 +2,7 @@
 POST /api/v1/services/audio/tts/SpeechSynthesizer：和百炼一样按 SSE 流式返回 sentence-begin / sentence-synthesis / sentence-end，
 声音是 24kHz 16 位 PCM 的"嘟"（一个字 0.2 秒），逗号停 0.14 秒、句末停 0.3 秒；开了 word_timestamp_enabled 就给字级时间戳（从整段开始算）。
 Key 只认 sk-test-0000。几个开关（dev/.run 里放文件）：
-  fake_bl_nowords.flag  不给时间戳（测后端退回按停顿对齐）
+  fake_bl_nowords.flag  不给时间戳（测后端改用本地对齐 / 退回按停顿猜）；自己设计、复刻的音色本来就不给（和真百炼一样）
   fake_bl_wordserr.flag 开时间戳就报参数错（测去掉时间戳再试一次）
   fake_bl_arrears.flag  欠费（400 Arrearage）
   fake_bl_slow.flag     每句慢一点（测停下）
@@ -96,7 +96,7 @@ async def synth(req: Request):
     bill = sum(2 if re.match(r"[一-鿿]", c) else 1 for c in re.sub(r"\s", "", text))
     sents = sentences(text)
     slow = flag("slow")
-    nowords = flag("nowords")
+    nowords = flag("nowords") or vid in MADE        # 自己设计、复刻的音色：真百炼不报错，就是不给字级时间戳（作者 2026-10-30 实测）
 
     rel, inc, pipe = flag("reltime"), flag("wordsinc"), flag("pipeline")
     for kv in ((inp.get("hot_fix") or {}).get("replace") or []):        # 读音词典的替换：照着换了再念，返回的原文也是换过的

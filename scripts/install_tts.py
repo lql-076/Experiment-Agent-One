@@ -1,4 +1,4 @@
-"""安装配音（Qwen3-TTS）：配音环境 tts-env + 两个配音模型。由「安装配音.bat」调用。
+"""安装配音（Qwen3-TTS）：配音环境 tts-env + 两个配音模型 + 时间轴对齐模型（v1.8.14）。由「安装配音.bat」调用。
 可以重复运行：装过的、下过的都跳过；下到一半断了，再运行一次接着下。
   python scripts/install_tts.py            环境 + 模型
   python scripts/install_tts.py --env      只装环境
@@ -13,7 +13,10 @@ PyTorch 和 ai-env 用同一个版本（2.8.0 cu128）：tools\\wheels 里已经
 模型从魔搭下（国内快；一键补齐判断魔搭不通时 AGENT_MODEL_SOURCE=hf，改走 hf-mirror），放 models\\tts\\，不进 GitHub、不进压缩包：
   Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice   预设音色（9 个，其中 5 个中文）+ 一句话控制语气
   Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign   用一段文字描述造一个新音色
-两个都是 Apache 2.0 许可证，可以商用。每个大约 4~5 GB。
+  Qwen/Qwen3-ForcedAligner-0.6B          时间轴对齐（v1.8.14）：音频 + 原文 → 每个字的开始、结束，字幕和声音对得上（约 1.8 GB）
+都是 Apache 2.0 许可证，可以商用。配音模型每个大约 4~5 GB。
+对齐模型的代码在 qwen-asr 包里：它要 Transformers 4.57.6，和 qwen-tts 锁的 4.57.3 只差小版本，用 --no-deps 装、不动 Transformers；
+它一导入就 import nagisa（日语分词，我们不用），和 sox 一样放个空模块顶替。
 """
 import os
 import subprocess
@@ -32,6 +35,7 @@ A.PY = paths.tts_python()
 say = A.say
 
 QWEN_TTS = "qwen-tts==0.1.1"
+QWEN_ASR = "qwen-asr==0.0.6"      # 只用里面的对齐器（Qwen3ForcedAligner），不听写
 # qwen-tts 0.1.1 要的库（去掉了 gradio 和 sox：sox 在配音服务里用空模块顶替）。Transformers、accelerate 必须是这两个版本（官方锁死的）
 DEPS = ["transformers==4.57.3", "accelerate==1.12.0", "librosa", "soundfile", "onnxruntime", "einops",
         "huggingface_hub", "safetensors", "fastapi", "uvicorn"]
@@ -41,16 +45,20 @@ TORCHAUDIO = [
     ("上海交大镜像", ["install", f"torchaudio=={A.TORCH}+cu128", "-f", "https://mirror.sjtu.edu.cn/pytorch-wheels/cu128/"]),
 ]
 MODELS = [("预设音色 CustomVoice", "Qwen/" + paths.TTS_MODELS["custom"]),
-          ("描述音色 VoiceDesign", "Qwen/" + paths.TTS_MODELS["design"])]
+          ("描述音色 VoiceDesign", "Qwen/" + paths.TTS_MODELS["design"]),
+          ("时间轴对齐模型 ForcedAligner", "Qwen/" + paths.ALIGN_MODEL)]
 TOKENIZER = "Qwen/Qwen3-TTS-Tokenizer-12Hz"     # 正常已经在模型的 speech_tokenizer 文件夹里；缺了才单独下
 SOURCE = os.environ.get("AGENT_MODEL_SOURCE", "modelscope")
 
 
 # 装完后的自检：在配音环境里真的导入一次。qwen-tts 一导入就 import sox，而 SoX 我们不装（只有旧版 25Hz 模型用它）：
 # 和配音服务（app/tts_server.py）一样，导入前放一个空的 sox 模块顶替（v1.8.7 这里忘了放，自检报错、模型没下）
+# 对齐器（qwen-asr）一导入就 import nagisa：也放空模块顶替（和 app/tts_server.py 一样）
 CHECK = ("import sys, types\n"
          "sys.modules.setdefault('sox', types.ModuleType('sox'))\n"
+         "sys.modules.setdefault('nagisa', types.ModuleType('nagisa'))\n"
          "import torch, transformers, qwen_tts\n"
+         "from qwen_asr import Qwen3ForcedAligner\n"
          "print('PyTorch', torch.__version__, '| 显卡', torch.cuda.get_device_name(0) if torch.cuda.is_available() else '用不了',"
          " '| Transformers', transformers.__version__)")
 
@@ -92,6 +100,10 @@ def install_env():
     if not A.pip_any("--no-deps", QWEN_TTS):
         say("qwen-tts 没装上，看上面的报错", "!")
         return 4
+    say("安装时间轴对齐器 qwen-asr（几百 KB，只用它的对齐，不动 Transformers）")
+    if not A.pip_any("--no-deps", QWEN_ASR):
+        say("qwen-asr 没装上，看上面的报错", "!")
+        return 4
     # 把 torch、torchaudio 也写进去：保证 pip 不会顺手把显卡版 PyTorch 换成别的版本
     if not A.pip_any(*DEPS, f"torch=={A.TORCH}", f"torchaudio=={A.TORCH}"):
         say("配音要的库没装上，看上面的报错；网络问题的话过一会再试", "!")
@@ -105,8 +117,8 @@ def install_env():
 
 
 def done(dest: Path) -> bool:
-    return ((dest / "config.json").exists() and (dest / "speech_tokenizer" / "config.json").exists()
-            and any(dest.glob("*.safetensors")) and not any(dest.rglob("*.incomplete")))
+    tok = dest.name == paths.ALIGN_MODEL or (dest / "speech_tokenizer" / "config.json").exists()     # 对齐模型没有声音编解码器
+    return ((dest / "config.json").exists() and tok and any(dest.glob("*.safetensors")) and not any(dest.rglob("*.incomplete")))
 
 
 def download(repo, dest: Path):
@@ -132,9 +144,10 @@ def install_models():
         if done(dest):
             say(f"{name} 已经下好了，跳过", "✓")
             continue
-        say(f"下载 {name}（大约 4~5 GB）：从{'hf-mirror' if SOURCE == 'hf' else '魔搭'} {repo}，放到 {paths.show(dest)}")
+        size = "约 1.8 GB" if dest.name == paths.ALIGN_MODEL else "大约 4~5 GB"
+        say(f"下载 {name}（{size}）：从{'hf-mirror' if SOURCE == 'hf' else '魔搭'} {repo}，放到 {paths.show(dest)}")
         download(repo, dest)
-        if not (dest / "speech_tokenizer" / "config.json").exists():
+        if dest.name != paths.ALIGN_MODEL and not (dest / "speech_tokenizer" / "config.json").exists():
             say("模型里没带声音编解码器（speech_tokenizer），单独下一份")
             download(TOKENIZER, dest / "speech_tokenizer")
         say(f"{name} 下好了" if done(dest) else f"{name} 好像没下全，再运行一次接着下", "✓" if done(dest) else "!")

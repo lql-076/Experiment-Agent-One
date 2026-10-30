@@ -8,6 +8,7 @@
 6. 设置 › 本地模型 的「安装配音」：后台装、进展报告、日志、失败再点、改走 hf-mirror、停下
 用法：python dev/test_tts.py（要先 dev/serve.sh start）"""
 import ast
+import asyncio
 import io
 import json
 import os
@@ -89,6 +90,124 @@ over = tts.split(("这是一句十个字的话。" * 40 + "\n\n") * 8)          
 check(len(tts.whole_chunks(over)) == 2, "超过 10 分钟（3200 字）才在换段处分成两块")
 srv = (ROOT / "app" / "tts_server.py").read_text("utf-8")
 check("min(24000, 96 + len(text) * 6)" in srv and 96 + 2600 * 6 <= 24000, "配音服务给的长度上限够念 2600 字（一个字 6 帧，10 分钟一整段也够）")
+
+# ---------- 1c. 时间轴（v1.8.14）：按音节猜、本地对齐、长的分段对 ----------
+check([tts.syllables(x) for x in ("配音。", "646", "2.0", "十月二十九日")] == [2, 5, 3, 6] and tts.syllables("VoiceStudio") < 5 and tts.syllables("AI") == 1.7,
+      f"按音节估长短：英文按音节（VoiceStudio {tts.syllables('VoiceStudio')}，不再算 11 个字）、缩写按字母、数字按中文读法（646 → 5）")
+P6 = ("第一名，VoiceStudio。一句话：它是装在你自己设备上的 AI 语音工作室。给它一段清晰的录音，就能用这个声音念你写的字。"
+      "项目介绍说支持 646 种语言，没有显卡用 CPU 也能跑。适合做配音、有声书的人。许可证 AGPL 3.0，商用要看条款，模型和生成的声音另有许可。项目也提醒，克隆声音要先经过本人同意。")
+TRUE_SYL = {"VoiceStudio": 4, "AI": 2, "646": 5, "CPU": 3, "AGPL": 4, "3.0": 3}
+
+
+def say_like(text, seed, comma=0.2, sent=0.35, base=0.21):
+    """像真人念：每句语速不一样（±10%），逗号、句末停的长短也不一样；英文、数字按真的音节数念。返回 (切好的句子, PCM, 每句真正的 [开始, 结束])。"""
+    import random
+    rng = random.Random(seed)
+    sg_ = tts.split(text)
+    parts, truth, t = [], [], 0.0
+    for k, sg in enumerate(sg_):
+        rate = base * rng.uniform(0.9, 1.12)
+        phs = [x for x in re.split(r"[，、：；]", sg["text"]) if re.search(r"\w", x)]
+        st = t
+        for j, ph in enumerate(phs):
+            d = sum(TRUE_SYL.get(m.group(), 1) for m in re.finditer(r"[\u4e00-\u9fff]|[A-Za-z]+|\d+(?:\.\d+)?", ph)) * rate
+            parts.append((d, 1))
+            t += d
+            if j < len(phs) - 1:
+                g = comma * rng.uniform(0.7, 1.6)
+                parts.append((g, 0))
+                t += g
+        truth.append((st, t))
+        if k < len(sg_) - 1:
+            g = (0.7 if sg["kind"] == "para" else sent) * rng.uniform(0.8, 1.3)
+            parts.append((g, 0))
+            t += g
+    return sg_, audio(parts), truth
+
+
+okn = 0
+for seed in range(1, 21):
+    sg_, pcm_, truth = say_like(P6, seed)
+    sp_, est_, _ = tts.whole_timeline(pcm_, SR, sg_, list(range(len(sg_))))
+    okn += not any(est_) and max(abs(a[0] - b[0]) for a, b in zip(sp_, truth)) < 0.05
+check(okn >= 19, f"按停顿猜（退路）：英文、数字多的一段（作者那期的第一名），20 种语速和停顿里 {okn} 种每句都对上了（v1.8.13 的按字数一种都对不上）")
+
+sg_ = tts.split("第一句话。第二句，话。\n\n第三句。")
+sp_, est_ = tts.map_items([x["text"] for x in sg_], [{"t": c_, "s": i_ * 0.3, "e": i_ * 0.3 + 0.25} for i_, c_ in enumerate("第一句话第二句话第三句")], 4.0)
+check(sp_ == [[0.0, 1.15], [1.2, 2.35], [2.4, 3.25]] and not any(est_), f"对齐器给的字 → 每句的开始、结束（第一个字开始 → 最后一个字结束）：{sp_}")
+sp_, est_ = tts.map_items(["好的。", "VoiceStudio 支持 646 种。", "嗯。"], [{"t": "好", "s": 0, "e": 0.2}, {"t": "的", "s": 0.2, "e": 0.4},
+                          {"t": "VoiceStudio", "s": 0.8, "e": 1.6}, {"t": "支", "s": 1.6, "e": 1.8}, {"t": "持", "s": 1.8, "e": 2.0}, {"t": "646", "s": 2.0, "e": 3.0},
+                          {"t": "种", "s": 3.0, "e": 3.2}], 4.0)
+check(sp_[1] == [0.8, 3.2] and est_ == [False, False, True] and sp_[2] == [3.2, 4.0], "英文、数字是一个词也对得上；一个字都没对上的句子夹在前后中间（标估的）")
+check(tts.align_text("它把代码、文档、PDF 连成[laughing]一张图。") == "它把代码 文档 PDF 连成一张图", "送去对齐的字：去掉标签，标点换成空格（「PDF、Word」不会被粘成一个词）")
+
+
+def runs_of(pcm_, sr_):
+    a_ = np.frombuffer(bytes(pcm_), dtype="<i2")
+    h_ = max(1, sr_ // 100)
+    n_ = len(a_) // h_
+    loud = np.abs(a_[: n_ * h_].astype(np.int32)).reshape(n_, h_).max(axis=1) > 300
+    out, cur, q = [], None, 0
+    for k_ in range(n_):
+        if loud[k_]:
+            cur = [k_, k_ + 1] if cur is None else [cur[0], k_ + 1]
+            q = 0
+        elif cur is not None:
+            q += 1
+            if q >= 6:
+                out.append((cur[0] / 100, cur[1] / 100))
+                cur, q = None, 0
+    if cur is not None:
+        out.append((cur[0] / 100, cur[1] / 100))
+    return out
+
+
+SENT = []
+
+
+async def fake_post(c_, piece, sr_, text, raw=""):
+    """假的对齐器：按"有声音的一段"和原文里标点隔开的一小段一一对上。记下每次送了多长。"""
+    SENT.append(len(piece) / 2 / sr_)
+    if len(piece) / 2 / sr_ > 180:
+        raise tts.NoAlign("超过 180 秒")
+    phs = [x for x in re.split(r"[，,、；;：:。！？!?…\n]+", raw) if re.search(r"\w", x)]
+    rs = runs_of(piece, sr_)
+    items = []
+    for (a_, b_), ph in zip(rs, phs):
+        toks = re.findall(r"[\u4e00-\u9fff]|[A-Za-z0-9]+", ph)
+        for k_, tk in enumerate(toks):
+            items.append({"t": tk, "s": a_ + (b_ - a_) * k_ / len(toks), "e": a_ + (b_ - a_) * (k_ + 1) / len(toks)})
+    return items
+
+
+async def no_ensure(*a, **k):
+    return {"ok": True}
+
+
+T2 = tts.TTS()
+T2.align_why, T2.ensure, T2._post_align = (lambda: ""), no_ensure, fake_post
+longtxt = "\n\n".join([P6] * 12)                      # 12 段，6 分多钟
+sg_, pcm_, truth = say_like(longtxt, 3)
+SENT.clear()
+sp_, est_, got_, info = asyncio.run(T2.align_local(pcm_, SR, [x["text"] for x in sg_]))
+err = max(max(abs(a[0] - b[0]), abs(a[1] - b[1])) for a, b in zip(sp_, truth))
+check(len(pcm_) / 2 / SR > 300 and info["pieces"] >= 3 and max(SENT) <= 170.5 and not any(est_) and err < 0.05,
+      f"长的（{len(pcm_) / 2 / SR:.0f} 秒）分 {info['pieces']} 段对（每段最长 {max(SENT):.0f} 秒，对齐器最多 180 秒），段和段接上的地方也准（最大误差 {err:.3f} 秒）")
+check(info["quiet"] == info["bounds"] == len(sg_) - 1 and all(g and g[1] > g[0] for g in got_), "对出来的句子边界都落在停顿上；补静音用的空当两头都是准的")
+M.yield_level, M.yield_reason = 1, "在玩游戏（test.exe）"
+T3 = tts.TTS()
+T3.align_ok, T3.env_ok = (lambda: True), (lambda: True)
+try:
+    asyncio.run(T3.align_local(pcm_, SR, ["a"]))
+    check(False, "让路时不对齐")
+except tts.NoAlign as e:
+    check("让路" in str(e), f"在玩游戏让路时不用显卡对齐，退回按停顿猜：{e}")
+M.yield_level, M.yield_reason = 0, ""
+pcm4, sp4 = tts.pad_pauses(audio([(1.0, 1), (0.1, 0), (1.0, 1)]), SR, [[0, 1.0], [1.1, 2.1]], [(0.98, 1.12)], [0.35])
+z = np.frombuffer(bytes(pcm4), dtype="<i2")
+check(abs(len(z) / SR - 2.31) < 0.01 and not np.any(z[1000:1310]) and np.count_nonzero(z[990:1000]) > 5 and np.count_nonzero(z[1310:1330]) > 10
+      and abs(sp4[1][0] - 1.31) < 0.01,
+      "补静音插在两句中间最安静的地方（对齐给的边界差几十毫秒也不会切到字上）")
 
 # ---------- 2. 字幕、音色参数、文件名 ----------
 check(tts.srt_time(3725.5) == "01:02:05,500" and tts.srt_time(0) == "00:00:00,000", f"SRT 时间格式：{tts.srt_time(3725.5)}")

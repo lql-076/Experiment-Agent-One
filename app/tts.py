@@ -10,9 +10,12 @@
 - 我的音色：描述音色的「描述 + 随机种子」存起来，下次一键用。存在数据库里（data），不进仓库。
 - 云端引擎（v1.8.11，app/tts_cloud.py）：百炼的 Qwen-Audio-3.1-TTS-Plus。页面上选「百炼云端」就走它，不用显卡、不启动配音服务；
   输出完全一样（WAV、时间轴 JSON、SRT、文案），时间轴用百炼返回的字级时间戳，没有就按停顿对齐。
+- 时间轴（v1.8.14）：百炼的字级时间戳（只有系统音色给）→ 本地对齐（Qwen3-ForcedAligner-0.6B，在配音服务里跑，云端、本地都用）
+  → 都不行才按停顿猜（猜的不补静音）。试听的那段可以「重新对齐」（不用重新生成、不花钱）。
 """
 import asyncio
 import base64
+import difflib
 import io
 import json
 import os
@@ -238,10 +241,11 @@ def find_pauses(pcm, sr, min_len=0.1):
     return [(s * 0.01, e * 0.01) for s, e in zip(starts, ends) if s > 0 and e < n and (e - s) * 0.01 >= min_len]
 
 
-def align_pauses(pauses, expected, weights, skip=1.5):
-    """每个句子边界（按字数估的时间 expected，句末 weights 大、逗号处小）配一个停顿，顺序不能乱；多出来的停顿（逗号、换气）不管，
-    配不上的边界给 None。动态规划：代价 = |停顿中点 − 估的时间| − 权重 × 停顿长度（句末的停顿一般更长）。"""
-    m, k = len(pauses), len(expected)
+def _align_idx(points, lens, expected, weights, skip=1.5):
+    """每个句子边界（估的时间 expected，句末 weights 大、逗号处小）配一个停顿（points：停顿在哪，lens：停顿多长），顺序不能乱；
+    多出来的停顿（逗号、换气）不管，配不上的边界给 None。动态规划：代价 = |停顿 − 估的时间| − 权重 × 停顿长度（句末的停顿一般更长）。
+    返回每个边界配上的停顿下标。"""
+    m, k = len(points), len(expected)
     INF = float("inf")
     dp = [[INF] * (m + 1) for _ in range(k + 1)]
     bk = [[None] * (m + 1) for _ in range(k + 1)]
@@ -253,8 +257,7 @@ def align_pauses(pauses, expected, weights, skip=1.5):
             if j:
                 if dp[i][j - 1] < best:
                     best, how = dp[i][j - 1], ("extra", j - 1)
-                s, e = pauses[j - 1]
-                c = dp[i - 1][j - 1] + abs((s + e) / 2 - expected[i - 1]) - weights[i - 1] * (e - s)
+                c = dp[i - 1][j - 1] + abs(points[j - 1] - expected[i - 1]) - weights[i - 1] * lens[j - 1]
                 if c < best:
                     best, how = c, ("match", j - 1)
             dp[i][j], bk[i][j] = best, how
@@ -262,7 +265,7 @@ def align_pauses(pauses, expected, weights, skip=1.5):
     while i > 0:
         how, pj = bk[i][j]
         if how == "match":
-            out[i - 1] = pauses[pj]
+            out[i - 1] = pj
             i, j = i - 1, pj
         elif how == "skip":
             i -= 1
@@ -271,45 +274,228 @@ def align_pauses(pauses, expected, weights, skip=1.5):
     return out
 
 
+def align_pauses(pauses, expected, weights, skip=1.5):
+    """（旧的接口）按停顿中点配：返回每个边界配上的停顿 (开始, 结束)，配不上的 None。"""
+    got = _align_idx([(s + e) / 2 for s, e in pauses], [e - s for s, e in pauses], expected, weights, skip)
+    return [pauses[j] if j is not None else None for j in got]
+
+
+# 按停顿猜的时候一句话估多长：v1.8.13 以前按字数，英文、数字全算错（VoiceStudio 算 11 个字，实际念 4 个音节），句子边界配到错的停顿上。
+# v1.8.14 起按音节：汉字一个字一个；英文按元音算音节（全大写的缩写一个字母一个）；数字按中文读法（646 → 六百四十六，5 个）
+_SYL = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]|[A-Za-z]+|\d+(?:\.\d+)?")
+
+
+def _num_syl(w):
+    ip, _, dp = w.partition(".")
+    n = len(dp) + (1 if dp else 0)                                  # 小数：「点」+ 一位一个
+    if len(ip) > 4 or (len(ip) > 1 and ip[0] == "0") or (len(ip) == 4 and ip[:2] in ("19", "20")):
+        return n + len(ip)                                           # 年份、编号：一位一个
+    k, zero, L = 0, False, len(ip)
+    for i, ch in enumerate(ip):
+        place = L - 1 - i
+        if ch == "0":
+            zero = True
+            continue
+        if zero and k:
+            k += 1                                                   # 「零」
+        zero = False
+        if not (ch == "1" and place == 1 and i == 0):                # 十几：不念「一」
+            k += 1
+        k += 1 if place else 0                                       # 十、百、千
+    return n + max(1, k)
+
+
+def _en_syl(w):
+    n = 0
+    for part in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+", w):
+        if part.isupper() and len(part) <= 5:
+            n += len(part)                                           # AI、PDF、CPU：一个字母一个
+            continue
+        p = part.lower()
+        k = len(re.findall(r"[aeiouy]+", p))
+        if p.endswith("e") and not p.endswith(("le", "ee")) and k > 1:
+            k -= 1                                                   # 不发音的 e
+        n += max(1, k)
+    return n
+
+
+def syllables(s):
+    """一句话大概念几个音节（按停顿猜时间轴时用来估每句多长）。"""
+    n = 0.0
+    for m in _SYL.finditer(tts_cloud.strip_tags(s or "")):
+        w = m.group()
+        if w[0].isdigit():
+            n += _num_syl(w)
+        elif w[0].isascii():
+            n += _en_syl(w) * 0.85                                   # 夹在中文里的英文念得快一点
+        else:
+            n += 1
+    return max(0.5, n)
+
+
+def _edges(pcm, sr):
+    """开头、结尾各有多长没声音（秒）。"""
+    r, p90 = tts_cloud._rms(pcm, sr)
+    if r is None:
+        return 0.0, 0.0
+    loud = np.flatnonzero(r >= max(0.003, p90 * 0.06))
+    if not len(loud):
+        return 0.0, 0.0
+    return loud[0] * 0.01, max(0.0, len(pcm) / 2 / sr - (loud[-1] + 1) * 0.01)
+
+
 def whole_timeline(pcm, sr, segs, idx):
-    """整块音频 → 每句的 [开始, 结束]（秒，相对这一块）+ 这句是不是按字数估的。句子边界配上了停顿就用停顿的两头。"""
+    """按停顿猜（退路：百炼没给字级时间戳、本地对齐也用不了的时候）：整块音频 → 每句的 [开始, 结束]（秒）+ 这句是不是估的 + 配上的停顿。
+    v1.8.14：按音节估每句多长；先把所有停顿去掉，在"只算念字的时间"里比（停顿多的地方不再把后面的句子往后推）。
+    这只是猜：猜错了不补静音（调用的地方不拿它的结果补）。"""
     dur = len(pcm) / 2 / sr
-    lens = [max(1, len(segs[i]["text"])) for i in idx]
-    tot, acc, exp = sum(lens), 0, []
-    for L in lens[:-1]:
-        acc += L
-        exp.append(dur * acc / tot)
+    pauses = find_pauses(pcm, sr)
+    lead, tail = _edges(pcm, sr)
+    syl = [syllables(segs[i]["text"]) for i in idx]
+    tot = sum(syl)
+    speech = max(0.1, dur - lead - tail - sum(e - s for s, e in pauses))
+    sp, acc = [], 0.0                                                  # 每个停顿之前已经念了多久（不算停顿）
+    for s, e in pauses:
+        sp.append(s - lead - acc)
+        acc += e - s
+    exp, c = [], 0.0
+    for L in syl[:-1]:
+        c += L
+        exp.append(speech * c / tot)
     w = [0.5 if segs[i]["kind"] == "comma" else 2.0 for i in idx[:-1]]
-    got = align_pauses(find_pauses(pcm, sr), exp, w)
+    gi = _align_idx(sp, [e - s for s, e in pauses], exp, w)
+    got = [pauses[j] if j is not None else None for j in gi]
+
+    def real(t):                                                       # 念字的时间 → 音频里的时间
+        return lead + t + sum(e - s for (s, e), x in zip(pauses, sp) if x < t)
+
     spans, est = [], []
     for n_, _ in enumerate(idx):
-        st = 0.0 if n_ == 0 else (got[n_ - 1][1] if got[n_ - 1] else exp[n_ - 1])
-        en = dur if n_ == len(idx) - 1 else (got[n_][0] if got[n_] else exp[n_])
+        st = 0.0 if n_ == 0 else (got[n_ - 1][1] if got[n_ - 1] else real(exp[n_ - 1]))
+        en = dur if n_ == len(idx) - 1 else (got[n_][0] if got[n_] else real(exp[n_]))
         spans.append([st, max(st, en)])
         est.append((n_ > 0 and not got[n_ - 1]) or (n_ < len(idx) - 1 and not got[n_]))
     return spans, est, got
 
 
+def _cut_at(r, p90, pz):
+    """在 pz（秒，两头放宽 50 毫秒）里找最安静的一段，返回它中间的时间：静音从这里插进去。"""
+    mid = (pz[0] + pz[1]) / 2
+    if r is None:
+        return mid
+    a, b = max(0, int(pz[0] * 100) - 5), min(len(r), int(pz[1] * 100) + 6)
+    if b - a < 1:
+        return mid
+    seg = r[a:b]
+    q = seg <= seg.min() + max(1e-4, p90 * 0.02)
+    best, run, start = (0, 0), 0, 0
+    for k, v in enumerate(q):
+        if v:
+            if not run:
+                start = k
+            run += 1
+            if run > best[0]:
+                best = (run, start)
+        else:
+            run = 0
+    return (a + best[1] + best[0] / 2) * 0.01
+
+
 def pad_pauses(pcm, sr, spans, got, gaps):
-    """配上的停顿比设置的停顿短：在停顿中间补静音补够（不剪掉任何声音）。返回新的 PCM 和挪过的时间。"""
+    """模型停得比设置的短：在两句中间最安静的地方补静音补够（不剪掉任何声音）。返回新的 PCM 和挪过的时间。
+    got[b]：第 b 句和第 b+1 句中间没声音的那段（上一句最后一个字念完 → 下一句第一个字开始）；None = 这里不补。
+    只有边界是准的（百炼逐字时间戳、本地对齐）才补：v1.8.13 以前按停顿猜的也补，猜错的地方被硬塞进静音，连声音的节奏都乱了。"""
+    r, p90 = tts_cloud._rms(pcm, sr)
     adds = []
     for b, pz in enumerate(got):
-        if pz and gaps[b] > (pz[1] - pz[0]) + 0.02:
-            adds.append(((pz[0] + pz[1]) / 2, gaps[b] - (pz[1] - pz[0])))
+        if not pz:
+            continue
+        have = max(0.0, pz[1] - pz[0])
+        if gaps[b] > have + 0.02:
+            adds.append((b, _cut_at(r, p90, pz), gaps[b] - have))
     if not adds:
         return pcm, spans
     out, last = bytearray(), 0
-    for t, extra in adds:
-        cut = int(t * sr) * 2
+    for _, t, extra in adds:
+        cut = max(last, min(len(pcm), int(t * sr) * 2))
         out += pcm[last:cut] + bytes(2 * int(extra * sr))
         last = cut
     out += pcm[last:]
     new = []
-    for st, en in spans:
-        sh_s = sum(x for t, x in adds if t <= st)
-        sh_e = sum(x for t, x in adds if t < en)
-        new.append([st + sh_s, en + sh_e])
+    for k, (st, en) in enumerate(spans):
+        sh = sum(x for b, _, x in adds if b < k)
+        new.append([st + sh, en + sh])
     return out, new
+
+
+# ---------------- 本地对齐（v1.8.14）：Qwen3-ForcedAligner-0.6B，音频 + 原文 → 每个字的开始、结束 ----------------
+# 百炼只给系统音色返回字级时间戳，自己设计、复刻的音色不给（作者 2026-10-30 的 Design-test-2）；本地整段生成也没有。
+# 对齐器跑在配音服务里（tts-env，用显卡）：一次最多 180 秒，长的按 ALIGN_PIECE 秒一段一段对，每段最后两句放到下一段重对（段的开头是准的）。
+ALIGN_PIECE = 150.0
+ALIGN_MAX = 170.0
+_PUNCT = re.compile(r"[^\w']+")
+
+
+class NoAlign(Exception):
+    """本地对齐用不了（没装、在让路、服务起不来、对齐出错）：退回按停顿猜。"""
+
+
+def align_text(t):
+    """送去对齐的字：去掉 [标签]，标点换成空格（对齐器只认字和词；不换的话「PDF、Word」会被它粘成一个词）。"""
+    return _PUNCT.sub(" ", tts_cloud.strip_tags(t or "")).strip()
+
+
+def map_items(texts, items, total):
+    """对齐器给的字和词（[{t, s, e}]，秒）→ 每句的 [开始, 结束] + 这句是不是估的。去掉标点空白后按最长公共片段对位置，不要求一字不差。"""
+    n = len(texts)
+    N, owner = "", []
+    for si, t in enumerate(texts):
+        ns, _ = tts_cloud._norm(t)
+        N += ns
+        owner += [si] * len(ns)
+    T, pos = "", []
+    for it in items:
+        ns, _ = tts_cloud._norm(str(it.get("t") or ""))
+        pos.append((len(T), len(T) + len(ns)))
+        T += ns
+    t2n = {}
+    if T and N:
+        for a, b, size in difflib.SequenceMatcher(None, T, N, autojunk=False).get_matching_blocks():
+            for d in range(size):
+                t2n[a + d] = b + d
+    t0, t1 = [None] * n, [None] * n
+    for (a, b), it in zip(pos, items):
+        try:
+            s_, e_ = float(it["s"]), float(it["e"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        for si in {owner[t2n[p]] for p in range(a, b) if p in t2n}:
+            t0[si] = s_ if t0[si] is None else min(t0[si], s_)
+            t1[si] = e_ if t1[si] is None else max(t1[si], e_)
+    spans, est = [], []
+    for i in range(n):
+        if t0[i] is not None:
+            st = max(t0[i], spans[-1][1] if spans else 0.0)            # 不和上一句叠在一起
+            spans.append([st, min(total, max(st, t1[i]))])
+            est.append(False)
+        else:                                                          # 一个字都没对上：夹在前后两句中间（标 est）
+            prev = spans[-1][1] if spans else 0.0
+            nxt = next((t0[k] for k in range(i + 1, n) if t0[k] is not None), total)
+            spans.append([prev, max(prev, nxt)])
+            est.append(True)
+    return spans, est
+
+
+def bounds_quiet(pcm, sr, spans, est):
+    """句子边界（上一句结束 → 下一句开始）落在没声音的地方的个数、边界数（两边都是准的才算）。"""
+    r, p90 = tts_cloud._rms(pcm, sr)
+    q, n = 0, 0
+    for i in range(len(spans) - 1):
+        if est[i] or est[i + 1]:
+            continue
+        n += 1
+        q += tts_cloud._quiet(r, p90, spans[i][1], max(spans[i][1], spans[i + 1][0]))
+    return q, n
 
 
 # ---------------- 管家 ----------------
@@ -322,6 +508,7 @@ class TTS:
         self.job = None
         self._task = None
         self._h, self._hts = None, 0.0
+        self.aligning = False
 
     @property
     def s(self):
@@ -340,10 +527,18 @@ class TTS:
         d = self.model_dir(kind)
         return (d / "config.json").exists() and (d / "speech_tokenizer" / "config.json").exists() and any(d.glob("*.safetensors"))
 
+    def align_dir(self):
+        return paths.MODELS_TTS / paths.ALIGN_MODEL
+
+    def align_ok(self):
+        d = self.align_dir()
+        return (d / "config.json").exists() and any(d.glob("*.safetensors"))
+
     def model_size(self, kind):
         """模型文件夹有多大（字节；下到一半的也算）。"""
         try:
-            return sum(f.stat().st_size for f in self.model_dir(kind).rglob("*") if f.is_file())
+            d = self.align_dir() if kind == "align" else self.model_dir(kind)
+            return sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
         except OSError:
             return 0
 
@@ -363,6 +558,91 @@ class TTS:
 
     def busy(self):
         return bool(self.job and self.job["st"] == "run")
+
+    # ---------- 本地对齐（v1.8.14） ----------
+    def align_why(self):
+        """本地对齐现在用不了的原因；用得了返回空。"""
+        if not self.env_ok():
+            return "没装配音环境（设置 › 本地模型 点「安装配音」）"
+        if not self.align_ok():
+            return "没装对齐模型（设置 › 本地模型 点「接着装」，约 1.8 GB）"
+        if M.yielding:
+            return f"在让路（{M.yield_reason or '显存不够'}），不用显卡"
+        return ""
+
+    async def _post_align(self, c, pcm, sr, text, raw=""):
+        """raw：带标点的原文（对齐器不用，只给测试用的假对齐器认句子）。"""
+        try:
+            r = await c.post(self.url("/align"), json={"pcm": base64.b64encode(bytes(pcm)).decode(), "sr": sr, "text": text, "raw": raw,
+                                                       "language": "Chinese"})
+        except httpx.HTTPError as e:
+            raise NoAlign(f"配音服务断了：{type(e).__name__}") from None
+        self.last = time.time()
+        if r.status_code != 200:
+            try:
+                why = r.json().get("detail") or r.text
+            except Exception:
+                why = r.text
+            raise NoAlign(str(why)[:200])
+        return r.json().get("items") or []
+
+    async def align_local(self, pcm, sr, texts, job=None):
+        """音频 + 每句原文 → (spans, est, got, info)。spans：每句 [开始, 结束]（秒）；got：句子之间没声音的那段（补静音用）。
+        用不了抛 NoAlign。长的分段对：每段不超过 ALIGN_MAX 秒，切在停顿处；每段最后两句放到下一段重对（下一段的开头是准的）。"""
+        why = self.align_why()
+        if why:
+            raise NoAlign(why)
+        if job is not None:
+            job["msg"] = "对齐时间轴（本地对齐模型，第一次要等配音服务和模型装好，十几秒）"
+        try:
+            await self.ensure()
+        except RuntimeError as e:
+            raise NoAlign(str(e)[:200]) from None
+        dur = len(pcm) / 2 / sr
+        n = len(texts)
+        syl = [syllables(t) for t in texts]
+        pauses = find_pauses(pcm, sr)
+        r, p90 = tts_cloud._rms(pcm, sr)
+        out, t0, i0, rate, calls, t_start = [None] * n, 0.0, 0, None, 0, time.time()
+        async with httpx.AsyncClient(timeout=300) as c:
+            while i0 < n:
+                if dur - t0 <= ALIGN_MAX:
+                    i1, t1 = n, dur
+                else:
+                    per = rate or (dur - t0) / max(0.5, sum(syl[i0:]))
+                    acc, i1 = 0.0, i0
+                    while i1 < n and acc + syl[i1] * per <= ALIGN_PIECE:
+                        acc += syl[i1] * per
+                        i1 += 1
+                    i1 = max(i1, min(n, i0 + 3))
+                    guess = t0 + acc
+                    cands = [p for p in pauses if t0 + 1 < (p[0] + p[1]) / 2 <= t0 + ALIGN_MAX and abs((p[0] + p[1]) / 2 - guess) < 10]
+                    t1 = (sum(max(cands, key=lambda p: (p[1] - p[0]) - abs((p[0] + p[1]) / 2 - guess) * 0.05)) / 2 if cands
+                          else min(dur, t0 + ALIGN_PIECE))
+                piece = pcm[int(t0 * sr) * 2: int(t1 * sr) * 2]
+                items = await self._post_align(c, piece, sr, " ".join(align_text(t) for t in texts[i0:i1]), "\n".join(texts[i0:i1]))
+                calls += 1
+                sp, est = map_items(texts[i0:i1], items, t1 - t0)
+                last = i1 == n
+                keep = (i1 - i0) if last else max(1, i1 - i0 - 2)
+                if not any(not e for e in est[:keep]):
+                    raise NoAlign("对齐器没对上字（音频和文案对不上？）")
+                for k in range(keep):
+                    out[i0 + k] = ([t0 + sp[k][0], t0 + sp[k][1]], est[k])
+                if last:
+                    break
+                e_prev = t0 + sp[keep - 1][1]
+                s_next = max(e_prev, t0 + sp[keep][0]) if not est[keep] else e_prev + 0.3
+                rate = (e_prev - t0) / max(0.5, sum(syl[i0:i0 + keep]))
+                t0, i0 = _cut_at(r, p90, (e_prev, s_next)), i0 + keep
+        spans, est = [x[0] for x in out], [x[1] for x in out]
+        for i in range(1, n):                                    # 段与段接上的地方：不叠
+            if spans[i][0] < spans[i - 1][1]:
+                spans[i][0] = spans[i - 1][1]
+                spans[i][1] = max(spans[i][1], spans[i][0])
+        got = [(spans[i][1], max(spans[i][1], spans[i + 1][0])) if not (est[i] or est[i + 1]) else None for i in range(n - 1)]
+        q, nb = bounds_quiet(pcm, sr, spans, est)
+        return spans, est, got, {"pieces": calls, "quiet": q, "bounds": nb, "sec": round(time.time() - t_start, 1)}
 
     async def health(self, fresh=False):
         if not fresh and time.time() - self._hts < 2:
@@ -471,6 +751,8 @@ class TTS:
         cloud = (req.get("engine") or self.s.get("ttsEngine") or "local") == "cloud"
         if self.busy():
             raise HTTPException(409, "上一段还在生成，等它好了或者先点「停下」")
+        if self.aligning:
+            raise HTTPException(409, "正在重新对齐时间轴，等几秒")
         if M.yielding and not cloud:
             raise HTTPException(409, f"现在在让路（{M.yield_reason or '显存不够'}），配音先不开；游戏关了再生成（或者换「百炼云端」，不用显卡）")
         same = bool(req.get("same")) and not cloud
@@ -560,6 +842,7 @@ class TTS:
         pcm, sr, tl = bytearray(), None, []
         chunks = whole_chunks(segs)
         job["chunks"] = len(chunks)
+        job["chk"] = {"how": set(), "quiet": 0, "bounds": 0, "base": set(), "sec": 0.0}
         per_min = float((db.kv_get("tts_speed") or {}).get("per_min") or 240)      # 生成 1 分钟音频要几秒；没测过按 4 分钟估
         for ci, idx in enumerate(chunks):
             if job["stop"]:
@@ -575,7 +858,7 @@ class TTS:
             sr = sr or rate
             if rate != sr:
                 raise RuntimeError("前后两块的采样率对不上")
-            spans, est_flags, got = whole_timeline(frames, rate, segs, idx)
+            spans, est_flags, got = await self._timeline(job, frames, rate, segs, idx)
             frames, spans = pad_pauses(frames, rate, spans, got, [segs[i]["gap"] for i in idx[:-1]])
             base = len(pcm) / 2 / sr
             pcm += frames
@@ -586,7 +869,63 @@ class TTS:
             job["done_chars"] += nc
             job["audio_s"] = round(len(pcm) / 2 / sr, 2)
             job["chunk_t0"] = 0.0
+        self._finish_check(job, tl)
         return pcm, sr, tl
+
+    async def _timeline(self, job, frames, sr, segs, idx, words=None):
+        """一块音频的时间轴：百炼字级时间戳（words，对得上停顿的才用）→ 本地对齐 → 按停顿猜。返回 (spans, est, got)；
+        got 是补静音用的：只有准的边界才给，按停顿猜的全是 None（猜错了的地方不能塞静音）。"""
+        ck = job["chk"]
+        if words:
+            spans, est, got, w = words
+            if not w["bounds"] or w["quiet"] >= 0.9 * w["bounds"]:
+                ck["how"].add("words")
+                ck["quiet"] += w["quiet"]
+                ck["bounds"] += w["bounds"]
+                ck["base"].add(w["base"])
+                return spans, est, got
+        try:
+            spans, est, got, info = await self.align_local(frames, sr, [segs[i]["text"] for i in idx], job)
+            ck["how"].add("align")
+            ck["quiet"] += info["quiet"]
+            ck["bounds"] += info["bounds"]
+            ck["sec"] += info["sec"]
+            return spans, est, got
+        except NoAlign as e:
+            ck["why"] = str(e)
+        if words:                                                # 本地对齐用不了：百炼的时间戳虽然有几处没落在停顿上，也比猜的强
+            spans, est, got, w = words
+            ck["how"].add("words")
+            ck["quiet"] += w["quiet"]
+            ck["bounds"] += w["bounds"]
+            ck["base"].add(w["base"])
+            return spans, est, got
+        spans, est, _ = whole_timeline(frames, sr, segs, idx)
+        ck["how"].add("pause")
+        return spans, est, [None] * (len(idx) - 1)
+
+    def _finish_check(self, job, tl):
+        """时间轴准不准写进 JSON（check）和界面：用的什么办法、几句是准的、句子边界有几处落在停顿上、没用本地对齐的原因。"""
+        ck = job["chk"]
+        hows = ck["how"]
+        names = {"words": "百炼逐字时间戳", "align": "本地对齐", "pause": "按停顿猜"}
+        n_est = sum(1 for x in tl if x.get("est"))
+        job["check"] = {"method": " + ".join(names[h] for h in ("words", "align", "pause") if h in hows), "how": sorted(hows),
+                        "sure": "pause" not in hows, "sentences": len(tl), "exact": len(tl) - n_est, "estimated": n_est,
+                        **({"bounds_in_silence": ck["quiet"], "bounds": ck["bounds"]} if ck["bounds"] else {}),
+                        **({"time_base": "/".join(sorted(ck["base"]))} if ck["base"] else {}),
+                        **({"align_sec": round(ck["sec"], 1)} if "align" in hows else {}),
+                        **({"why_not_aligned": ck["why"]} if "pause" in hows and ck.get("why") else {})}
+        pre = "百炼云端：" if job.get("engine") == "cloud" else "整段一次生成："
+        if hows == {"words"}:
+            job["align"] = pre + "每句的开始、结束用百炼返回的字级时间戳拼出来（带 est 的是没对上、夹在前后两句中间估的）"
+        elif hows == {"align"}:
+            job["align"] = pre + "每句的开始、结束用本地对齐模型（Qwen3-ForcedAligner-0.6B）拿音频和原文对出来的，误差几十毫秒（带 est 的是没对上、夹在中间估的）"
+        elif hows == {"pause"}:
+            job["align"] = pre + "没对齐（" + (ck.get("why") or "对齐用不了") + "），每句的开始、结束是按音频里的停顿猜的，可能对不上；可以点「重新对齐」"
+        else:
+            job["align"] = pre + "有的块用" + "、有的块用".join(names[h] for h in ("words", "align", "pause") if h in hows) + "（带 est 的是估的）"
+
 
     async def _cloud(self, job, segs):
         """百炼云端（v1.8.11）：一块（最多 blMax 字）一次念完，边念边传回来；超过的按段落分块，同一个音色、语气、种子。
@@ -595,8 +934,8 @@ class TTS:
         limit = max(200, int(self.s.get("blMax") or 2000))
         chunks = whole_chunks(segs, limit)
         job["chunks"] = len(chunks)
-        pcm, sr, tl, hows = bytearray(), tts_cloud.SR, [], set()
-        job["chk"] = {"quiet": 0, "bounds": 0, "base": set()}
+        pcm, sr, tl = bytearray(), tts_cloud.SR, []
+        job["chk"] = {"how": set(), "quiet": 0, "bounds": 0, "base": set(), "sec": 0.0}
         for ci, idx in enumerate(chunks):
             if job["stop"]:
                 raise Stopped(job["stop"])
@@ -626,16 +965,8 @@ class TTS:
             bill, cny = tts_cloud.record(v["voice"], text, r["usage"], "生成", len(frames) / 2 / sr)
             job["bill"] += bill
             job["cny"] += cny
-            got_tl = tts_cloud.word_spans(text, ranges, r["sents"], sr, frames) if asked else None
-            if got_tl:
-                spans, est_flags, got, ck = got_tl
-                hows.add("words")
-                job["chk"]["quiet"] += ck["quiet"]
-                job["chk"]["bounds"] += ck["bounds"]
-                job["chk"]["base"].add(ck["base"])
-            else:
-                spans, est_flags, got = whole_timeline(frames, sr, segs, idx)
-                hows.add("pause")
+            words = tts_cloud.word_spans(text, ranges, r["sents"], sr, frames) if asked else None
+            spans, est_flags, got = await self._timeline(job, frames, sr, segs, idx, words)
             frames, spans = pad_pauses(frames, sr, spans, got, [segs[i]["gap"] for i in idx[:-1]])
             base = len(pcm) / 2 / sr
             pcm += frames
@@ -646,14 +977,7 @@ class TTS:
                 pcm += bytes(2 * int(sr * segs[idx[-1]]["gap"]))
             job["done_chars"] = base_done + nc
             job["audio_s"] = round(len(pcm) / 2 / sr, 2)
-        n_est = sum(1 for x in tl if x.get("est"))
-        ck = job["chk"]
-        job["check"] = {"method": "百炼逐字时间戳" if hows == {"words"} else "按停顿对齐" if hows == {"pause"} else "百炼逐字时间戳 + 按停顿对齐",
-                        "sentences": len(tl), "exact": len(tl) - n_est, "estimated": n_est,
-                        **({"bounds_in_silence": ck["quiet"], "bounds": ck["bounds"], "time_base": "/".join(sorted(ck["base"]))} if ck["bounds"] else {})}
-        job["align"] = ("百炼云端：每句的开始、结束用百炼返回的字级时间戳拼出来（带 est 的是没对上、夹在前后两句中间估的）" if hows == {"words"}
-                        else "百炼云端：百炼没返回字级时间戳，每句的开始、结束按音频里的停顿对齐（带 est 的是按字数估的）" if hows == {"pause"}
-                        else "百炼云端：有的块用百炼的字级时间戳，有的块按音频里的停顿对齐（带 est 的是估的）")
+        self._finish_check(job, tl)
         return pcm, sr, tl
 
     async def _run(self, job, text, segs):
@@ -713,12 +1037,11 @@ class TTS:
                 "license": "阿里云百炼服务协议：用阿里自家模型生成的内容，知识产权归你" if cloud else LICENSE,
                 "voice": voice, "language": v["lang"], "sample_rate": sr, "duration": round(len(pcm) / 2 / sr, 3),
                 "gen_seconds": round(gen, 1), "same_test": job["same"], "way": "whole" if job["whole"] else "sentence",
-                "align": (job["align"] if cloud else "整段一次生成：每句的开始、结束按音频里的停顿对齐；带 est 的是没对上停顿、按字数估的" if job["whole"]
-                          else "一句一句生成：每句的开始、结束是准的"),
+                "align": job.get("align") or "一句一句生成：每句的开始、结束是准的",
                 "gaps": {"sentence": float(self.s.get("ttsGap", 0.35)), "paragraph": float(self.s.get("ttsParaGap", 0.7))},
                 **({"cost": {"billed_chars": job["bill"], "cny": round(job["cny"], 4), "chunks": job["chunks"]}} if cloud else {}),
-                "check": job.get("check") or {"method": "按停顿对齐" if job["whole"] else "一句一句生成（准的）", "sentences": len(tl),
-                                              "exact": sum(1 for x in tl if not x.get("est")), "estimated": sum(1 for x in tl if x.get("est"))},
+                "check": job.get("check") or {"method": "一句一句生成", "how": ["sentence"], "sure": True, "sentences": len(tl),
+                                              "exact": len(tl), "estimated": 0},
                 "segments": tl}
         tmp = DRAFT / "draft.tmp.wav"
         write_wav(tmp, sr, pcm)
@@ -737,6 +1060,46 @@ class TTS:
             return None
         m["ver"] = int((DRAFT / "draft.wav").stat().st_mtime)
         return m
+
+    async def realign(self):
+        """试听的那段重新对一遍时间轴（v1.8.14）：用本地对齐模型，声音一点不动、不重新生成、不花钱；改 JSON 和 SRT。"""
+        if self.busy():
+            raise HTTPException(409, "正在生成，等它好了再对齐")
+        if self.aligning:
+            raise HTTPException(409, "已经在对齐了")
+        m = self.draft()
+        if not m or not m.get("segments"):
+            raise HTTPException(404, "还没有生成过")
+        why = self.align_why()
+        if why:
+            raise HTTPException(400, "现在对不了：" + why)
+        self.aligning = True
+        try:
+            sr, pcm = read_wav((DRAFT / "draft.wav").read_bytes())
+            texts = [x["text"] for x in m["segments"]]
+            spans, est, _, info = await self.align_local(pcm, sr, texts)
+        except NoAlign as e:
+            raise HTTPException(503, "没对成：" + str(e)) from None
+        finally:
+            self.aligning = False
+        old = m.get("check") or {}
+        tl = [{"i": x["i"], "start": round(a, 3), "end": round(b, 3), "text": x["text"], **({"est": True} if e else {})}
+              for x, (a, b), e in zip(m["segments"], spans, est)]
+        n_est = sum(est)
+        moved = [abs(a["start"] - b["start"]) for a, b in zip(tl, m["segments"])]
+        m.pop("ver", None)
+        m.update(segments=tl, realigned=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                 align=("重新对齐：每句的开始、结束用本地对齐模型（Qwen3-ForcedAligner-0.6B）拿音频和原文对出来的，误差几十毫秒；"
+                        "声音没动（生成时补过的静音还在）"),
+                 check={"method": "本地对齐（重新对齐）", "how": ["align"], "sure": True, "sentences": len(tl), "exact": len(tl) - n_est,
+                        "estimated": n_est, "bounds_in_silence": info["quiet"], "bounds": info["bounds"], "align_sec": info["sec"],
+                        "before": old.get("method", ""), "moved_max": round(max(moved or [0]), 2)})
+        (DRAFT / "draft.json").write_text(json.dumps(m, ensure_ascii=False, indent=2), "utf-8")
+        (DRAFT / "draft.srt").write_text(to_srt(tl), "utf-8")
+        big = sum(1 for x in moved if x > 0.3)
+        msg = f"重新对齐好了：{len(tl)} 句，{big} 句的开始挪了 0.3 秒以上（最多 {max(moved or [0]):.1f} 秒），用了 {info['sec']:.0f} 秒"
+        feed.add("配音" + msg, "ok", job="配音")
+        return {"msg": msg, "draft": self.draft()}
 
     def save(self):
         m = self.draft()
@@ -804,7 +1167,8 @@ class TTS:
         h = await self.health()
         from . import tts_install
         return {"env": self.env_ok(), "models": {k: self.model_ok(k) for k in paths.TTS_MODELS}, "model_names": paths.TTS_MODELS,
-                "sizes": {k: self.model_size(k) for k in paths.TTS_MODELS}, "inst": tts_install.public(),
+                "sizes": {k: self.model_size(k) for k in (*paths.TTS_MODELS, "align")}, "inst": tts_install.public(),
+                "align": self.align_ok(), "align_why": self.align_why(), "aligning": self.aligning,
                 "server": bool(h), "proc": self.proc.alive(), "loaded": (h or {}).get("loaded"), "attn": (h or {}).get("attn"),
                 "cuda": (h or {}).get("cuda"), "yield": (M.yield_reason or "显存让路") if M.yielding else "",
                 "job": self.public(), "draft": self.draft(), "speakers": SPEAKERS, "langs": LANGS, "voices": self.voices(),
@@ -857,6 +1221,11 @@ def tts_draft_wav():
     if not p.exists():
         raise HTTPException(404, "还没有生成过")
     return FileResponse(p, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
+@api.post("/api/tts/realign")
+async def tts_realign():
+    return await T.realign()
 
 
 @api.post("/api/tts/save")

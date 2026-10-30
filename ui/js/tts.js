@@ -21,7 +21,7 @@ var TTS_DEMO = {
   langs: [['Chinese', '中文'], ['English', '英文'], ['Auto', '自动']],
   voices: [{ id: 1, name: '解说男声', desc: '三十岁左右的男声，声音低沉温和，吐字清楚，语速平稳，像科技频道的解说', seed: 20261028 }],
   out: 'F:\\Agent\\配音输出', saved: null, speed: null, gap: 0.35, para: 0.7,
-  sizes: { custom: 4.5e9, design: 4.5e9 }, inst: { st: 'idle' }, engine: 'local',
+  sizes: { custom: 4.5e9, design: 4.5e9, align: 1.84e9 }, align: true, inst: { st: 'idle' }, engine: 'local',
   cloud: { key: false, model: 'qwen-audio-3.1-tts-plus', known: true, price: 1.4, max: 2000, ratio: null, month: { n: 0, cny: 0, bill: 0 }, count: 1, quota: 1000,
     design_text: '大家好，欢迎来到这一期的 AI 工具实测，今天我们聊三个最近很火的新工具。', hotfix: { pronunciation: { '重庆': 'chong2 qing4' }, replace: {} },
     langs: [['', '自动'], ['zh', '中文'], ['en', '英文'], ['ja', '日语'], ['ko', '韩语']],
@@ -330,7 +330,7 @@ function ttsSyncCloud(s, j, run) {
 }
 function ttsVoiceName(d) { var v = d.voice || {}; return v.mode === 'design' ? (v.name || '描述音色') + ' · 种子 ' + v.seed : v.mode === 'cloud' ? (v.name || v.voice) + ' · 百炼' : (v.speaker || ''); }
 function ttsSyncRes(s) {
-  var d = s.draft, ver = d ? d.ver + '|' + (s.saved ? s.saved.name : '') : 'none';
+  var d = s.draft, ver = d ? d.ver + '|' + (d.realigned || '') + '|' + (s.saved ? s.saved.name : '') + '|' + !!s.align : 'none';
   if (ver === TTS.resVer) return;
   TTS.resVer = ver;
   var r = '<div class="hc-h"><span class="label">试听</span>' + (d ? '<span class="cap num">' + esc(d.created.slice(5, 16)) + ' · ' + esc(ttsVoiceName(d)) + ' · ' + ttsDur(d.duration) + ' · ' + d.segments.length + ' 句</span>' : '') + '</div>' +
@@ -358,10 +358,17 @@ function ttsSyncRes(s) {
 
 /* 时间轴准不准（v1.8.13）：用的哪种办法、几句是准的、句子边界是不是都落在停顿上 */
 function ttsChkHTML(c) {
-  var off = c.bounds ? c.bounds - (c.bounds_in_silence || 0) : 0, warn = c.estimated || off;
-  var t = '时间轴：' + esc(c.method) + '，' + (c.estimated ? c.exact + '/' + c.sentences + ' 句是准的，' + c.estimated + ' 句是估的（时间前面带 ≈）' : c.sentences + ' 句都是准的') +
+  /* 时间轴准不准（v1.8.14）：本地对齐 / 百炼逐字时间戳是准的（绿）；按停顿猜的标红，能对齐就给「重新对齐」，没装对齐模型就说去哪装 */
+  var s = TTS.st || {}, how = c.how || [];
+  var guess = how.indexOf('pause') >= 0 || (c.sure === undefined && /停顿/.test(c.method || ''));
+  var off = c.bounds ? c.bounds - (c.bounds_in_silence || 0) : 0, warn = c.estimated || off, t;
+  if (guess) t = '时间轴：没对齐，是按停顿猜的，可能对不上' + (c.why_not_aligned && s.align ? '（' + esc(c.why_not_aligned) + '）' : '');
+  else t = '时间轴：' + esc(c.method) + '，' + (c.estimated ? c.exact + '/' + c.sentences + ' 句对上了，' + c.estimated + ' 句是估的（时间前面带 ≈）' : c.sentences + ' 句都对上了') +
     (off ? '；' + off + ' 处句子边界没落在停顿上，那里可能偏了' : '');
-  return '<div class="tts-chk' + (warn ? ' warn' : ' ok') + '" id="ttsChk">' + t + '</div>';
+  var tail = '';
+  if ((guess || warn) && s.align && !s.demo) tail = ' <button class="tts-link" data-act="realign"' + (s.aligning ? ' disabled' : '') + '>重新对齐</button><span class="cap">（声音不动、不花钱）</span>';
+  else if (guess && !s.align) tail = '。<span class="cap">装上对齐模型就准了：设置 › 本地模型 点「接着装」（约 1.8 GB）</span>';
+  return '<div class="tts-chk ' + (guess ? 'bad' : warn ? 'warn' : 'ok') + '" id="ttsChk"><span>' + t + tail + '</span></div>';
 }
 
 /* ---------- 波形 ---------- */
@@ -619,6 +626,11 @@ $('#view-tts').addEventListener('click', function (ev) {
   else if (act === 'dictsave') api('PUT', '/api/tts/cloud/hotfix', ttsDictCollect()).then(function (j) { if (TTS.st.cloud) TTS.st.cloud.hotfix = j.hotfix; TTS.dict = null; ttsVoice(); toast(j.msg); }).catch(function (e) { toast(e.message, 6000); });
   else if (act === 'stop') api('POST', '/api/tts/stop', {}).then(function (j) { TTS.st.job = j.job; ttsSync(); });
   else if (act === 'off') api('POST', '/api/tts/off', {}).then(function () { toast('配音服务关了，显存还回去了'); return ttsLoad(); }).then(ttsSync).catch(function (e) { toast(e.message); });
+  else if (act === 'realign') {
+    t.disabled = true; t.textContent = '对齐中…';
+    api('POST', '/api/tts/realign', {}, 300000).then(function (j) { toast(j.msg, 6000); return ttsLoad(); }).then(ttsSync)
+      .catch(function (e) { toast(e.message, 6000); t.disabled = false; t.textContent = '重新对齐'; });
+  }
   else if (act === 'save') api('POST', '/api/tts/save', {}).then(function (j) { toast(j.msg, 4500); return ttsLoad(); }).then(ttsSync).catch(function (e) { toast(e.message); });
   else if (act === 'open' || act === 'openlast') api('POST', '/api/tts/open', { last: act === 'openlast' }).then(function (j) { toast(j.msg, 4000); }).catch(function (e) { toast(e.message); });
 });
@@ -686,12 +698,12 @@ function ttsInstHTML() {
   var s = TTS.st;
   if (!s) return '<div class="balbox ttsinst"><div><span class="label">配音 · Qwen3-TTS 1.7B</span><div class="help">正在读取…</div></div></div>';
   var i = s.inst || {}, run = i.st === 'run', m = s.models || {}, z = s.sizes || {}, live = useLive();
-  var all = s.env && m.custom && m.design, some = s.env || m.custom || m.design || z.custom || z.design;
+  var all = s.env && m.custom && m.design && s.align, some = s.env || m.custom || m.design || z.custom || z.design;
   var st = run ? ['warn', '正在安装'] : all ? ['ok', '装好了'] : some ? ['warn', '没装全'] : ['off', '还没装'];
   var row = function (ok, name, extra) { return '<li class="' + (ok ? 'ok' : '') + '"><i></i><span>' + name + '</span><em>' + extra + '</em></li>'; };   // 一行三项，横着排
-  var mod = function (k, name) { var g = (z[k] || 0) >= 1e6 ? ' · ' + ttsGB(z[k]) : ''; return row(m[k], name, m[k] ? '已下' + g : g ? '下了一半' + g : '没下'); };
+  var mod = function (k, name) { var ok = k === 'align' ? s.align : m[k], g = (z[k] || 0) >= 1e6 ? ' · ' + ttsGB(z[k]) : ''; return row(ok, name, ok ? '已下' + g : g ? '下了一半' + g : '没下'); };
   var h = '<div class="balbox ttsinst"><div class="ttsi-main"><span class="label">配音 · Qwen3-TTS 1.7B（左边「配音」页用）</span><div class="hwc-st st-' + st[0] + '"><i></i><b>' + st[1] + '</b></div>' +
-    '<ul class="ttsi-list">' + row(s.env, '配音环境', s.env ? '已装' : '没装') + mod('custom', '预设音色模型', '') + mod('design', '描述音色模型') + '</ul>';
+    '<ul class="ttsi-list">' + row(s.env, '配音环境', s.env ? '已装' : '没装') + mod('custom', '预设音色模型', '') + mod('design', '描述音色模型') + mod('align', '时间轴对齐模型') + '</ul>';
   if (run) {
     var pct = i.pct == null ? null : Math.round(i.pct);
     h += '<div class="prog' + (pct == null ? ' busy' : '') + '"><div class="prog-h"><span>' + esc(i.phase || '准备中') + '</span><b>' + (pct == null ? '' : pct + '%') + '</b></div>' +
@@ -700,7 +712,7 @@ function ttsInstHTML() {
   } else if (i.st === 'fail') h += '<div class="tts-msg bad">上次没装完（退出码 ' + esc(i.code) + '）。再点一次会接着装；魔搭下不动就点「改从 hf-mirror 下」。原始输出：' + esc(i.log || '') + '</div>';
   else if (i.st === 'stop') h += '<div class="tts-msg">上次停下了，再点一次接着装。</div>';
   else if (i.st === 'ok') h += '<div class="tts-msg ok">装好了，左边点「配音」就能用。</div>';
-  h += '<div class="help">约 14 GB：配音环境 5 GB + 两个模型各 4~5 GB（魔搭）。装过的跳过、断了接着下，关掉界面也接着装，每一步在 后台 › 进展报告。备用：双击「安装配音.bat」。</div></div>' +
+  h += '<div class="help">约 16 GB：配音环境 5 GB + 两个配音模型各 4~5 GB + 时间轴对齐模型 1.8 GB（魔搭；云端配音也用它对时间轴）。装过的跳过、断了接着下，关掉界面也接着装，每一步在 后台 › 进展报告。备用：双击「安装配音.bat」。</div></div>' +
     '<div class="btnrow">' + (run ? '<button class="btn" data-tti="stop">停下</button>'
       : '<button class="btn primary" data-tti="go"' + (live ? '' : ' disabled') + '>' + (all ? '重新检查一遍' : i.st === 'fail' || i.st === 'stop' || some ? '接着装' : '安装配音') + '</button>' +
         (i.st === 'fail' ? '<button class="btn" data-tti="hf">改从 hf-mirror 下</button>' : '')) + '</div></div>';

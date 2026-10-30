@@ -130,7 +130,8 @@ with sync_playwright() as pw:
     p.wait_for_function("(document.querySelector('#ttsGen .tts-msg.ok') || {}).textContent && document.querySelector('#ttsGen .tts-msg.ok').textContent.indexOf('花了约') >= 0", timeout=30000)
     p.wait_for_function("document.querySelectorAll('#ttsTl .tts-seg').length === 3 && document.querySelector('#ttsRes .hc-h').textContent.indexOf('许南川') >= 0", timeout=8000)
     check(True, "生成好了：说了花多少，时间轴 3 句，试听那里写着许南川 · 百炼：" + p.inner_text("#ttsGen .tts-msg.ok"))
-    check("百炼逐字时间戳" in p.inner_text("#ttsChk") and "3 句都是准的" in p.inner_text("#ttsChk"), "波形下面写着时间轴准不准：" + p.inner_text("#ttsChk"))
+    check("百炼逐字时间戳" in p.inner_text("#ttsChk") and "3 句都对上了" in p.inner_text("#ttsChk") and p.locator("#ttsChk.ok").count() == 1,
+          "波形下面写着时间轴准不准：" + p.inner_text("#ttsChk"))
     last = httpx.get(FAKE + "/_fake/log").json()["items"][-1]["body"]["input"]
     check(httpx.get(FAKE + "/_fake/log").json()["n"] == n0 + 1 and last.get("rate") == 1.2 and last.get("instruction") == "请用轻松的语气", "发给百炼的带着语速 1.2 和语气")
     p.wait_for_function("TTS.wave && TTS.wave.peaks && TTS.wave.peaks.length > 100", timeout=8000)
@@ -173,6 +174,25 @@ with sync_playwright() as pw:
     p.click('[data-act="gen"]')
     p.wait_for_function("document.querySelector('#ttsRes .hc-h') && document.querySelector('#ttsRes .hc-h').textContent.indexOf('界面测试设计') >= 0", timeout=30000)
     check(True, "用自己设计的音色生成：试听那里写着它的名字")
+    p.wait_for_selector("#ttsChk")
+    check("本地对齐" in p.inner_text("#ttsChk") and "3 句都对上了" in p.inner_text("#ttsChk") and p.locator("#ttsChk.ok").count() == 1,
+          "自己设计的音色百炼不给字级时间戳：时间轴用本地对齐对出来（绿）：" + p.inner_text("#ttsChk"))
+    # 对齐模型没装（v1.8.14）：按停顿猜，标红、说去哪装；装上以后点「重新对齐」
+    NOAL = ROOT / "dev" / ".run" / "fake_tts_noalign.flag"
+    NOAL.write_text("1")
+    p.evaluate("ttsLoad().then(ttsSync)")
+    p.wait_for_timeout(400)
+    p.click('[data-act="gen"]')
+    p.wait_for_function("document.querySelector('#ttsChk.bad')", timeout=30000)
+    chk = p.inner_text("#ttsChk")
+    check("按停顿猜" in chk and "可能对不上" in chk and "接着装" in chk and p.locator('[data-act="realign"]').count() == 0,
+          "没装对齐模型：时间轴标红，写明是猜的、去哪装：" + chk)
+    p.screenshot(path=f"{OUT}/tts-guess.png")
+    NOAL.unlink()
+    p.wait_for_selector('[data-act="realign"]', timeout=15000)
+    p.click('[data-act="realign"]')
+    p.wait_for_function("document.querySelector('#ttsChk.ok') && document.querySelector('#ttsChk').textContent.indexOf('重新对齐') >= 0", timeout=30000)
+    check("3 句都对上了" in p.inner_text("#ttsChk"), "装上以后出现「重新对齐」：点一下，声音不动，时间轴变准（绿）：" + p.inner_text("#ttsChk"))
 
     # 复刻：上传录音
     wav = ROOT / "dev" / ".run" / "复刻测试录音.wav"

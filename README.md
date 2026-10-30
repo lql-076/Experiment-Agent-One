@@ -91,6 +91,7 @@
 - 描述音色的「描述 + 随机种子」能存成「我的音色」一键再用。用到才启动，闲置、玩游戏时关掉，显存全还回去。不接克隆，不克隆任何真人的声音。
 - 也能换成**百炼云端**的千问 Qwen-Audio-3.1-TTS-Plus（声音更好，按字计费，不用显卡）：设置 › 云端 填百炼 Key（DPAPI 加密），4 个中文音色都能试听，生成前显示预估花费，输出的文件和本地一样。只把配音页的文案和语气发过去。
 - 云端还能**自己造音色**：写一段描述做声音设计，或者拿自己的 / AI 生成的录音做声音复刻（不复刻别人的声音）；语速、音调、音量、读音词典（多音字）都能调。生成好的配音画成波形，点哪听哪。
+- 时间轴（字幕）用本地的 [Qwen3-ForcedAligner](https://github.com/QwenLM/Qwen3-ASR) 0.6B 拿音频和原文对出每个字的时间，云端、本地都用；对不了的标红，装好以后点「重新对齐」，不用重新生成。
 
 **装好、跑稳**
 - **整备**：14 项"能不能在这台电脑上跑起来"的检查，每次启动自动查，好了的直接打勾。
@@ -146,7 +147,7 @@
 6. （可选）在 设置 › QQ 通道 填 QQ 机器人的 AppID 和 AppSecret（在 QQ 开放平台申请），然后在 整备 里绑定你的 QQ。
 7. （可选）要看 CPU 温度和游戏帧数：设置 › 硬件监控 打开助手；CPU 温度、功耗还要装一次 PawnIO 驱动，装完重启电脑。
 8. （可选）在 设置 › 自动化 打开「开机自启」，以后登录 Windows 自动启动。
-9. （可选）要配音：设置 › 本地模型 点「安装配音」（配音环境 + 两个模型，约 14GB，后台装），然后点侧栏「配音」。
+9. （可选）要配音：设置 › 本地模型 点「安装配音」（配音环境 + 两个配音模型 + 时间轴对齐模型，约 16GB，后台装），然后点侧栏「配音」。
 
 以后每次启动会自动查一遍哪些已经装好，不用再点一键补齐。更新到新版本：新压缩包解压到原来的文件夹，选「替换」。
 
@@ -172,11 +173,11 @@
 - **[PresentMon](https://github.com/GameTechDev/PresentMon)**（Intel）：用 ETW 事件读游戏帧数的办法。
 - **[LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)**：CPU、硬盘的温度和功耗传感器。
 - **[CC Switch](https://github.com/farion1231/cc-switch)**："获取模型列表 → 下拉选择"的设计。
-- **模型**：[MiniCPM](https://github.com/OpenBMB/MiniCPM)（OpenBMB）当底座，[Qwen3-Embedding](https://github.com/QwenLM/Qwen3-Embedding)（通义千问）做嵌入，[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)（通义千问，Apache-2.0）配音。模型文件由一键补齐、安装配音从魔搭下载，不在仓库里，各自遵守原许可。
+- **模型**：[MiniCPM](https://github.com/OpenBMB/MiniCPM)（OpenBMB）当底座，[Qwen3-Embedding](https://github.com/QwenLM/Qwen3-Embedding)（通义千问）做嵌入，[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)（通义千问，Apache-2.0）配音，[Qwen3-ForcedAligner](https://github.com/QwenLM/Qwen3-ASR)（通义千问，Apache-2.0）对时间轴。模型文件由一键补齐、安装配音从魔搭下载，不在仓库里，各自遵守原许可。
 - **库**：
   - 后端：FastAPI、Uvicorn、HTTPX、websockets、psutil、NumPy、nvidia-ml-py、pywebview、pythonnet、pywintrace
   - 本地模型：PyTorch、Transformers、PEFT、Accelerate、bitsandbytes
-  - 配音：qwen-tts、torchaudio、librosa、soundfile、ONNX Runtime
+  - 配音：qwen-tts、qwen-asr（只用对齐器）、torchaudio、librosa、soundfile、ONNX Runtime
 - 代码和文档大部分是作者和 **Claude**（Anthropic）一起写的。
 
 ## 许可

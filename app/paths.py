@@ -19,6 +19,7 @@ TTS_ENV = ROOT / "tts-env"                             # 配音的 Python 环境
 MODELS_TTS = MODELS / "tts"                            # 配音模型（魔搭 Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice、-VoiceDesign）
 TTS_MODELS = {"custom": "Qwen3-TTS-12Hz-1.7B-CustomVoice",  # 预设音色 + 一句话控制语气
               "design": "Qwen3-TTS-12Hz-1.7B-VoiceDesign"}  # 用一段文字描述造音色
+ALIGN_MODEL = "Qwen3-ForcedAligner-0.6B"               # 时间轴对齐（v1.8.14）：音频 + 原文 → 每个字的开始、结束（Apache 2.0，约 1.8 GB，也在 models\tts）
 TTS_OUT = ROOT / "配音输出"                             # 保存的配音：每次一个文件夹（不进仓库、不进压缩包）
 MEMORY = ROOT / "memory"                               # agent 自己的文件夹：记忆、技能、提示词
 TRAINING = ROOT / "training"                           # 慢成长用的样本

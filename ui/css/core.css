@@ -1385,3 +1385,7 @@ html[data-orient="portrait"] .tts-stage{height:8rem}
 .tts-chk::before{content:"";flex:none;width:.5rem;height:.5rem;border-radius:50%;background:currentColor;transform:translateY(-.05rem)}
 .tts-chk.ok{color:var(--ok)}
 .tts-chk.warn{color:var(--c-neu)}
+.tts-chk.bad{color:var(--bad)}
+.tts-chk .tts-link{font-weight:600;margin-left:.25rem}
+.tts-chk .tts-link:disabled{opacity:.6;text-decoration:none}
+.tts-chk .cap{color:var(--text3)}

@@ -137,6 +137,7 @@ check(cl["key"] and cl["model"] == "qwen-audio-3.1-tts-plus" and len(cl["voices"
 m0 = cl["month"]["n"]
 n0 = fake_n()
 TEXT = "大家好，欢迎回来。今天聊三个工具！\n\n第一个是配音。"
+c.post("/api/tts/off")                  # 上一轮测试里对齐时开的配音服务先关掉
 r = gen(TEXT, tone="轻松一点")
 job = r.json().get("job") or {}
 check(r.status_code == 200 and job.get("engine") == "cloud" and job.get("est", {}).get("bill", 0) > 0 and job["est"]["cny"] > 0,
@@ -144,7 +145,7 @@ check(r.status_code == 200 and job.get("engine") == "cloud" and job.get("est", {
 j = wait()
 d = j["draft"]
 check(j["job"]["st"] == "done" and "花了约" in j["job"]["msg"] and "计费" in j["job"]["msg"], "生成好了，说清楚多长、用了多久、花了多少：" + j["job"]["msg"])
-check(not j["proc"], "云端生成不启动本地配音服务（不占显存）")
+check(not j["proc"], "云端生成、百炼给了字级时间戳（系统音色）：不启动本地配音服务（不占显存）")
 check(fake_n() == n0 + 1, "只调了一次百炼")
 req = fake_last()[0]
 body = req["body"]
@@ -228,12 +229,53 @@ gap = segs_[12]["start"] - segs_[11]["end"]
 check(abs(gap - 0.7) < 0.05, f"块和块之间按换段停（{gap:.2f} 秒）")
 c.put("/api/settings", json={"blMax": 2000})
 
-# 没给时间戳 → 按停顿对齐；音色不支持时间戳 → 去掉再试一次
+# 没给时间戳（自己设计、复刻的音色百炼就不给）→ 本地对齐（v1.8.14）；对齐模型没装 → 按停顿猜，猜的不补静音；音色不支持时间戳 → 去掉再试一次
+NOALIGN = RUN / "fake_tts_noalign.flag"
+NOALIGN.unlink(missing_ok=True)
 flag("nowords")
+a0 = (httpx.get("http://127.0.0.1:8092/health", timeout=3).json()["stats"].get("align_n", 0) if c.get("/api/tts").json()["proc"] else 0)
 gen(TEXT)
 j = wait()
-check(j["job"]["st"] == "done" and "停顿" in j["draft"]["align"] and len(j["draft"]["segments"]) == 3
-      and abs(j["draft"]["segments"][1]["start"] - 1.89) < 0.06, "百炼没给时间戳：按音频里的停顿对齐（和本地整段生成一样）")
+d = j["draft"]
+sg = d["segments"]
+check(j["job"]["st"] == "done" and "本地对齐" in d["align"] and d["check"]["how"] == ["align"] and d["check"]["sure"] and len(sg) == 3
+      and abs(sg[1]["start"] - 1.89) < 0.03 and abs(sg[0]["end"] - 1.54) < 0.03 and not any(x.get("est") for x in sg),
+      f"百炼没给时间戳：用本地对齐模型对出每句的开始、结束（{d['check']['method']}：" + "、".join(f"{x['start']:.2f}-{x['end']:.2f}" for x in sg) + "）")
+fa = httpx.get("http://127.0.0.1:8092/health", timeout=3).json()
+check(fa["stats"]["align_n"] == a0 + 1 and fa["last_align"]["phrases"] == fa["last_align"]["runs"] == 4,
+      f"对齐跑在配音服务里（用到才启动），整块一次对完：{fa['last_align']}")
+check(abs((sg[2]["start"] - sg[1]["end"]) - 0.7) < 0.03 and d["check"].get("bounds_in_silence") == d["check"].get("bounds") == 2,
+      f"对准了的边界照样补够停顿（换段 {sg[2]['start'] - sg[1]['end']:.2f} 秒），两处边界都落在停顿上")
+NOALIGN.write_text("1")
+gen(TEXT)
+j = wait()
+d = j["draft"]
+sg = d["segments"]
+check(j["job"]["st"] == "done" and d["check"]["how"] == ["pause"] and d["check"]["sure"] is False and "没装对齐模型" in d["check"].get("why_not_aligned", "")
+      and "按停顿猜" in d["check"]["method"] and "重新对齐" in d["align"], f"对齐模型没装：退回按停顿猜，JSON 里写明是猜的、为什么没对齐：{d['check']}")
+check(abs(sg[1]["start"] - 1.84) < 0.03 and abs((sg[2]["start"] - sg[1]["end"]) - 0.3) < 0.03 and abs(d["duration"] - 4.74) < 0.03,
+      f"猜的边界不补静音（v1.8.13 以前补，猜错的地方被塞进静音、连声音节奏都乱了）：换段还是模型自己停的 {sg[2]['start'] - sg[1]['end']:.2f} 秒")
+r = c.post("/api/tts/realign")
+check(r.status_code == 400 and "对齐模型" in r.json()["detail"], f"没装对齐模型时点「重新对齐」：说清楚（{r.json().get('detail')}）")
+NOALIGN.unlink()
+w0 = c.get("/api/tts/draft.wav").content
+bad_tl = dict(d, segments=[dict(x, start=round(x["start"] + 0.9, 3), end=round(x["end"] + 0.9, 3)) for x in sg])      # 当作猜错了
+bad_tl.pop("ver", None)
+(ROOT / "data" / "tts" / "draft.json").write_text(json.dumps(bad_tl, ensure_ascii=False), "utf-8")
+r = c.post("/api/tts/realign", timeout=60)
+rj = r.json()
+d2 = rj.get("draft") or {}
+sg2 = d2.get("segments") or []
+check(r.status_code == 200 and d2["check"]["method"] == "本地对齐（重新对齐）" and d2["check"]["before"] == "按停顿猜" and len(sg2) == 3
+      and abs(sg2[1]["start"] - 1.84) < 0.03 and abs(sg2[0]["end"] - 1.54) < 0.03 and d2.get("realigned"),
+      f"「重新对齐」：试听的那段用本地对齐重对，时间回到对的地方（{rj.get('msg')}）")
+srt = (ROOT / "data" / "tts" / "draft.srt").read_text("utf-8")
+check(c.get("/api/tts/draft.wav").content == w0 and "00:00:01,840 --> " in srt and d2["check"]["moved_max"] >= 0.89,
+      "重新对齐：声音一点没动（不重新生成、不花钱），字幕 SRT 跟着改了")
+sv = c.post("/api/tts/save").json()
+dd = pathlib.Path(sv["dir"].replace("\\", "/"))
+tj = json.loads(next(dd.glob("*_时间轴.json")).read_text("utf-8"))
+check(tj["segments"] == sg2 and tj["check"]["method"] == "本地对齐（重新对齐）", "重新对齐后再保存：存的是对齐过的时间轴")
 flag("nowords", False)
 flag("wordserr")
 n0 = fake_n()

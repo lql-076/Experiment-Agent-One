@@ -16,6 +16,7 @@ from app import main, reminders, settings, setup, tts, tts_install  # noqa: E402
 # "用到才启动、闲置关掉、让路关掉"还是走真的那一套
 tts.T.py = lambda: Path(sys.executable)
 tts.T.model_ok = lambda kind: True
+tts.T.align_ok = lambda: not (RUN / "fake_tts_noalign.flag").exists()       # 对齐模型（v1.8.14）：放这个文件就当没下
 tts.T.cmd = lambda: [sys.executable, DEV / "fake_tts.py", "--port", settings.S["ttsPort"]]
 tts_install.command = lambda: [sys.executable, DEV / "fake_tts_install.py"]      # 「安装配音」按钮：假的安装，几秒就完
 

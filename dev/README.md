@@ -55,6 +55,7 @@
 - 硬件传感器：LibreHardwareMonitor
 - 真实下载：PyTorch、模型、Kev 权重、配音模型
 - 真的配音（Qwen3-TTS）：沙箱里没有显卡，配音服务换成假的 `dev/fake_tts.py`；音质、显存、速度、同一个人像不像都要在作者电脑上听
+- 真的时间轴对齐（Qwen3-ForcedAligner-0.6B，v1.8.14）：沙箱里用假的对齐器；能不能装上、对得准不准、要几秒、占多少显存要在作者电脑上试
 - 真的百炼云端配音：沙箱连不上百炼，用假接口 `dev/fake_bailian.py` + 假 Key；真 Key 调不调得通、音色、时间戳给不给、单次字数上限、实际计费都要在作者电脑上试
 - Edge 专有的样式
 
@@ -68,9 +69,9 @@
 | `serve.sh` | 起 / 停测试环境：假服务加测试后端，后端在 8765 |
 | `test_backend.py` | 测试后端：和真的一样，只是一键补齐的每一步换成假步骤；配音服务的启动命令换成 `fake_tts.py` |
 | `fake_tts_install.py` | 假的「安装配音」：输出和 `scripts/install_tts.py` 一样（讲解、pip、魔搭进度），几秒就完；`dev/.run/fake_tts_install_fail.flag` 在就装到一半失败一次，`fake_tts_install_slow.flag` 在就慢慢走 |
-| `fake_bailian.py` | 假的百炼语音合成接口（`mocks.py` 挂在 8097）：和百炼一样 SSE 流式返回 pcm 和字级时间戳，Key 只认 `sk-test-0000`；`dev/.run/fake_bl_nowords.flag`（不给时间戳）、`fake_bl_wordserr.flag`（开时间戳就报参数错）、`fake_bl_arrears.flag`（欠费）、`fake_bl_slow.flag`（慢，测停下）、`fake_bl_reltime.flag`（字的时间从这一句开头算）、`fake_bl_wordsinc.flag`（字跟着音频一段一段给）、`fake_bl_pipeline.flag`（先发下一句的开头）；读音词典的替换会照着换；`GET /_fake/log` 看收到的请求；还有音色管理接口（设计、复刻、查状态、列表、删除，`fake_bl_reject.flag` 审核不通过；`POST /_fake/made` 在「百炼上」放一个音色测同步） |
+| `fake_bailian.py` | 假的百炼语音合成接口（`mocks.py` 挂在 8097）：和百炼一样 SSE 流式返回 pcm 和字级时间戳，Key 只认 `sk-test-0000`；`dev/.run/fake_bl_nowords.flag`（不给时间戳）、`fake_bl_wordserr.flag`（开时间戳就报参数错）、`fake_bl_arrears.flag`（欠费）、`fake_bl_slow.flag`（慢，测停下）、`fake_bl_reltime.flag`（字的时间从这一句开头算）、`fake_bl_wordsinc.flag`（字跟着音频一段一段给）、`fake_bl_pipeline.flag`（先发下一句的开头）；自己设计、复刻的音色和真百炼一样不给字级时间戳；读音词典的替换会照着换；`GET /_fake/log` 看收到的请求；还有音色管理接口（设计、复刻、查状态、列表、删除，`fake_bl_reject.flag` 审核不通过；`POST /_fake/made` 在「百炼上」放一个音色测同步） |
 | `test_tts_cloud.py` | 配音的百炼云端：只发文案、字级时间戳拼时间轴、分块、用量和预估、出错说明只试一次、停下、试听不重复花钱、声音设计和复刻（要确认、截 20 秒）、同步和删除、语速这些和读音词典、Key 不进导出和日志 |
-| `fake_tts.py` | 假的配音服务：接口和 `app/tts_server.py` 一样，念出来是一段"嘟——"（一个字 0.2 秒，句号后停 0.3、换行停 0.5、逗号停 0.14 秒，像真模型一样自己停），用来查拼接、按停顿对齐、时间轴 |
+| `fake_tts.py` | 假的配音服务：接口和 `app/tts_server.py` 一样，念出来是一段"嘟——"（一个字 0.2 秒，句号后停 0.3、换行停 0.5、逗号停 0.14 秒，像真模型一样自己停），用来查拼接、按停顿对齐、时间轴；`/align` 是假的对齐器（v1.8.14，按"有声音的一段"和原文里标点隔开的一小段一一对上，句子级是准的），`dev/.run/fake_tts_noalign.flag` 在就当对齐模型没下 |
 | `fake_step.py` | 假的安装步骤：输出和真脚本一样（进展报告、进度、pip、tqdm），第一次跑 models 会故意失败一次 |
 | `mocks.py` | 假服务：本地模型服务 8090（加 `--with-model` 才起）、Kev 8091、DeepSeek 8099（含工具调用、搜索、抓取；`/__last` 能看最近一次请求）、硬件监控 8085、百炼语音合成 8097 |
 | `mock_qq.py` | 假的 QQ 开放平台 |
