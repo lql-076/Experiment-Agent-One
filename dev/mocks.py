@@ -103,13 +103,41 @@ def ds_last():
     return {"chat": LAST.get("chat"), "searches": SEARCHES[-10:]}
 
 
+def _txt(c):
+    """content 可能是字符串，也可能是列表（带图片时）。"""
+    if isinstance(c, list):
+        return " ".join(x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text")
+    return c or ""
+
+
 @ds.post("/chat/completions")
 async def dsc(r: Request):
     j = await r.json()
     LAST["chat"] = j
     msgs = j["messages"]
-    u = msgs[-1].get("content") or ""
+    u = _txt(msgs[-1].get("content"))
     usage = {"prompt_tokens": 400, "prompt_cache_hit_tokens": 100, "prompt_cache_miss_tokens": 300, "completion_tokens": 120}
+    pics = [x for m in msgs if isinstance(m.get("content"), list) for x in m["content"] if isinstance(x, dict) and x.get("type") == "image_url"]
+    LAST["images"] = len(pics)
+    names = {(t.get("function") or {}).get("name") for t in j.get("tools") or []}
+    ask0 = next((_txt(m.get("content")) for m in reversed(msgs) if m.get("role") == "user" and not _txt(m.get("content")).startswith("（read_file")), "")
+    tmsgs = [m for m in msgs if m.get("role") == "tool"]
+    # 模仿 DeepSeek 翻文件：「【查笔记】词」先 find_files 再 read_file 第一个；「【读文件】路径」直接 read_file
+    if "read_file" in names and ("【查笔记】" in ask0 or "【读文件】" in ask0) and not (tmsgs and tmsgs[-1]["content"].startswith(("文件：", "图片 ", "没读成"))):
+        if "【读文件】" in ask0:
+            call = {"name": "read_file", "arguments": {"path": ask0.split("【读文件】", 1)[1].split()[0]}}
+        elif not tmsgs:
+            call = {"name": "find_files", "arguments": {"query": ask0.split("【查笔记】", 1)[1].split()[0]}}
+        else:
+            m_ = __import__("re").search(r"^(\S.*?\.(?:md|txt|docx|png))$", tmsgs[-1]["content"], __import__("re").M)
+            call = {"name": "read_file", "arguments": {"path": m_.group(1) if m_ else "/没有"}}
+        call = {"id": f"call_{len(tmsgs)}", "type": "function", "function": {"name": call["name"], "arguments": json.dumps(call["arguments"], ensure_ascii=False)}}
+        return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [call]}}], "usage": usage}
+    if pics:
+        return {"model": j.get("model"), "choices": [{"message": {"role": "assistant", "content": f"（DeepSeek 看图 · {j.get('model')}）看到了 {len(pics)} 张图。"}}], "usage": usage}
+    if tmsgs and tmsgs[-1]["content"].startswith(("文件：", "没读成")):
+        body = tmsgs[-1]["content"].split("\n\n", 1)[-1]
+        return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "（DeepSeek 读文件）读到了：" + body[:40]}}], "usage": usage}
     # 带工具时模仿 DeepSeek：问"最新"的先搜，搜完读第一条，再回答
     if j.get("tools"):
         asked = next((m.get("content") or "" for m in reversed(msgs) if m.get("role") == "user"), "")
@@ -118,6 +146,7 @@ async def dsc(r: Request):
         if think and ("坏历史" in asked or any(m.get("role") == "assistant" and m.get("tool_calls") and not m.get("reasoning_content") for m in msgs)):
             from fastapi.responses import JSONResponse
             return JSONResponse({"error": {"message": "reasoning_content must be passed back", "type": "invalid_request_error"}}, status_code=400)
+        asked = _txt(asked) if not isinstance(asked, str) else asked
         tools_used = [m for m in msgs if m.get("role") == "tool"]
         want = any(x in asked for x in ("最新", "最近", "价格", "新闻", "发布", "更新", "搜"))
         if want and not tools_used:

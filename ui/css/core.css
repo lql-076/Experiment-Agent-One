@@ -881,6 +881,35 @@ html[data-motion="reduced"] .tree-wrap.in:not(.settled) .tn{animation:none}
 .composer textarea{flex:1;resize:none;min-height:2.75rem;max-height:12.5rem;padding:.7rem .9rem;border-radius:.875rem;border:1px solid var(--line2);background:var(--bg2);color:var(--text);font:inherit;font-size:.9375rem;line-height:1.5}
 .composer textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
 .composer .btn{min-height:2.75rem;padding:0 1rem}
+/* 带图片（v1.8.17）：回形针、粘贴、拖进来；发之前一排缩略图 */
+.composer{flex-wrap:wrap;position:relative}
+.c-atts{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:.5rem}
+.c-atts:empty{display:none}
+.c-att{position:relative;width:4rem;height:4rem;border-radius:.5rem;overflow:hidden;border:1px solid var(--line2);background:var(--bg2);display:flex;align-items:center;justify-content:center}
+.c-att img{width:100%;height:100%;object-fit:cover}
+.c-att i{font-style:normal;font-size:.6875rem;color:var(--text3)}
+.c-att button{position:absolute;top:.15rem;right:.15rem;width:1.3rem;height:1.3rem;padding:0;border:0;border-radius:50%;background:color-mix(in srgb,var(--bg) 80%,transparent);color:var(--text);line-height:0}
+.c-att button svg{width:.85rem;height:.85rem}
+.composer .c-clip{padding:0 .75rem;color:var(--text2)}
+.composer .c-clip svg{width:1.2rem;height:1.2rem}
+.c-drop{position:absolute;inset:.5rem;z-index:5;border:2px dashed var(--accent);border-radius:var(--r);background:color-mix(in srgb,var(--bg) 78%,transparent);display:none;align-items:center;justify-content:center;font-size:1.2rem;color:var(--text);pointer-events:none}
+.c-drop.on{display:flex}
+.chat-main{position:relative}
+.m-imgs{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.45rem;justify-content:flex-end}
+.m-img{display:block;width:6rem;height:4.5rem;padding:0;border:1px solid var(--line2);border-radius:.5rem;overflow:hidden;background:var(--bg2);cursor:zoom-in}
+.m-img img{width:100%;height:100%;object-fit:cover;display:block}
+.m-files{display:flex;align-items:center;gap:.35rem;font-size:.75rem;color:var(--text3);margin:.2rem 0 .1rem}
+.m-files svg{width:.9rem;height:.9rem;flex:none}
+.m-files b{font-weight:500;color:var(--text2)}
+.c-box{position:fixed;inset:0;z-index:90;background:color-mix(in srgb,var(--bg) 85%,rgba(0,0,0,.6));display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.75rem;cursor:zoom-out;animation:fade .2s}
+.c-box img{max-width:92vw;max-height:84vh;border-radius:.5rem;box-shadow:0 1rem 3rem rgba(0,0,0,.5)}
+/* 能读的文件夹（设置 › 记忆与文件） */
+#rdirs{margin-bottom:1.25rem}
+.rd-list{display:flex;flex-direction:column;gap:.4rem;margin:.6rem 0}
+.rd-row{display:flex;align-items:center;gap:.75rem;padding:.45rem .6rem;border:1px solid var(--line);border-radius:var(--rs);background:var(--bg2)}
+.rd-path{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:.8125rem}
+.rd-path em{font-style:normal;color:var(--bad);margin-left:.4rem;font-family:var(--sans)}
+.rd-cl{display:flex;align-items:center;gap:.45rem;font-size:.8125rem;color:var(--text2);white-space:nowrap}
 .chat-side{display:flex;flex-direction:column;min-height:0;min-width:0}
 .side-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.8rem 1.5rem .5rem}
 .side-head .seg button{min-height:2rem;padding:.3rem .8rem;font-size:.8125rem}

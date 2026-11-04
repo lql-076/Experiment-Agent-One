@@ -59,12 +59,22 @@ def _key() -> str:
     return k
 
 
+def has_image(messages) -> bool:
+    """消息里有没有图片（content 是列表、里面有 image_url）。有就换成能看图的模型（设置 › 云端 › 看图用的模型）。"""
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, list) and any(isinstance(x, dict) and x.get("type") == "image_url" for x in c):
+            return True
+    return False
+
+
 async def chat(messages, *, thinking=False, max_tokens=1200, json_mode=False, purpose="chat",
                private=False, event_id=None, temperature=None, timeout=90, tools=None):
     if private:
         raise PrivacyBlocked("隐私内容不发给 DeepSeek")
     s = settings.S
-    body = {"model": s["dsModel"], "messages": messages, "max_tokens": max(max_tokens, 4000) if thinking else max_tokens,
+    img = has_image(messages)
+    body = {"model": (s.get("dsVision") or s["dsModel"]) if img else s["dsModel"], "messages": messages, "max_tokens": max(max_tokens, 4000) if thinking else max_tokens,
             "thinking": {"type": "enabled" if thinking else "disabled"}}
     if json_mode:
         body["response_format"] = {"type": "json_object"}
@@ -79,7 +89,7 @@ async def chat(messages, *, thinking=False, max_tokens=1200, json_mode=False, pu
                              headers={"Authorization": f"Bearer {_key()}"})
         # 带工具时官方要求思考模式把 reasoning_content 原样传回；万一哪条历史消息没带上被拒（400），
         # 先改成不思考再试，还不行就不带工具直接答——不让一条消息卡死
-        if r.status_code == 400 and body.get("tools"):
+        if r.status_code == 400 and (body.get("tools") or (img and body["thinking"]["type"] == "enabled")):     # 看图时思考模式万一不支持，也先改成不思考再试
             if body["thinking"]["type"] == "enabled":
                 body["thinking"] = {"type": "disabled"}
                 body["max_tokens"] = max_tokens
@@ -92,6 +102,8 @@ async def chat(messages, *, thinking=False, max_tokens=1200, json_mode=False, pu
         _bal["dirty"] = True
         raise NoBalance("DeepSeek 余额不足，充值后就能继续")
     if r.status_code != 200:
+        if img and r.status_code == 400:
+            raise RuntimeError(f"DeepSeek 看不了这张图（{body['model']} 返回 400：{r.text[:120]}）。设置 › 云端 › 看图用的模型 填 deepseek-flash 试试")
         raise RuntimeError(f"DeepSeek 返回 {r.status_code}：{r.text[:200]}")
     _bal["dirty"] = True
     j = r.json()

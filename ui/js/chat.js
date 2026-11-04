@@ -5,7 +5,8 @@
    右边大块平时是「Agent 状态」仪表盘：健康环、一条消息怎么走（链路图）、一排大数字、每项一个图标卡片，缺的直接给按钮。
    竖屏：仪表盘在上、对话在下，仪表盘能收起。
    发消息是异步的：先拿 token，每半秒问一次处理到哪了（正在联网搜索……），处理完换成回复。 */
-var CHAT = { sel: null, tab: 'status', pending: null, more: null, dashMin: false, stick: true, sig: '' };
+var CHAT = { sel: null, tab: 'status', pending: null, more: null, dashMin: false, stick: true, sig: '', atts: [] };
+var CLIP_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-7.8 7.8a5 5 0 0 1-7.1-7.1l8.3-8.3a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.6 1.6 0 0 1-2.3-2.3l7.4-7.4"/></svg>';
 var ST_TXT = { ok: '正常', idle: '闲着', warn: '要注意', bad: '缺了', off: '没开' };
 
 function chatList() {
@@ -25,6 +26,9 @@ function chipHTML(e) {
   var s = stepCount(e, '联网搜索'), r = stepCount(e, '读网页');
   if (s || r) bits.push('联网 ' + s + ' 搜' + (r ? ' ' + r + ' 读' : ''));
   if (stepCount(e, '查了说明书')) bits.push('查了说明书');
+  var fs = e.files || [], ni = fs.filter(function (f) { return f.kind === 'img'; }).length, nf = fs.filter(function (f) { return f.kind !== 'img'; }).length;
+  if (ni) bits.push('看了 ' + ni + ' 张图');
+  if (nf) bits.push('读了 ' + nf + ' 个文件');
   if (e.cost) bits.push('¥' + (+e.cost).toFixed(4));
   if (e.latency) bits.push((+e.latency).toFixed(1) + ' 秒');
   return '<button class="why-chip" data-ev="' + e.id + '" style="--c:' + ROUTES[e.to].color + '" aria-pressed="' + (CHAT.sel === e.id && CHAT.tab === 'event') + '">' +
@@ -35,16 +39,22 @@ function msgHTML(e) {
   if (e.src === '定时任务' || e.src === '系统') {
     return '<div class="sysline"><span>' + esc(e.t) + ' · ' + esc(e.text) + (e.result ? ' · ' + esc(String(e.result).split('；')[0]) : '') + '</span></div>';
   }
-  var me = '<div class="msg me"><div class="bubble">' + esc(e.text) + '</div><div class="meta">' + src + esc((e.date ? e.date + ' ' : '') + e.t) + '</div></div>';
+  var pics = (e.files || []).filter(function (f) { return f.kind === 'img'; });
+  var me = '<div class="msg me"><div class="bubble">' + esc(e.text) + (pics.length ? '<div class="m-imgs">' + pics.map(function (f) { return '<button class="m-img" data-img="' + f.id + '" aria-label="看大图"><img src="/api/chat/file/' + f.id + '" alt="" loading="lazy" decoding="async"></button>'; }).join('') + '</div>' : '') +
+    '</div><div class="meta">' + src + esc((e.date ? e.date + ' ' : '') + e.t) + '</div></div>';
+  var rd = (e.files || []).filter(function (f) { return f.kind !== 'img'; });
+  var rdl = rd.length ? '<div class="m-files">' + ICONS.file + '<span>读了：' + rd.slice(0, 4).map(function (f) { return '<b title="' + esc(f.path) + '">' + esc(f.name) + '</b>'; }).join('、') + (rd.length > 4 ? ' 等 ' + rd.length + ' 个' : '') + '</span></div>' : '';
   var body;
   if (e.status === 'running') body = '<div class="bubble typing"><i></i><i></i><i></i><span>' + esc(e.result || '正在处理……') + '</span></div>';
   else if (e.status === 'queued') body = '<div class="bubble queued"><div class="q-tag">排队中 · 涉及隐私，等本地模型能用了再回你</div>' + mdHTML(e.reply || '') + '</div>';
-  else body = '<div class="bubble md">' + (e.reply ? mdHTML(e.reply) : '<p class="cap">（没有回复）</p>') + fixHint(e.reply) + '</div>';
-  return me + '<div class="msg ai" data-id="' + e.id + '" style="--c:' + ROUTES[e.to].color + '"><span class="ai-dot" aria-hidden="true"></span><div class="ai-col">' + body + chipHTML(e) + '</div></div>';
+  else body = '<div class="bubble md">' + (e.reply ? mdHTML(e.reply) : '<p class="cap">（没有回复）</p>') + fixHint(e.reply, e) + '</div>';
+  return me + '<div class="msg ai" data-id="' + e.id + '" style="--c:' + ROUTES[e.to].color + '"><span class="ai-dot" aria-hidden="true"></span><div class="ai-col">' + body + rdl + chipHTML(e) + '</div></div>';
 }
 /* 出了问题的回复：直接给"下一步去哪"的按钮（出了什么事、为什么、怎么办） */
-function fixHint(r) {
+function fixHint(r, e) {
   r = r || '';
+  var deny = e && (e.steps || []).filter(function (s) { return s[0] === '没有权限'; })[0];
+  if (deny) return '<div class="fix-hint"><button class="btn mini primary" data-allow-dir="' + esc(deny[1]) + '" data-ask="' + e.id + '">允许读这个文件夹（只读），再问一次</button><button class="btn mini" data-go-sec="memory">去设置看看</button></div>';
   if (/还没填 DeepSeek API Key/.test(r)) return '<div class="fix-hint"><button class="btn mini primary" data-go-sec="cloud">去填 DeepSeek Key</button></div>';
   if (/余额不足/.test(r)) return '<div class="fix-hint"><a class="btn mini primary" href="https://platform.deepseek.com/top_up" target="_blank" rel="noopener">去充值</a><button class="btn mini" data-go-sec="cloud">看余额</button></div>';
   if (/本地模型还没准备好|本地模型不可用/.test(r)) return '<div class="fix-hint"><button class="btn mini primary" data-go-sec="prep">去整备补齐本地模型</button></div>';
@@ -53,7 +63,7 @@ function fixHint(r) {
 }
 function pendingHTML() {
   var p = CHAT.pending; if (!p) return '';
-  return '<div class="msg me"><div class="bubble">' + esc(p.text) + '</div><div class="meta">' + esc(p.t) + '</div></div>' +
+  return '<div class="msg me"><div class="bubble">' + esc(p.text) + (p.imgs && p.imgs.length ? '<div class="m-imgs">' + p.imgs.map(function (u) { return '<span class="m-img"><img src="' + u + '" alt=""></span>'; }).join('') + '</div>' : '') + '</div><div class="meta">' + esc(p.t) + '</div></div>' +
     '<div class="msg ai pending"><span class="ai-dot" aria-hidden="true"></span><div class="ai-col"><div class="bubble typing"><i></i><i></i><i></i><span id="pendStep">' + esc(p.step) + '</span></div></div></div>';
 }
 function renderChat() {
@@ -61,12 +71,15 @@ function renderChat() {
   var live = useLive();
   v.innerHTML = '<div class="chatv' + (CHAT.dashMin ? ' dash-min' : '') + '"><div class="chat-main">' +
     '<div class="chat-log" id="chatLog"></div>' +
-    '<form class="composer" id="composer"><textarea id="cIn" rows="1" title="Enter 发送，Shift + Enter 换行" placeholder="' + (live ? '和它说点什么……' : '演示模式：启动.bat 打开后能聊') + '"' + (live ? '' : ' disabled') + '></textarea>' +
-    '<button class="btn primary" type="submit" id="cSend"' + (live ? '' : ' disabled') + '>发送</button></form></div>' +
+    '<form class="composer" id="composer"><div class="c-atts" id="cAtts"></div>' +
+    '<button class="btn c-clip" type="button" id="cClip" title="带图片：点这里选，也可以 Ctrl+V 粘贴、拖进来" aria-label="带图片"' + (live ? '' : ' disabled') + '>' + CLIP_ICON + '</button>' +
+    '<textarea id="cIn" rows="1" title="Enter 发送，Shift + Enter 换行；能 Ctrl+V 粘贴图片" placeholder="' + (live ? '和它说点什么……' : '演示模式：启动.bat 打开后能聊') + '"' + (live ? '' : ' disabled') + '></textarea>' +
+    '<button class="btn primary" type="submit" id="cSend"' + (live ? '' : ' disabled') + '>发送</button>' +
+    '<input type="file" id="cFile" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden></form><div class="c-drop" id="cDrop">松开：把图片带上</div></div>' +
     '<aside class="chat-side" id="chatSide"><div class="side-head"><div class="seg" role="tablist"><button data-ctab="status" aria-pressed="' + (CHAT.tab === 'status') + '">Agent 状态</button>' +
     '<button data-ctab="event" aria-pressed="' + (CHAT.tab === 'event') + '">这条怎么处理的</button></div><span class="dash-sum" id="dashSum"></span><button class="side-toggle" id="sideToggle" aria-label="收起或展开状态">' + (CHAT.dashMin ? '展开 ▾' : '收起 ▴') + '</button></div>' +
     '<div class="side-body" id="sideBody"></div></aside></div>';
-  CHAT.sig = ''; fillChatLog(true); fillSide();
+  CHAT.sig = ''; fillChatLog(true); fillSide(); chatAttsDraw();
 }
 function fillChatLog(force) {
   var log = $('#chatLog'); if (!log) return;
@@ -348,6 +361,7 @@ function eventSideHTML(e) {
       var cur = e.status === 'running' && i === steps.length - 1;
       return '<li class="' + (cur ? 'cur' : 'done') + '"><b>' + esc(s[0]) + '</b><span>' + esc(s[1]) + '</span></li>';
     }).join('') + (e.status === 'running' ? '<li class="cur"><b>进行中</b><span>' + esc(e.result || '') + '</span></li>' : '') + '</ol>' +
+    ((e.files || []).length ? '<div class="label">带的图片、读的文件</div><ul class="es-links">' + e.files.slice(0, 8).map(function (f) { return '<li>' + (f.kind === 'img' ? '图片 · ' : f.kind === 'dir' ? '文件夹 · ' : '') + '<span title="' + esc(f.path) + '">' + esc(f.name) + '</span></li>'; }).join('') + '</ul>' : '') +
     (links.length ? '<div class="label">查过的网页</div><ul class="es-links">' + links.slice(0, 6).map(function (u) { return '<li><a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(u.replace(/^https?:\/\//, '').slice(0, 60)) + '</a></li>'; }).join('') + '</ul>' : '') +
     '<div class="label">判错了？记一下应该交给（以后照这个判）</div><div class="es-fix">' + ORDER.map(function (k) { return '<button class="chip" data-cfix="' + k + '" aria-pressed="' + (fix === k) + '">' + ROUTES[k].name + '</button>'; }).join('') + '</div>' +
     (e.src === '定时任务' || e.src === '系统' ? '' : '<div class="label">换它重做（现在就按你选的再处理一遍，也会记下）</div><div class="es-fix">' + ['local', 'ds', 'cl'].filter(function (k) { return k !== e.to && (k !== 'cl' || strongOn()); }).map(function (k) {
@@ -369,13 +383,45 @@ function findChatEv(id) { return chatList().filter(function (e) { return e.id ==
 /* ---------- 发消息 ---------- */
 function chatSend() {
   var inp = $('#cIn'); if (!inp || !useLive()) return;
-  var text = inp.value.trim(); if (!text || CHAT.pending) return;
-  inp.value = ''; autoGrow(inp);
-  var d = new Date();
-  CHAT.pending = { text: text, t: pad(d.getHours()) + ':' + pad(d.getMinutes()), step: '发出去了……', token: null };
+  var text = inp.value.trim(), atts = CHAT.atts.slice();
+  if ((!text && !atts.length) || CHAT.pending) return;
+  if (atts.some(function (a) { return !a.url; })) { toast('图片还在读，等一下'); return; }
+  inp.value = ''; autoGrow(inp); CHAT.atts = []; chatAttsDraw();
+  chatAsk(text, atts, function () { inp.value = text; CHAT.atts = atts; chatAttsDraw(); });
+}
+function chatAsk(text, atts, undo) {
+  var d = new Date(), imgs = (atts || []).map(function (a) { return a.url; });
+  CHAT.pending = { text: text || '看看这张图。', imgs: imgs, t: pad(d.getHours()) + ':' + pad(d.getMinutes()), step: imgs.length ? '图片发出去了……' : '发出去了……', token: null };
   fillChatLog(true);
-  api('POST', '/api/chat', { text: text, async: true }, 15000).then(function (j) { CHAT.pending.token = j.token; setTimeout(chatPoll, 400); })
-    .catch(function (e) { CHAT.pending = null; fillChatLog(true); toast('没发出去：' + e.message, 5000); inp.value = text; });
+  api('POST', '/api/chat', { text: text, async: true, images: imgs }, 60000).then(function (j) { CHAT.pending.token = j.token; setTimeout(chatPoll, 400); })
+    .catch(function (e) { CHAT.pending = null; fillChatLog(true); toast('没发出去：' + e.message, 5000); if (undo) undo(); });
+}
+/* 带图片：点回形针选、Ctrl+V 粘贴、拖进对话页；发之前上面一排缩略图，能去掉。一次最多 6 张、一张 10MB 以内 */
+function chatAttsDraw() {
+  var b = $('#cAtts'); if (!b) return;
+  b.innerHTML = CHAT.atts.map(function (a, i) { return '<span class="c-att">' + (a.url ? '<img src="' + a.url + '" alt="">' : '<i>读取中</i>') + '<button type="button" data-unatt="' + i + '" aria-label="去掉这张">' + ICONS.cross + '</button></span>'; }).join('') +
+    (CHAT.atts.length ? '<span class="cap">' + CHAT.atts.length + ' 张图片会交给 DeepSeek 看</span>' : '');
+}
+function chatAddFiles(list) {
+  if (!useLive()) { toast('演示模式不能发图片'); return; }
+  var fs = [].slice.call(list || []).filter(function (f) { return /^image\/(png|jpeg|webp|gif)$/.test(f.type); });
+  if (!fs.length) { toast('只认图片（PNG / JPEG / WEBP / GIF）'); return; }
+  fs.forEach(function (f) {
+    if (CHAT.atts.length >= 6) { toast('一次最多带 6 张图片'); return; }
+    if (f.size > 10 * 1024 * 1024) { toast(f.name + ' 太大了：一张最多 10MB'); return; }
+    var a = { url: '', name: f.name || '粘贴的图片' }, r = new FileReader();
+    CHAT.atts.push(a);
+    r.onload = function () { a.url = String(r.result); chatAttsDraw(); };
+    r.readAsDataURL(f);
+  });
+  chatAttsDraw();
+  var inp = $('#cIn'); if (inp) inp.focus();
+}
+function chatImgBox(id) {
+  var x = document.createElement('div'); x.className = 'c-box'; x.setAttribute('role', 'dialog');
+  x.innerHTML = '<img src="/api/chat/file/' + id + '" alt=""><span class="cap">点任意地方或按 Esc 关掉</span>';
+  x.onclick = function () { x.remove(); };
+  document.body.appendChild(x);
 }
 function chatPoll() {
   var p = CHAT.pending; if (!p || !p.token) return;
@@ -436,6 +482,16 @@ $('#view-chat').addEventListener('click', function (ev) {
   else if (t.dataset.openEvents) { S.selId = +t.dataset.openEvents; renderEvents(); goView('events'); }
   else if (t.id === 'chatMore') { t.disabled = true; api('GET', '/api/events?limit=300').then(function (l) { CHAT.more = l; var log = $('#chatLog'), h = log.scrollHeight; fillChatLog(false); log.scrollTop = log.scrollHeight - h; }).catch(function (e) { toast(e.message); }); }
   else if (t.dataset.redo) chatRedo(t);
+  else if (t.id === 'cClip') $('#cFile').click();
+  else if (t.dataset.unatt != null) { CHAT.atts.splice(+t.dataset.unatt, 1); chatAttsDraw(); }
+  else if (t.dataset.img) chatImgBox(t.dataset.img);
+  else if (t.dataset.allowDir) {
+    var ae = findChatEv(+t.dataset.ask); t.disabled = true;
+    api('POST', '/api/files/dirs', { path: t.dataset.allowDir, cloud: true }).then(function (j) {
+      RDIRS.list = j.dirs; RDIRS.ts = Date.now(); toast('允许了：只读，不改不删（设置 › 记忆与文件 里能改）');
+      if (ae && !CHAT.pending) chatAsk(ae.text, []);
+    }).catch(function (er) { t.disabled = false; toast(er.message, 5000); });
+  }
   else if (t.dataset.cfix) {
     var e = findChatEv(CHAT.sel), k = t.dataset.cfix; if (!e) return;
     var to = (useLive() ? e.fix : S.fix[e.id]) === k ? null : k;
@@ -443,3 +499,22 @@ $('#view-chat').addEventListener('click', function (ev) {
     else { if (to) S.fix[e.id] = to; else delete S.fix[e.id]; fillSide(); }
   }
 });
+$('#view-chat').addEventListener('change', function (ev) { if (ev.target.id === 'cFile') { chatAddFiles(ev.target.files); ev.target.value = ''; } });
+$('#view-chat').addEventListener('paste', function (ev) {
+  if (ev.target.id !== 'cIn' || !ev.clipboardData) return;
+  var fs = [].slice.call(ev.clipboardData.files || []).filter(function (f) { return /^image\//.test(f.type); });
+  if (fs.length) { ev.preventDefault(); chatAddFiles(fs); }
+});
+['dragenter', 'dragover'].forEach(function (k) {
+  $('#view-chat').addEventListener(k, function (ev) {
+    if (!useLive() || !ev.dataTransfer || [].indexOf.call(ev.dataTransfer.types || [], 'Files') < 0) return;
+    ev.preventDefault(); var d = $('#cDrop'); if (d) d.classList.add('on');
+  });
+});
+$('#view-chat').addEventListener('dragleave', function (ev) { if (!ev.relatedTarget || !$('#view-chat').contains(ev.relatedTarget)) { var d = $('#cDrop'); if (d) d.classList.remove('on'); } });
+$('#view-chat').addEventListener('drop', function (ev) {
+  var d = $('#cDrop'); if (d) d.classList.remove('on');
+  if (!ev.dataTransfer || !ev.dataTransfer.files.length) return;
+  ev.preventDefault(); chatAddFiles(ev.dataTransfer.files);
+});
+document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { var b = $('.c-box'); if (b) b.remove(); } });

@@ -9,17 +9,18 @@ import os
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import (agent, agentstate, autostart, checks, db, deepseek, docs, events, exam, feed, growth, hw, hwctl, memory, monitor, nightly, osd,
+from . import (agent, agentstate, autostart, checks, db, deepseek, docs, events, exam, feed, files, growth, hw, hwctl, memory, monitor, nightly, osd,
                imagegen, paths, reminders, reports, router, safety, settings, setup, tts, tts_install, websearch)
 from .models import M
 from .qq import BOT
 
-VERSION = "1.8.16"
+VERSION = "1.8.17"
 PORT = 8765
 _bg = []
 
@@ -394,7 +395,8 @@ async def redo_event(eid: int, body: dict = Body(...)):
     if e["private"] and to != "local" and not allow:
         raise HTTPException(409, "这件事标了隐私，交给云端会发出本机，要你确认")
     await _apply_fix(e, to)
-    return _start_job(e["text"], force=to, allow_private=allow, redo_of=eid)
+    imgs = [{"path": r["path"]} for r in db.q("SELECT path FROM chat_files WHERE event_id=? AND kind='img'", (eid,)) if Path(r["path"]).is_file()]
+    return _start_job(e["text"], force=to, allow_private=allow, redo_of=eid, images=imgs or None)
 
 
 CHAT_JOBS = {}
@@ -424,16 +426,60 @@ async def chat(body: dict = Body(...)):
     """界面上发消息。带 async=true 时马上返回一个 token，界面拿它每半秒来问一次进度（/api/chat/{token}），
     处理到哪一步（决策脑、查说明书、联网搜索、读网页……）就能实时显示；不带就等处理完再返回（旧用法）。"""
     text = (body.get("text") or "").strip()
-    if not text:
+    raw = body.get("images") or []
+    if not isinstance(raw, list) or len(raw) > files.MAX_UPLOADS:
+        raise HTTPException(400, f"一次最多带 {files.MAX_UPLOADS} 张图片")
+    if not text and not raw:
         raise HTTPException(400, "空消息")
+    try:
+        imgs = [files.save_upload(u, k) for k, u in enumerate(raw)]      # 先存进 data\chat（聊天记录里显示、重做时再用）
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    text = text or "看看这张图。"
     force = body.get("force") if body.get("force") in ("local", "neu", "ds", "cl") else None   # 你指定交给谁（留的口子）
-    kw = {"force": force, "allow_private": bool(body.get("allow_private"))}
+    kw = {"force": force, "allow_private": bool(body.get("allow_private")), "images": imgs or None}
     if not body.get("async"):
         try:
             return await agent.handle(text, "ui", "me", **kw)
         except router.NeedConfirm as e:
             raise HTTPException(409, str(e)) from None
     return _start_job(text, **kw)
+
+
+@app.get("/api/chat/file/{fid}")
+def chat_file(fid: int):
+    """对话里的一张图（你发的，或者读到的图片文件）：聊天记录里的缩略图、点开看大图。"""
+    p = files.file_row(fid)
+    if not p:
+        raise HTTPException(404, "这张图找不到了")
+    return FileResponse(p, headers={"Cache-Control": "private, max-age=31536000"})
+
+
+# ---------------- 能读的文件夹（v1.8.17，只读；加文件夹 = 给 agent 加权限，只能在界面上点） ----------------
+@app.get("/api/files/dirs")
+def files_dirs():
+    return {"dirs": files.public()}
+
+
+@app.post("/api/files/dirs")
+def files_add(body: dict = Body(...)):
+    try:
+        files.add_dir(body.get("path"), bool(body.get("cloud", True)))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    return {"dirs": files.public()}
+
+
+@app.patch("/api/files/dirs")
+def files_patch(body: dict = Body(...)):
+    files.set_cloud(body.get("path") or "", bool(body.get("cloud")))
+    return {"dirs": files.public()}
+
+
+@app.delete("/api/files/dirs")
+def files_del(path: str):
+    files.remove_dir(path)
+    return {"dirs": files.public()}
 
 
 @app.get("/api/chat/{token}")

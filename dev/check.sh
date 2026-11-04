@@ -24,8 +24,10 @@ step "重新自检窗口 · 连后端" "$PY" dev/ui/recheck.py dev/.run/shots
 step "整备自检和一键补齐的状态" "$PY" dev/test_checks.py
 step "联网搜索和查说明书" "$PY" dev/test_search.py
 step "更强的模型和换它重做" "$PY" dev/test_route.py
+step "读本地文件（只读能读的文件夹）、对话里带图片（交给 DeepSeek 看）" "$PY" dev/test_files.py
 step "设置里的联网搜索" "$PY" dev/ui/search.py dev/.run/shots
 step "对话页、Agent 状态、游戏内显示设置" "$PY" dev/ui/chat.py dev/.run/shots
+step "对话页带图片、允许读文件夹、设置里的能读的文件夹" "$PY" dev/ui/attach.py dev/.run/shots
 step "配音：切句子、拼接停顿、时间轴、保存、我的音色、让路和闲置关掉、安装配音" "$PY" dev/test_tts.py
 step "配音的百炼云端引擎：只发文案、字级时间戳、分块、用量、出错说明、Key 不外泄" "$PY" dev/test_tts_cloud.py
 step "配音页点一遍（本地和百炼云端）、设置里的安装配音、百炼 Key 和开机自启" "$PY" dev/ui/tts.py dev/.run/shots

@@ -44,13 +44,22 @@ def _vote_brief(v):
     return {"top": top, "p": round(p.get(top, 0) * 100) if top else 0, "maxsim": v.get("maxsim"), "private_p": v.get("private_p")}
 
 
+def _with_files(out):
+    """带上这条事件的图片、读过的文件（v1.8.17，对话里显示缩略图和「读了哪些文件」）。"""
+    from . import files
+    fs = files.of_events([e["id"] for e in out])
+    for e in out:
+        e["files"] = fs.get(e["id"], [])
+    return out
+
+
 def recent(limit=60):
-    return [to_ui(e) for e in db.q("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))]
+    return _with_files([to_ui(e) for e in db.q("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))])
 
 
 def get(eid):
     e = db.one("SELECT * FROM events WHERE id=?", (eid,))
-    return to_ui(e) if e else None
+    return _with_files([to_ui(e)])[0] if e else None
 
 
 def dumps(x):

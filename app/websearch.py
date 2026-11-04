@@ -18,7 +18,7 @@ from datetime import datetime
 
 import httpx
 
-from . import db, deepseek, privacy, settings
+from . import db, deepseek, files, privacy, settings
 
 PRICE_USD = 0.75 / 1000          # 每次成功请求
 WEEK = "一二三四五六日"
@@ -157,31 +157,35 @@ def system_hint() -> str:
             "回答用中文、简短直接；用到了网上的信息，在最后列出来源（标题 + 链接，最多 3 条）。")
 
 
-async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text, steps, progress=None):
-    """让 DeepSeek 带着搜索工具回答。返回 {"text","cny","searched","fetched","sources"}；steps 里追加每一步。
-    progress(文字)：处理到哪一步了（对话页实时显示）。"""
+async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text, steps, progress=None, web=True, local_files=False):
+    """让 DeepSeek 带着工具回答：联网搜索（web）、读他允许的文件夹（local_files，app/files.py）。
+    返回 {"text","cny","searched","fetched","read","sources"}；steps 里追加每一步。progress(文字)：处理到哪一步了（对话页实时显示）。"""
     say = progress or (lambda _m: None)
     s = settings.S
     rounds = max(1, int(s.get("searchRounds", 4)))
+    if local_files:
+        rounds = max(rounds, 8)                         # 翻文件要多几轮：搜 → 读 → 再读
     msgs = list(messages)
-    msgs[0] = {"role": "system", "content": msgs[0]["content"] + "\n\n" + system_hint()}
-    total, searched, fetched, sources, n_res = 0.0, 0, 0, [], 1
+    msgs[0] = {"role": "system", "content": msgs[0]["content"] + ("\n\n" + system_hint() if web else "") + ("\n\n" + files.hint() if local_files else "")}
+    total, searched, fetched, nread, sources, n_res, imgs = 0.0, 0, 0, 0, [], 1, 0
     for rnd in range(rounds + 1):
-        give = rnd < rounds and today_count() < int(s.get("searchDaily", 200))
+        give_web = web and rnd < rounds and today_count() < int(s.get("searchDaily", 200))
+        tools = (TOOLS if give_web else []) + (files.TOOLS if local_files and rnd < rounds else [])
         say("DeepSeek 正在想……" if rnd == 0 else "DeepSeek 正在看查到的内容……")
-        out = await deepseek.chat(msgs, thinking=thinking, event_id=event_id, purpose=purpose, tools=TOOLS if give else None,
+        out = await deepseek.chat(msgs, thinking=thinking, event_id=event_id, purpose=purpose, tools=tools or None,
                                   max_tokens=1600)
         total += out["cny"]
         thinking = out.get("thinking", thinking)          # 被官方拒了改成不思考的话，后面几轮也不思考
         calls = out.get("tool_calls") or []
         if not calls:
             text = out["text"]
-            if not give and searched + fetched and rnd >= rounds:
-                steps.append(["联网搜索", f"查了 {rounds} 轮，到上限了，用已有的结果回答"])
+            if not tools and searched + fetched + nread and rnd >= rounds:
+                steps.append(["联网搜索" if searched + fetched else "读文件", f"查了 {rounds} 轮，到上限了，用已有的结果回答"])
             if sources and not re.search(r"https?://", text):
                 text += "\n\n来源：\n" + "\n".join(f"{i + 1}. {x['title'][:40]} {x['url']}" for i, x in enumerate(sources[:3]))
-            return {"text": text, "cny": total, "searched": searched, "fetched": fetched, "sources": sources}
+            return {"text": text, "cny": total, "searched": searched, "fetched": fetched, "read": nread, "sources": sources}
         msgs.append(out["message"])
+        pics = []                                        # read_file 读到的图片：工具结果只能是文字，图片放进紧跟着的一条用户消息
         for call in calls:
             fn = (call.get("function") or {})
             name = fn.get("name")
@@ -215,8 +219,21 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
                     else:
                         content = "这个网页读不到内容（网站拦了或者没有正文），换一个结果。"
                         steps.append(["读网页", f"没读到 · {_site(args.get('url'))}"])
+                elif name in files.NAMES and local_files:
+                    say(f"正在{'读文件' if name == 'read_file' else '翻文件夹'}……")
+                    content, step, pic, used = await asyncio.to_thread(files.run_tool, name, args)
+                    steps.append(step)
+                    if used:
+                        nread += 1
+                        files.note(event_id, "fimg" if pic else "file", used)
+                    if pic and imgs < 4:
+                        pics.append(pic)
+                        imgs += 1
                 else:
                     content = f"没有这个工具：{name}"
+            except files.Denied as e:
+                content = f"没读成：{e}"
+                steps.append(["读文件", f"没读成：{str(e)[:50]}"])
             except SearchBlocked as e:
                 content = f"没有发出去：{e}。不要把个人信息放进搜索词。"
                 steps.append(["联网搜索", "搜索词涉及隐私，拦下了"])
@@ -229,7 +246,10 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
                 content = f"这次没查成：{str(e)[:120]}"
                 steps.append(["联网搜索", f"出错：{str(e)[:50]}"])
             msgs.append({"role": "tool", "tool_call_id": call.get("id") or "", "content": content})
-    return {"text": "查了很多轮还没得出结论，换个问法再问我一次吧。", "cny": total, "searched": searched, "fetched": fetched, "sources": sources}
+        if pics:
+            msgs.append({"role": "user", "content": [{"type": "text", "text": "（read_file 读到的图片：" + "、".join(x["name"] for x in pics) + "）"}] +
+                         [{"type": "image_url", "image_url": {"url": x["uri"]}} for x in pics]})
+    return {"text": "查了很多轮还没得出结论，换个问法再问我一次吧。", "cny": total, "searched": searched, "fetched": fetched, "read": nread, "sources": sources}
 
 
 FRESH = re.compile(r"最新|新闻|热搜|今天.*(发生|新闻|比赛|消息)|价格|多少钱|报价|汇率|股价|天气|比分|赛程|发布了|出了没|更新了|"

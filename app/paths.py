@@ -8,6 +8,7 @@ APP = ROOT / "app"
 UI = ROOT / "ui"
 DATA = ROOT / "data"                                   # 设置、数据库、日志（自动生成）
 LOGS = DATA / "logs"
+CHAT_FILES = DATA / "chat"                             # 对话里发的图片（v1.8.17），留一份给聊天记录显示
 MODELS = ROOT / "models"
 MODELS_BASE = MODELS / "base" / "MiniCPM5-2B"          # 底座（魔搭 OpenBMB/MiniCPM5-2B）
 MODELS_EMBED = MODELS / "embed" / "Qwen3-Embedding-0.6B"  # 嵌入模型（魔搭 Qwen/Qwen3-Embedding-0.6B）

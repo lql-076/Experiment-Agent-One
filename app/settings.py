@@ -33,7 +33,7 @@ DEFAULTS = {
     "imgBase": "https://api.apiyi.com/v1", "imgModel": "gpt-image-2.5-sunburst-vip", "imgQuality": "high", "imgRes": "2k", "imgConc": 1,
     "imgOut": "", "imgNoText": True, "imgWithDir": False,
     # 云端
-    "dsBase": "https://api.deepseek.com", "dsModel": "deepseek-flash", "dsLow": 2, "usdCny": 7.2,
+    "dsBase": "https://api.deepseek.com", "dsModel": "deepseek-flash", "dsVision": "deepseek-flash", "dsLow": 2, "usdCny": 7.2,
     "priceIn": 0.15, "priceHit": 0.003, "priceOut": 0.60, "peakX": 2, "dsThinking": "auto",
     "searchOn": True, "searchDaily": 200, "searchRounds": 4,
     # 游戏内显示（app/osd.py）
@@ -48,6 +48,8 @@ DEFAULTS = {
     "qqEnabled": True, "qqAppId": "", "qqUser": "", "qqSandbox": True,
     # 记忆
     "memDir": "", "useGit": True, "logDays": 90,
+    # 能读的文件夹（v1.8.17，app/files.py）：[{path, cloud}]，只读；只能在 设置 › 记忆与文件 里加（给 agent 加权限要你点），不走通用的改设置
+    "readDirs": [],
     # 分流旋钮
     "take": 60, "fresh": 40, "clLine": 50, "daily": 3, "quiet": False,
     "privLocal": True, "privWords": "", "voteEmbed": 50, "voteAuto": True,
@@ -117,6 +119,8 @@ def update(changes: dict) -> dict:
                 v = int(float(v)) if v != "" else d
             elif isinstance(d, float):
                 v = float(v) if v != "" else d
+            elif isinstance(d, list):
+                continue              # 列表（能读的文件夹）有自己的接口，改它要过安全线
             else:
                 v = "" if v is None else str(v)
         except (TypeError, ValueError):

@@ -151,6 +151,7 @@ var SECTIONS = [
     { k: 'claudeTpl', l: '给更强的模型的提示词开头', t: 'textarea', d: '我在搭一个自己的本地 agent。下面是遇到的问题和相关背景，请帮我分析。聊完请输出一份简短的 Markdown 总结，方便我带回给 agent 学习。' },
     { k: 'dsKey', l: 'DeepSeek API Key', t: 'secret', h: '加密保存在本机（Windows DPAPI），只有你这个 Windows 账号能解开；导出设置时不包含' },
     { k: 'dsModel', l: '模型', t: 'model', d: 'deepseek-flash', h: '点「获取模型列表」，用你的 Key 查官方现在能用哪些模型，再从下拉框里选；列表里没有的也可以手动填' },
+    { k: 'dsVision', l: '看图用的模型', d: 'deepseek-flash', h: '对话里带了图片时用它（DeepSeek 官方现在 deepseek-flash 能看图，按 token 计费，一张最多约 1000 token）' },
     { k: 'dsLow', l: '余额低于多少时提醒你', t: 'number', u: '元', d: 2, h: '只是提醒，不会停用。余额不够时 DeepSeek 自己会拒绝调用' },
     { k: 'dsThinking', l: '思考模式', t: 'select', d: 'auto', o: [['auto', '自动：难题才开（默认）'], ['off', '一直关（最省钱）'], ['on', '一直开']] },
     { k: 'searchOn', l: '联网搜索', t: 'toggle', d: true, h: '交给 DeepSeek 的事，它可以自己决定要不要上网搜、读哪几个网页（DeepSeek 自研搜索引擎，同一个 Key）。隐私的事永远不搜' },
@@ -176,7 +177,7 @@ var SECTIONS = [
     { k: 'qqUser', l: '只回复这个用户（openid）', ph: '不用手填：给机器人发一句话后，在 整备 › 绑定你的 QQ 点「是我」', h: '其他人发来的消息一律不处理' },
     { note: '单聊主动消息官方允许，每人每天上限 1000 条；但你在 QQ 里可以关掉"允许主动发送"，这时提醒会改成电脑弹窗 + 界面卡片。你 55 分钟内说过话的话，提醒会用被动回复，最稳。' }
   ] },
-  { id: 'memory', name: '记忆与文件', desc: '记忆、技能、提示词都是中文 Markdown，你随时能打开看、改。agent 只能读写这个文件夹。', fields: [
+  { id: 'memory', name: '记忆与文件', custom: 'memory', desc: '记忆、技能、提示词都是中文 Markdown，你随时能打开看、改。agent 只能写自己的文件夹；别的文件夹要你在下面允许了才能读（只读）。', fields: [
     { k: 'memDir', l: 'agent 自己的文件夹', place: 'memory', h: '想放进 Obsidian 库就填库里的一个子文件夹，比如 D:\\Obsidian\\我的库\\agent' },
     { k: 'useGit', l: '用 git 记录每次改动（可一键撤销）', t: 'toggle', d: true },
     { k: 'logDays', l: '日志保留天数', t: 'number', u: '天', d: 90 }

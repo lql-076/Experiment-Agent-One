@@ -79,6 +79,7 @@ function sectionBody(sec) {
   if (sec.custom === 'hw') h += '<div id="hwCtl">' + hwCtlHTML() + '</div>';
   if (sec.custom === 'models') h += '<div id="ttsInst">' + ttsInstHTML() + '</div>';
   if (sec.custom === 'auto') h += '<div id="autoSt">' + autoStHTML() + '</div>';
+  if (sec.custom === 'memory') { h += '<div id="rdirs">' + rdirsHTML() + '</div>'; if (useLive() && !RDIRS.ts) fetchRdirs(); }
   if (sec.custom === 'growth') h += '<div class="btnrow" style="margin-bottom:1.5rem"><button class="btn" id="nightNow"' + (useLive() ? '' : ' disabled') + '>现在跑一次每日差事</button></div>';
   return h + '<div class="fields">' + sec.fields.map(fieldHTML).join('') + '</div>';
 }
@@ -271,8 +272,40 @@ function saveRem(row, rerender) {
     }).catch(function (e) { toast('没存上：' + e.message); });
   }, rerender ? 0 : 500);
 }
+/* 能读的文件夹（v1.8.17，app/files.py）：只读；加一个 = 给 agent 加权限，只能在这里点（或者在对话里点「允许读这个文件夹」） */
+var RDIRS = { list: [], ts: 0 };
+var RDIRS_DEMO = [{ path: 'E:\\gongzuochengxu\\笔记仓库', show: 'E:\\gongzuochengxu\\笔记仓库', cloud: true, exists: true }];
+function rdirsHTML() {
+  var list = useLive() ? RDIRS.list : RDIRS_DEMO;
+  return '<div class="field rdirs"><label for="rdNew">能读的文件夹（只读）</label>' +
+    '<div class="help">在对话里问它「我笔记里 XX 是怎么写的」、或者直接贴文件路径，它能翻这些文件夹（列目录、搜、读 .md .txt .docx、代码、表格、图片）；只读，不改、不删。关掉「能发给 DeepSeek」的文件夹只给本地小脑看。</div>' +
+    (list.length ? '<div class="rd-list">' + list.map(function (d) {
+      return '<div class="rd-row"><span class="rd-path" title="' + esc(d.show || d.path) + '">' + esc(d.show || d.path) + (d.exists ? '' : '<em>（找不到了）</em>') + '</span>' +
+        '<label class="rd-cl"><button class="switch" role="switch" data-rd-cloud="' + esc(d.path) + '" aria-checked="' + !!d.cloud + '" aria-label="能发给 DeepSeek"></button>能发给 DeepSeek</label>' +
+        '<button class="btn mini" data-rd-del="' + esc(d.path) + '">不让读了</button></div>';
+    }).join('') + '</div>' : '<div class="cap" style="margin:.4rem 0">还没有。加了以后它才能读你电脑上的文件。</div>') +
+    '<div class="secret"><input class="inp" id="rdNew" spellcheck="false" placeholder="文件夹的完整路径，比如 E:\\gongzuochengxu\\笔记仓库"><button class="btn primary" data-rd-add' + (useLive() ? '' : ' disabled') + '>允许读</button></div></div>';
+}
+function fetchRdirs() {
+  api('GET', '/api/files/dirs').then(function (j) { RDIRS.list = j.dirs; RDIRS.ts = Date.now(); var b = $('#rdirs'); if (b) b.innerHTML = rdirsHTML(); }).catch(function () {});
+}
+function rdirsDo(method, body, path) {
+  return api(method, '/api/files/dirs' + (path ? '?path=' + encodeURIComponent(path) : ''), body).then(function (j) {
+    RDIRS.list = j.dirs; RDIRS.ts = Date.now(); var b = $('#rdirs'); if (b) b.innerHTML = rdirsHTML(); return j;
+  });
+}
 var sv = $('#view-settings');
 sv.addEventListener('click', function (ev) {
+  var rd = ev.target.closest('[data-rd-add],[data-rd-del],[data-rd-cloud]');
+  if (rd) {
+    if (!useLive()) { toast('演示模式不能改'); return; }
+    if (rd.hasAttribute('data-rd-add')) {
+      var v = ($('#rdNew').value || '').trim(); if (!v) { toast('填一个文件夹的路径'); return; }
+      rdirsDo('POST', { path: v, cloud: true }).then(function () { toast('允许了：只读，不改不删'); }).catch(function (e) { toast(e.message, 5000); });
+    } else if (rd.dataset.rdDel) rdirsDo('DELETE', null, rd.dataset.rdDel).then(function () { toast('不让读了'); }).catch(function (e) { toast(e.message); });
+    else rdirsDo('PATCH', { path: rd.dataset.rdCloud, cloud: rd.getAttribute('aria-checked') !== 'true' }).catch(function (e) { toast(e.message); });
+    return;
+  }
   var t = ev.target.closest('button'); if (!t || t.disabled) return;
   var row = t.closest('.rem');
   if (t.dataset.sec) goSec(t.dataset.sec);
