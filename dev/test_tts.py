@@ -415,10 +415,17 @@ check("开始安装配音" in feedtxt and "装好了 4 个包" in feedtxt and "�
       "每一步写进进展报告（后台页，任务名「安装配音」）：开始、装了哪些包、下载完成多大多久、装好了")
 log = pathlib.Path(i["log"].replace("\\", "/"))
 check(log.exists() and "预设音色 CustomVoice 下好了" in log.read_text("utf-8"), "原始输出写进 data/logs/setup_tts.log")
+ks = [(x["k"], x["t"][:14]) for x in i.get("steps") or []]
+torch = next((x for x in i["steps"] if "PyTorch 已经装好" in x["t"]), {})
+cv = next((x for x in i["steps"] if x["t"].startswith("下载 预设音色")), {})
+check(torch.get("k") == "skip" and cv.get("k") == "new" and "下好了" in cv.get("done", ""),
+      f"每一步的结果列出来（v2.0）：装过的 PyTorch 标「跳过」，预设音色标「新下的」：{ks}")
+check(all(x["k"] in ("skip", "new") for x in i["steps"]), "装完了：没有还在「进行中」或「失败」的步骤")
 (ROOT / "dev" / ".run" / "fake_tts_install_fail.flag").write_text("1")
 c.post("/api/tts/install", json={})
 i = inst_wait()
 check(i["st"] == "fail" and i["code"] == 1, "下到一半断了：显示没装完（退出码 1），可以再点")
+check(any(x["k"] == "fail" and x["t"].startswith("下载 预设音色") for x in i.get("steps") or []), "断在哪一步：那一步标「失败」")
 c.post("/api/tts/install", json={"hf": True})
 i = inst_wait()
 check(i["st"] == "ok" and i["hf"], "点「改从 hf-mirror 下」：接着装好了")

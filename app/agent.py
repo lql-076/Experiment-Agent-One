@@ -20,6 +20,40 @@ MEM_INSTRUCT = "Given a user message, retrieve personal notes and memories that 
 REMEMBER = re.compile(r"^(请)?(帮我)?(记住|记一下|记下来|记下|帮我记)[：:，, ]*(.+)$", re.S)
 HIST = defaultdict(lambda: deque(maxlen=8))   # 每个人最近几轮：(role, content, private, ts)
 SRC_LABEL = {"qq": "QQ 私聊", "ui": "界面输入", "cron": "定时任务"}
+# 问能不能给 agent 加功能（「能不能加个导出的功能」「你能不能支持读 PDF」）：本地小脑以前会答成"系统限制，没法加"
+WISH_RE = re.compile(r"(能不能|可不可以|可以|能否)(给你|帮你|让你|给它|在你这)?(加|做|新增|增加|添加|支持|实现|弄)(一?个|上|出)?.{0,24}"
+                     r"(功能|按钮|页面|窗口|选项|开关|设置|模式)|"
+                     r"(加|做|添加|新增)一?个.{0,24}(功能|按钮|页面|窗口|选项|开关)(吧|呗|好不好|行不行|怎么样|\?|？)|"
+                     r"(你|它)(能不能|可不可以|会不会)(支持|实现)")
+WISH_NOTE = ("（他在问能不能给你——这个 agent——加功能或改功能。先对照上面说明书里的段落：已经有的，告诉他在界面哪里点；"
+             "没有的，老实说「现在还没有，这要改代码才能加，我已经记进「想要的功能」，开发的时候会看到」。"
+             "不要说「系统限制」「做不到」「不支持」这类话，也不要假装已经能做。）")
+
+
+class Steps(list):
+    """每一步带上离收到消息过了多少秒（第三项），「这条怎么处理的」按它排时间线。"""
+
+    def __init__(self, t0, items=()):
+        super().__init__()
+        self.t0 = t0
+        self.extend(items)
+
+    def append(self, x):
+        x = list(x)
+        if len(x) == 2:
+            x.append(round(time.time() - self.t0, 3))
+        super().append(x)
+
+    def extend(self, xs):
+        for x in xs:
+            self.append(x)
+
+
+def note_wish(text, eid):
+    """记进「想要的功能」（kv wishes，最多留 200 条），报告里能看到，开发窗口排期时看。"""
+    w = db.kv_get("wishes", []) or []
+    w.append({"ts": time.time(), "text": text[:300], "event": eid})
+    db.kv_set("wishes", w[-200:])
 
 
 def _history(user, allow_private):
@@ -154,8 +188,13 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
         print("决策脑出错，改用简单规则：", e)
         dec = await router.decide(text, vec=False, force=force, allow_private=allow_private)
     to_name = dec["brain_name"] if dec["ui_to"] == "local" else {"neu": "新类别", "ds": "DeepSeek", "cl": router.strong_name()}[dec["ui_to"]]
-    steps = [["收到", SRC_LABEL.get(src, src)], ["决策脑打分", f"{to_name} {dec['conf']}%"]]
-    fz = dec["votes"].get("forced")
+    vt = dec["votes"]
+    steps = Steps(t0, [["收到", SRC_LABEL.get(src, src)]])
+    if vt.get("mode") != "rules" or vt.get("embed_why") or vt.get("kev_why"):
+        steps.append(["语义路由", vt.get("embed_txt") or ("没投票：" + (vt.get("embed_why") or "?"))])
+        steps.append(["Kev", vt.get("kev_txt") or ("没投票：" + (vt.get("kev_why") or "?"))])
+    steps.append(["决策脑打分", f"{to_name} {dec['conf']}%" + ("（只有一票，打了八折）" if vt.get("single") else "")])
+    fz = vt.get("forced")
     # 隐私的事你确认过要交给云端（界面上点了两次「换它重做」）：这一次放行，按安全线记一笔
     confirmed = bool(fz and allow_private and dec["private"] and dec["ui_to"] != "local")
     if fz:
@@ -196,7 +235,19 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
     is_local = dec["brain"] is not None
     readable = [m for m in ments if m["exists"] and m["allowed"]]
     pic_file = any(not m["is_dir"] and files.kind_of(Path(m["path"])) == "image" for m in readable)
-    if is_local and not dec["private"] and not fz and (images or pic_file):
+    wish_extra = ""
+    if not fz and WISH_RE.search(text):
+        wish_extra = WISH_NOTE
+        note_wish(text, eid)
+        steps.append(["记进想要的功能", "开发的时候会看到"])
+        if not docs:
+            docs = await memory.search_docs(qvec, text)
+            if docs:
+                steps.append(["查了说明书", f"{len(docs)} 段"])
+    if wish_extra and is_local and not dec["private"]:
+        route, is_local = "ds", False
+        why_extra = "（在问能不能给我加功能：要对照说明书、老实说要不要改代码，本地小脑答不好，交给 DeepSeek）"
+    elif is_local and not dec["private"] and not fz and (images or pic_file):
         route, is_local = "ds", False
         why_extra = "（带了图片，本地小脑看不了图，交给 DeepSeek 看）"
     elif is_local and not dec["private"] and not fz and any(m["cloud"] for m in readable):
@@ -212,6 +263,8 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
     if is_local and not dec["private"] and settings.S.get("searchOn", True) and websearch.wants_fresh(text) and not docs and not readable:
         route, is_local = "ds", False
         why_extra = "（看着要查最新信息，本地小脑上不了网，改交 DeepSeek 联网搜）"
+    if why_extra:
+        steps.append(["按本事分", why_extra.strip("（）")])
     if is_local and M.yielding and not dec["private"]:
         route, is_local = "ds", False
         why_extra = f"（让路模式：{M.yield_reason}，改交 DeepSeek）"
@@ -230,7 +283,7 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
                 extra += f"\n\n（他附了 {len(images)} 张图片，但这件事只在本地处理，你看不了图：直接告诉他看不了，请他用文字描述。）"
                 steps.append(["看不了图", "涉及隐私不发云端，本地小脑看不了图"])
             prog(f"{dec['brain_name']}正在回答……")
-            out = await M.chat(_build(text, user, snips, True, docs, src, extra), lora=dec["lora"], max_new_tokens=400)
+            out = await M.chat(_build(text, user, snips, True, docs, src, extra + wish_extra), lora=dec["lora"], max_new_tokens=400)
             reply = out["text"]
             steps.append(["本地处理", f"{dec['brain_name']} · {out['tokens']} 个 token · {out['tok_per_s']}/秒"])
             if snips:
@@ -253,7 +306,7 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
             extra, pics, used = await asyncio.to_thread(files.attach, [m for m in readable if m["cloud"]], False)
             _note_reads(eid, used, steps, "你贴的路径，程序读出来一起发")
             uris = [await asyncio.to_thread(files.uri_of, im["path"]) for im in images] + [x["uri"] for x in pics]
-            msgs = _build(text, user, snips, False, docs, src, extra, uris)
+            msgs = _build(text, user, snips, False, docs, src, extra + wish_extra, uris)
             prog("交给 DeepSeek，正在看图……" if uris else "交给 DeepSeek，正在想……")
             purpose = "neu" if dec["neu"] else "chat"
             web = None

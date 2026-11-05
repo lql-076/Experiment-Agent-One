@@ -88,6 +88,7 @@ class Manager:
         self.kevp = Proc("kev")
         self.extra = []                  # 别的模块开的、也占显存的子进程（配音服务 app/tts.py）：算显存、退出时一起停
         self.last_kev = 0.0
+        self.kev_why = ""
         self.busy_until = 0.0
         self.yield_level = 0             # 让路：0 不让 / 1 底座、Kev 不装 / 2 嵌入模型也卸，显存全让出来
         self.yield_reason = ""
@@ -313,23 +314,38 @@ class Manager:
         return False
 
     async def kev(self, state, questions):
-        """Kev 没准备好就返回 None，并在后台启动它（下次就能用）。"""
-        if self.s["kevMode"] == "off" or self.yielding:
+        """Kev 没准备好就返回 None，并在后台启动它（下次就能用）。没投票的原因写在 self.kev_why（「这条怎么处理的」里显示）。"""
+        self.kev_why = ""
+        if self.s["kevMode"] == "off":
+            self.kev_why = "Kev 关着（设置 › 本地模型）"
+            return None
+        if self.yielding:
+            self.kev_why = "显存让路中（在玩游戏，或者别的程序占着显存）"
             return None
         if not await self.kev_ready():
+            was = self.kevp.alive()
             try:
                 await self.ensure_kev(wait=False)
-            except Exception:
-                pass
+            except Exception as e:
+                self.kev_why = "起不来：" + (str(e).splitlines() or ["?"])[0][:80]
+                return None
+            if was:
+                self.kev_why = f"还在启动（第 {int(time.time() - self.kevp.started)} 秒）"
+            elif self.kevp.alive():
+                self.kev_why = "没在运行，刚开始启动（下一条就能用）"
+            else:
+                self.kev_why = "没在运行"
             return None
         self.last_kev = time.time()
         try:
             async with httpx.AsyncClient(timeout=30) as c:
                 r = await c.post(self.kurl("/v1/systemone"), json={"state": state, "model": "kev-latest", "questions": questions})
             if r.status_code != 200:
+                self.kev_why = f"回了错误（{r.status_code}）"
                 return None
             return r.json().get("answers")
-        except Exception:
+        except Exception as e:
+            self.kev_why = "没响应（" + type(e).__name__ + "）"
             return None
 
     # ---------- 让路：按显存 ----------

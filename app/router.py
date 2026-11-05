@@ -22,6 +22,8 @@ ROUTE_DESC = {
     "neu": "new: a new kind of task that none of the above fits well (以上都不太合适的新类型的事)",
 }
 UI_KEYS = ("local", "neu", "ds", "cl")
+SINGLE_CUT = 0.2      # 只有一票时把握打八折，拿出的两成给 DeepSeek
+SINGLE_TAKE = 0.15    # 只有一票时，本地接手线提高 15 个点
 
 
 class NeedConfirm(Exception):
@@ -195,6 +197,13 @@ async def decide(text: str, vec=None, force=None, allow_private=False):
         # 两票都没有：模型还没装好。隐私走本地，其他交 DeepSeek
         p.update({"local": 0.7 if kw_priv else 0.2, "ds": 0.3 if kw_priv else 0.7, "cl": 0.0, "neu": 0.1})
         mode = "rules"
+    kev_why = "" if (kv or safe) else (getattr(M, "kev_why", "") or "没投票")
+    embed_why = "" if (ev or safe) else ("嵌入模型还没准备好" if vec is None else "还没有判例")
+    single = mode in ("embed", "kev")
+    if single:
+        # 只有一票：不给满分。拿出两成给 DeepSeek（什么都能干的那一路），本地接手线也提高 15 个点
+        p = {k: v * (1 - SINGLE_CUT) for k, v in p.items()}
+        p["ds"] = p.get("ds", 0.0) + SINGLE_CUT
     hard = p.get("cl", 0.0)           # "很难"的程度：不用更强的模型时，DeepSeek 靠它决定开不开思考模式
     if not strong_on():               # 你选了不用更强的模型：它那份并进 DeepSeek
         p["ds"] = p.get("ds", 0.0) + p.get("cl", 0.0)
@@ -213,6 +222,8 @@ async def decide(text: str, vec=None, force=None, allow_private=False):
     best_local = max(local_keys, key=lambda k: p[k])
     pl = p[best_local]
     take, fresh, cl_line = s["take"] / 100, s["fresh"] / 100, s["clLine"] / 100
+    if single:
+        take = min(0.95, take + SINGLE_TAKE)
     name = {b["key"]: b["name"] for b in bl}
     neu = False
     if private:
@@ -241,6 +252,10 @@ async def decide(text: str, vec=None, force=None, allow_private=False):
         vote_line.append(f"Kev → {label_of(top, name)} {kv['p'].get(top, 0):.0%}")
     if not vote_line:
         vote_line.append("本地模型还没准备好，按简单规则判断")
+    if single:
+        miss = f"Kev 没投票：{kev_why}" if not kv else f"语义路由没投票：{embed_why}"
+        vote_line.append(miss)
+        why = f"只有一票（{miss}），把握打八折、本地接手线提到 {take:.0%}。" + why
     ui_to = "local" if route in local_keys else ("neu" if neu else route)
     ui = {"local": pl, "neu": p["neu"], "ds": p["ds"], "cl": p["cl"]}
     tot = sum(ui.values()) or 1.0
@@ -267,13 +282,21 @@ async def decide(text: str, vec=None, force=None, allow_private=False):
             "brain_name": name.get(route), "lora": next((b["lora"] for b in bl if b["key"] == route), None),
             "private": private, "neu": neu, "conf": conf, "scores": ui, "p": {k: round(v, 4) for k, v in p.items()}, "hard": round(hard, 4),
             "votes": {"mode": mode, "weights": [round(we, 2), round(wk, 2)],
-                      "embed": ev, "kev": kv, "forced": forced},
+                      "embed": ev, "kev": kv, "forced": forced, "single": single,
+                      "kev_why": kev_why, "embed_why": embed_why,
+                      "embed_txt": vote_text(ev["p"], name) if ev else "", "kev_txt": vote_text(kv["p"], name) if kv else ""},
             "thresholds": {"take": s["take"], "fresh": s["fresh"], "clLine": s["clLine"]},
             "why": why, "vote_line": "；".join(vote_line), "vec": vec, "ms": int((time.time() - t0) * 1000)}
 
 
 def label_of(k, name):
     return {"ds": "DeepSeek", "cl": strong_name(), "neu": "新类别"}.get(k) or name.get(k, k)
+
+
+def vote_text(pd, name, n=3):
+    """一票投给了谁：按分数从高到低，最多三个，比如「DeepSeek 72% · 本地通用 21% · 新类别 7%」。"""
+    items = sorted(((label_of(k, name), float(v)) for k, v in (pd or {}).items() if float(v) >= 0.005), key=lambda x: -x[1])[:n]
+    return " · ".join(f"{a} {b:.0%}" for a, b in items)
 
 
 def dumps(d):

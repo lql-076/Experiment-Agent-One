@@ -21,7 +21,7 @@ from .models import NOWIN
 JOBN = "安装配音"
 LOG = paths.LOGS / "setup_tts.log"
 ST = {"st": "idle", "phase": "", "pct": None, "done": None, "total": None, "speed": None, "eta": None, "line": "",
-      "t0": 0.0, "t1": 0.0, "code": None, "hf": False, "stop": False}
+      "t0": 0.0, "t1": 0.0, "code": None, "hf": False, "stop": False, "steps": []}
 _p = {"p": None, "hist": [], "key": "", "pt0": 0.0}
 
 
@@ -30,7 +30,43 @@ def command():
 
 
 def public():
-    return {k: ST[k] for k in ("st", "phase", "pct", "done", "total", "speed", "eta", "line", "t0", "t1", "code", "hf")} | {"log": paths.show(LOG)}
+    return {k: ST[k] for k in ("st", "phase", "pct", "done", "total", "speed", "eta", "line", "t0", "t1", "code", "hf")} | \
+        {"log": paths.show(LOG), "steps": [dict(x) for x in ST["steps"]]}
+
+
+SKIP_WORDS = ("跳过", "已经装好", "已经下好")
+
+
+def step_say(msg, kind):
+    """把每一句讲解记成一步，界面上一行一行列出来：skip（装过的，跳过）/ new（这次新装、新下的）/ doing（正在做）/ fail（没成）。
+    「安装 X」「下载 X」这种开头的话先记成 doing，下一句来了再定它的结果：下一句是报错 → fail，是「X 下好了」→ new，别的 → 当它做完了（new）。"""
+    st, now = ST["steps"], time.time()
+    last = st[-1] if st and st[-1]["k"] == "doing" else None
+    if kind == "warn":
+        if last:
+            last.update(k="fail", why=msg, t1=now)
+        else:
+            st.append({"k": "fail", "t": msg, "t0": now, "t1": now})
+        return
+    if kind == "ok":
+        k = "skip" if any(w in msg for w in SKIP_WORDS) else "new"
+        name = re.split(r"\s*(已经|下好了|装好了|：)", msg, 1)[0].strip()
+        if last and len(name) >= 2 and name in last["t"]:      # 「下载 X……」之后的「X 下好了」：同一步的结果
+            last.update(k=k, done=msg, t1=now)
+            return
+        if last:
+            last.update(k="new", t1=now)
+        st.append({"k": k, "t": msg, "t0": now, "t1": now})
+        return
+    if last:
+        last.update(k="new", t1=now)
+    st.append({"k": "doing", "t": msg, "t0": now})
+
+
+def steps_end(ok):
+    for x in ST["steps"]:
+        if x["k"] == "doing":
+            x.update(k="new" if ok else "fail", t1=time.time())
 
 
 def _log(text):
@@ -111,6 +147,7 @@ def _line(line):
         elif msg[:1] == "✓":
             msg, kind = msg[1:].strip(), "ok"
         feed.add(msg, kind, job=JOBN)
+        step_say(msg, kind)
         ST["line"] = msg[:160]
         return msg
     m = setup.PIP_OK.match(s)
@@ -168,6 +205,7 @@ async def _run(hf):
         code = -1
         ST["line"] = str(e)[:160]
     _finish_phase()
+    steps_end(code == 0 and not ST["stop"])
     ST.update(code=code, t1=time.time(), eta=None)
     if ST["stop"]:
         ST["st"] = "stop"
@@ -186,7 +224,7 @@ def start(hf=False):
     if setup.status()["running"]:
         raise HTTPException(409, "一键补齐正在跑，等它完了再装配音")
     ST.update(st="run", phase="", pct=None, done=None, total=None, speed=None, eta=None, line="准备中", t0=time.time(), t1=0.0,
-              code=None, hf=bool(hf), stop=False)
+              code=None, hf=bool(hf), stop=False, steps=[])
     _p.update(hist=[], key="", pt0=0.0)
     feed.add("开始安装配音：配音环境 tts-env、PyTorch、Qwen3-TTS，再从" + ("hf-mirror" if hf else "魔搭") + "下两个模型（一共约 14 GB，装过的跳过）",
              "head", job=JOBN)

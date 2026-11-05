@@ -144,5 +144,17 @@ check(not seen, "「远程主机强迫关闭连接」不打印")
 monitor.quiet_handler(Loop(), {"message": "别的错", "exception": ValueError("x")})
 check(len(seen) == 1, "别的报错照常打印")
 
+print("7. Agent 状态的「启动中 / 卡住了」（v2.0）")
+from app import agentstate  # noqa: E402
+now = 10_000.0
+st, d, s = agentstate.starting(now - 30, 180, now)
+check(st == "start" and "第 30 秒" in d and s == 30, f"起了 30 秒、宽限 180 秒：启动中（{d}）")
+st, d, s = agentstate.starting(now - 600, 180, now, hint="第一次要下载")
+check(st == "stuck" and "10 分钟" in d and "第一次要下载" in d, f"起了 10 分钟还没好：卡住了（{d}）")
+row = agentstate._live({"k": "kev"}, "stuck", d, s, "kev")
+check(row.get("act") == {"label": "重启", "do": "kev"}, "卡住了的那一项给「重启」按钮")
+row = agentstate._live({"k": "kev"}, "start", "启动中", 3, "kev")
+check("act" not in row, "启动中的不给按钮（等它自己起来）")
+
 print("不过的：", bad or "没有")
 sys.exit(1 if bad else 0)

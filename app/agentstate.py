@@ -36,6 +36,30 @@ def _m(v, mx=None, txt=None):
 
 PREP = {"label": "去补齐", "sec": "prep"}
 
+# v2.0：进程起来了但还没好，在这么多秒之内算「启动中」（st=start），超过算「卡住了」（st=stuck，给「重启」按钮）
+GRACE = {"model": 180, "embed": 240, "kev": 300, "kev_dl": 1800, "qq": 60, "osd": 45, "hw": 120}
+BOOT = 90          # 后端刚起来这么久之内，后台还没来得及拉起的项也算「启动中」
+
+
+def ago(s):
+    s = int(max(0, s))
+    return f"{s} 秒" if s < 90 else f"{s // 60} 分钟"
+
+
+def starting(started, grace, now=None, what="启动中", hint=""):
+    """起了 started 时刻、还没好：(st, 一句话, 起了几秒)。在 grace 之内 → start，超过 → stuck。"""
+    s = int(max(0, (now or time.time()) - (started or 0)))
+    if s <= grace:
+        return "start", f"{what} · 第 {s} 秒" + (f" · {hint}" if hint else ""), s
+    return "stuck", f"卡住了：起了 {ago(s)}还没好" + (f" · {hint}" if hint else ""), s
+
+
+def _live(row, st, detail, since, key):
+    row.update(st=st, detail=detail, since=since)
+    if st == "stuck" and key:
+        row["act"] = {"label": "重启", "do": key}
+    return row
+
 
 async def view():
     chk = (db.kv_get("checks") or {}).get("res") or {}
@@ -45,6 +69,9 @@ async def view():
 
     def ck(k):
         return (chk.get(k) or {}).get("st")
+
+    now = time.time()
+    booting = now - monitor.T0 < BOOT
 
     # ---------- 大脑 ----------
     brain = []
@@ -57,6 +84,11 @@ async def view():
         brain.append(_row("embed", "语义路由（嵌入模型）", "bad", "模型文件还没下载：决策脑只能用简单规则，记忆检索用不了", PREP))
     elif not env_ok and ck("aienv"):
         brain.append(_row("embed", "语义路由（嵌入模型）", "bad", "本地模型环境还没装", PREP))
+    elif M.server.alive():
+        st, d, s = starting(M.server.started, GRACE["embed"], now, "加载中" if h else "模型服务启动中")
+        brain.append(_live(_row("embed", "语义路由（嵌入模型）", st, d), st, d, s, "model"))
+    elif booting:
+        brain.append(_live(_row("embed", "语义路由（嵌入模型）", "start", ""), "start", "开机后正在拉起模型服务", int(now - monitor.T0), None))
     else:
         brain.append(_row("embed", "语义路由（嵌入模型）", "warn", svc.get("model", {}).get("detail") or "本地模型服务没在运行，后台会自动拉起"))
 
@@ -66,7 +98,9 @@ async def view():
     elif kev.get("st") == "ok":
         brain.append(_row("kev", "Kev（决策脑第二票）", "ok", kev.get("detail", "在线")))
     elif kev.get("st") == "warn":
-        brain.append(_row("kev", "Kev（决策脑第二票）", "warn", kev.get("detail", "正在启动")))
+        dl = not M.kev_weights()
+        st, d, s = starting(M.kevp.started, GRACE["kev_dl" if dl else "kev"], now, "启动中", "第一次要下载约 2GB 权重" if dl else "")
+        brain.append(_live(_row("kev", "Kev（决策脑第二票）", st, d), st, d, s, "kev"))
     elif not env_ok:
         brain.append(_row("kev", "Kev（决策脑第二票）", "bad", "还没装：要先装本地模型环境，再下载约 2GB 权重", PREP))
     elif M.kev_weights():
@@ -149,6 +183,10 @@ async def view():
         chan.append(_row("qq", "QQ", "off", "设置里关掉了", {"label": "去打开", "sec": "qq"}))
     elif ck("qq") == "miss" and q.get("st") != "ok":
         chan.append(_row("qq", "QQ", "bad", "还没填 AppID 和 AppSecret（只能在界面上聊）", {"label": "去填", "sec": "qq"}))
+    elif q.get("st") == "warn":
+        from .qq import BOT
+        st, d, s = starting(getattr(BOT, "since", 0) or monitor.T0, GRACE["qq"], now, "连接中")
+        chan.append(_live(_row("qq", "QQ", st, d), st, d, s, "qq"))
     else:
         bits = [q.get("detail") or "离线"]
         if not S.get("qqUser"):
@@ -176,20 +214,34 @@ async def view():
         from . import hw as hwmod
         vt = ((hwmod._cache.get("data") or {}).get("gpu") or {}).get("vramTotal")
         vm = _m(al, vt, f"{al} GB") if vt else {"txt": f"{al} GB"}
-    back.append(_row("model", "本地模型服务", {"ok": "ok", "warn": "warn", "bad": "bad"}.get(m.get("st"), "bad" if not env_ok else "off"),
-                     m.get("detail") or "没在运行", None if env_ok else PREP, m=vm))
+    if m.get("st") == "warn" and M.server.alive():
+        st, d, s = starting(M.server.started, GRACE["model"], now)
+        back.append(_live(_row("model", "本地模型服务", st, d, m=vm), st, d, s, "model"))
+    elif m.get("st") != "ok" and env_ok and booting:
+        back.append(_live(_row("model", "本地模型服务", "start", ""), "start", "开机后正在拉起", int(now - monitor.T0), None))
+    else:
+        back.append(_row("model", "本地模型服务", {"ok": "ok", "warn": "warn", "bad": "bad"}.get(m.get("st"), "bad" if not env_ok else "off"),
+                         m.get("detail") or "没在运行", None if env_ok else PREP, m=vm))
     hwv = svc.get("hw", {})
-    back.append(_row("hw", "硬件监控助手", "ok" if hwv.get("st") == "ok" else ("warn" if S.get("hwOn") else "off"), hwv.get("detail") or "没在运行",
-                     None if hwv.get("st") == "ok" else {"label": "去打开" if not S.get("hwOn") else "去看看", "sec": "hw"}))
+    if hwv.get("st") != "ok" and S.get("hwOn") and now - monitor.T0 < GRACE["hw"]:
+        back.append(_live(_row("hw", "硬件监控助手", "start", ""), "start", f"开机后正在拉起 · 第 {int(now - monitor.T0)} 秒（要管理员权限，慢一点）",
+                          int(now - monitor.T0), None))
+    else:
+        back.append(_row("hw", "硬件监控助手", "ok" if hwv.get("st") == "ok" else ("warn" if S.get("hwOn") else "off"), hwv.get("detail") or "没在运行",
+                         None if hwv.get("st") == "ok" else {"label": "去打开" if not S.get("hwOn") else "去看看", "sec": "hw"}))
     nl = svc.get("nightly", {})
     back.append(_row("nightly", "每日差事", "ok" if nl.get("st") == "ok" else ("off" if not S.get("nightly", True) else "idle"),
                      nl.get("detail") or "还没跑过"))
     if S.get("osdOn"):
         from . import osd
         alive = osd.ctl().proc.alive()
-        back.append(_row("osd", "游戏内显示", "ok" if alive else ("bad" if paths.IS_WIN else "off"),
-                         ("开着 · " + ("只在玩游戏时显示" if S.get("osdWhen") != "always" else "一直显示")) if alive
-                         else ("没起来：看 data\\logs\\osd.log" if paths.IS_WIN else "只在 Windows 上能用"), {"label": "去看看", "sec": "osd"}))
+        if not alive and paths.IS_WIN and now - monitor.T0 < GRACE["osd"]:
+            back.append(_live(_row("osd", "游戏内显示", "start", ""), "start", f"开机后正在拉起 · 第 {int(now - monitor.T0)} 秒", int(now - monitor.T0), None))
+        else:
+            back.append(_row("osd", "游戏内显示", "ok" if alive else ("bad" if paths.IS_WIN else "off"),
+                             ("开着 · " + ("只在玩游戏时显示" if S.get("osdWhen") != "always" else "一直显示")) if alive
+                             else ("没起来：看 data\\logs\\osd.log" if paths.IS_WIN else "只在 Windows 上能用"),
+                             {"label": "重启", "do": "osd"} if paths.IS_WIN else {"label": "去看看", "sec": "osd"}))
     else:
         back.append(_row("osd", "游戏内显示", "off", "没开（设置 › 游戏内显示）", {"label": "去打开", "sec": "osd"}))
     qu = svc.get("queue", {})
@@ -203,12 +255,18 @@ async def view():
     kpi["mem"] = {"st": mst, "v": str(n_mem), "unit": "段", "sub": f"说明书 {n_doc} 段已建索引"}
 
     groups = [{"name": "大脑", "items": brain}, {"name": "云端", "items": cloud}, {"name": "通道", "items": chan}, {"name": "后台", "items": back}]
-    cnt = {"ok": 0, "idle": 0, "warn": 0, "bad": 0, "off": 0}
+    cnt = {"ok": 0, "idle": 0, "warn": 0, "bad": 0, "off": 0, "start": 0, "stuck": 0}
     for g in groups:
         for it in g["items"]:
             cnt[it["st"]] = cnt.get(it["st"], 0) + 1
-    bad = [it["name"] for g in groups for it in g["items"] if it["st"] == "bad"]
-    head = "全部正常" if not bad and not cnt["warn"] else ("缺：" + "、".join(n.split("（")[0] for n in bad[:4]) + ("……" if len(bad) > 4 else "")) if bad else f"{cnt['warn']} 项要注意"
+    bad = [it["name"] for g in groups for it in g["items"] if it["st"] in ("bad", "stuck")]
+    if bad:
+        head = "缺：" + "、".join(n.split("（")[0] for n in bad[:4]) + ("……" if len(bad) > 4 else "") if not cnt["stuck"] else \
+            f"{cnt['stuck']} 项卡住了" + (f"、{cnt['bad']} 项缺着" if cnt["bad"] else "")
+    elif cnt["start"]:
+        head = f"{cnt['start']} 项启动中"
+    else:
+        head = "全部正常" if not cnt["warn"] else f"{cnt['warn']} 项要注意"
     ready, total = sum(1 for v in chk.values() if v.get("st") == "ok"), len(chk) or 14
     kpi["prep"] = {"st": "ok" if ready >= total else "warn", "v": str(ready), "unit": f"/ {total} 项", "p": round(ready / total, 3),
                    "sub": "全部就绪" if ready >= total else f"缺 {total - ready} 项 · 去补齐"}

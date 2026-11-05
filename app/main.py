@@ -316,6 +316,25 @@ async def agent_state():
     return await agentstate.view()
 
 
+@app.post("/api/agent/restart/{k}")
+async def agent_restart(k: str):
+    """Agent 状态里「卡住了」的那一项点「重启」：只重启我们自己开的进程（按 PID 停）。"""
+    if k == "model":
+        await M.restart_server()
+    elif k == "kev":
+        M.kevp.stop()
+        await M.ensure_kev(wait=False)
+    elif k == "qq":
+        await BOT.restart()
+    elif k == "osd":
+        osd.ctl().proc.stop()          # 后台每 4 秒看一眼，没在跑就拉起来
+    else:
+        raise HTTPException(404, "这一项不能从这里重启")
+    name = {"model": "本地模型服务", "kev": "Kev", "qq": "QQ 通道", "osd": "游戏内显示"}[k]
+    feed.add(f"你在 Agent 状态里点了重启：{name}", job="Agent 状态")
+    return {"ok": True}
+
+
 @app.get("/api/hw")
 async def get_hw():
     return await hw.sample()
@@ -340,6 +359,12 @@ async def brains():
 @app.get("/api/report")
 def report():
     return reports.report()
+
+
+@app.get("/api/wishes")
+def wishes():
+    """你问过「能不能加这个功能」的那些（最新的在前），开发时看。"""
+    return list(reversed(db.kv_get("wishes", []) or []))
 
 
 # ---------------- 事件 ----------------

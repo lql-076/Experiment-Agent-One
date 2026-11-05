@@ -9,6 +9,8 @@
 - 后端停了（点了「退出 Agent」或者后端出错），这个窗口几秒内自己关掉
 - 同时只开一个；再启动一次就把已经开着的窗口拿到前面
 - 任务栏用自己的图标（ui/icon.ico）
+- v2.0：生图、配音、设置这些工具点了另开一个独立窗口（open_tool），能拖到另一块屏；每个工具同时只开一个，
+  再点就把它拿到前面；每个工具窗口的大小、位置、置顶各记各的（data/window.json 的 tools）
 
 贴靠那套装不上时，退回老办法（网页自己挪窗口）；pywebview 整个用不了时退出码 3，后端改用 Edge 应用模式。
 """
@@ -26,6 +28,10 @@ TITLE = "Agent 主控台"
 STATE = paths.DATA / "window.json"
 MUTEX = "Local\\AgentMainWindow"
 ICON = paths.UI / "icon.ico"
+TOOLS = {"img": ("生图", 1280, 800), "tts": ("配音", 1240, 800), "events": ("事件", 1120, 780), "monitor": ("后台", 1120, 780),
+         "brains": ("大脑", 1120, 780), "reports": ("报告", 1040, 780), "settings": ("设置", 1160, 840), "docs": ("说明", 1160, 840)}
+WINS = {}          # 开着的工具窗口：key → webview.Window
+ROOT_ST = {}       # data/window.json 的全部内容（主窗口 + tools）
 
 
 def _load():
@@ -68,11 +74,12 @@ def _backend_alive() -> bool:
 
 
 class Api:
-    """界面里通过 window.pywebview.api 调用。只开放这几个动作。"""
+    """界面里通过 window.pywebview.api 调用。只开放这几个动作。主窗口和每个工具窗口各有一个（key 区分）。"""
 
-    def __init__(self, st):
+    def __init__(self, st, key="main"):
         self._w = None
         self._st = st
+        self._key = key
         self._frame = None      # winframe.Frame，装上了才有
         self._last = 0.0
 
@@ -87,7 +94,44 @@ class Api:
 
     def state(self):
         f = self._frame
-        return {"full": bool(self._st.get("full")), "max": bool(f and f.zoomed()), "native": bool(f)}
+        return {"full": bool(self._st.get("full")), "max": bool(f and f.zoomed()), "native": bool(f),
+                "tool": self._key if self._key != "main" else "", "top": bool(self._st.get("top"))}
+
+    def open_tool(self, key):
+        """打开一个工具窗口（已经开着就拿到前面）。"""
+        key = str(key)
+        if key not in TOOLS:
+            return False
+        w = WINS.get(key)
+        if w is not None:
+            try:
+                w.restore()
+                w.show()
+                if paths.IS_WIN and w.native is not None:
+                    self._bring(w)
+                return True
+            except Exception:
+                WINS.pop(key, None)
+        threading.Thread(target=open_tool_window, args=(key,), daemon=True).start()
+        return True
+
+    def _bring(self, w):
+        import ctypes
+        try:
+            h = int(w.native.Handle.ToInt64())
+            ctypes.windll.user32.SetForegroundWindow(h)
+        except Exception:
+            pass
+
+    def set_top(self, on):
+        """工具窗口置顶（钉住）：比如生图窗口放在竖屏上一直看得到。"""
+        self._st["top"] = bool(on)
+        try:
+            self._w.on_top = bool(on)
+        except Exception:
+            pass
+        _save(ROOT_ST)
+        return self.state()
 
     def toggle_fullscreen(self):
         on = not self._st.get("full")
@@ -96,7 +140,7 @@ class Api:
             self._ui(lambda: self._frame.set_full(on))
         else:
             self._w.toggle_fullscreen()
-        _save(self._st)
+        _save(ROOT_ST)
         return self.state()
 
     def toggle_max(self):
@@ -148,7 +192,33 @@ class Api:
     def _save_soon(self):
         if time.time() - self._last > 0.5:
             self._last = time.time()
-            _save(self._st)
+            _save(ROOT_ST)
+
+
+def open_tool_window(key):
+    """新开一个工具窗口：地址是主界面加 ?tool=key，界面只显示这一个工具（自己的标题栏：拖动、置顶、收起、关掉）。"""
+    import webview
+    name, dw, dh = TOOLS[key]
+    st = ROOT_ST.setdefault("tools", {}).setdefault(key, {})
+    api = Api(st, key)
+    w, h = max(int(st.get("w") or dw), 640), max(int(st.get("h") or dh), 480)
+    opts = dict(title=f"{name} · Agent", url=f"{URL}/?tool={key}", width=w, height=h, min_size=(640, 480), frameless=True, easy_drag=False,
+                background_color="#0a0a0b", js_api=api, text_select=True, on_top=bool(st.get("top")))
+    if st.get("x") is not None and st.get("y") is not None:
+        opts.update(x=int(st["x"]), y=int(st["y"]))
+    win = webview.create_window(**opts)
+    api._w = win
+    WINS[key] = win
+    win.events.resized += api._on_resized
+    win.events.moved += api._on_moved
+    win.events.closed += lambda: WINS.pop(key, None)
+
+    def shown():
+        _native(api)
+        if st.get("max") and api._frame:
+            api._ui(api._frame.toggle_max)
+    win.events.shown += shown
+    return win
 
 
 def _watch_backend(win):
@@ -159,6 +229,11 @@ def _watch_backend(win):
         time.sleep(2)
         fails = 0 if _backend_alive() else fails + 1
         if fails >= 3:
+            for w in list(WINS.values()):
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
             try:
                 win.destroy()
             finally:
@@ -197,10 +272,13 @@ def main():
         print("pywebview 用不了：", e, file=sys.stderr)
         return 3
     st = _load()
+    ROOT_ST.clear()
+    ROOT_ST.update(st)
+    st = ROOT_ST
     w, h = max(int(st.get("w") or 1600), 640), max(int(st.get("h") or 960), 480)
     api = Api(st)
     opts = dict(title=TITLE, url=URL, width=w, height=h, min_size=(640, 480), frameless=True, easy_drag=False,
-                background_color="#05131a", js_api=api, text_select=True)
+                background_color="#0a0a0b", js_api=api, text_select=True)
     if st.get("x") is not None and st.get("y") is not None:
         opts.update(x=int(st["x"]), y=int(st["y"]))
     win = webview.create_window(**opts)

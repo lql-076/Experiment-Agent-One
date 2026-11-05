@@ -31,6 +31,7 @@ ERRORS = {
 class QQ:
     def __init__(self):
         self.status, self.detail = "off", "未启动"
+        self.since = 0.0                # 从什么时候开始连（连着失败也不重算），Agent 状态据此判「启动中 / 卡住了」
         self.token, self.token_exp = "", 0.0
         self.session, self.seq = None, None
         self.task = None
@@ -144,6 +145,8 @@ class QQ:
                 await asyncio.sleep(10)
                 continue
             try:
+                if self.status != "connecting":
+                    self.since = time.time()
                 self.status, self.detail = "connecting", "正在连接"
                 async with httpx.AsyncClient(timeout=10) as c:
                     g = await c.get(f"{self.api}/gateway", headers=await self._headers())

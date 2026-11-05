@@ -4,6 +4,7 @@
 3. 换它重做：同一句话换个去向再做一遍，记下是重做哪一条、原来那条记一次纠正
 4. 隐私的事换到云端：不确认就 409，确认了才发
 用法：python dev/test_route.py（要先 dev/serve.sh start）"""
+import json
 import sys
 import time
 
@@ -85,6 +86,46 @@ try:
     print("5. 不经过模型的快捷处理（v1.7.0 起这里会报错，v1.8.2 修）")
     ev = chat("记住我喜欢喝冰美式")
     check(ev.get("label") == "记住" and "记下了" in (ev.get("reply") or ""), f"「记住……」直接写进记忆（{ev.get('label')}：{(ev.get('reply') or '')[:20]}）")
+
+    print("6. 每一步带时间，两票各投给谁写成单独的步骤（v2.0）")
+    ev = chat("给我讲讲黑洞是怎么形成的")
+    st = ev.get("steps") or []
+    names = [s[0] for s in st]
+    check("语义路由" in names and "Kev" in names, f"步骤里有「语义路由」「Kev」两行：{names[:5]}")
+    check(all(len(s) >= 3 and isinstance(s[2], (int, float)) for s in st), "每一步都带着离收到过了多少秒（第三项）")
+    check(all(st[i][2] <= st[i + 1][2] for i in range(len(st) - 1)), "时间是往后走的")
+    kv = dict((s[0], s[1]) for s in st)
+    check("%" in kv.get("Kev", "") and "没投票" not in kv.get("Kev", ""), f"Kev 投了票：{kv.get('Kev')}")
+
+    print("7. 只有一票：不给满分，写清楚另一票为什么没投")
+    one = kv.get("语义路由", "").startswith("没投票")          # 测试环境默认不起本地模型服务：语义路由投不了，只有 Kev 一票
+    if one:
+        check("只有一票" in (ev.get("why") or "") and "语义路由没投票" in ev["why"], f"为什么里写了只有一票、哪一票没投：{(ev.get('why') or '')[:50]}")
+        check(max((ev.get("s") or {}).values() or [0]) <= 80, f"最高的分数不超过 80%：{ev.get('s')}")
+    mode0 = httpx.get(B + "/api/settings", timeout=10).json()["settings"]["kevMode"]
+    put(kevMode="off")
+    ev = chat("给我讲讲黑洞是怎么形成的")
+    kv = dict((s[0], s[1]) for s in ev.get("steps") or [])
+    check(kv.get("Kev", "").startswith("没投票") and "关着" in kv.get("Kev", ""), f"Kev 关掉后，那一行写了没投票的原因：{kv.get('Kev')}")
+    if one:
+        check("简单规则" in (ev.get("why") or ""), f"两票都没有：按简单规则判，为什么里写着：{(ev.get('why') or '')[-30:]}")
+    else:
+        check("只有一票" in (ev.get("why") or ""), f"只剩语义路由一票：为什么里写了只有一票：{(ev.get('why') or '')[:40]}")
+    put(kevMode=mode0)
+
+    print("8. 问能不能给 agent 加功能：老实说要改代码、记下来，不交给本地小脑")
+    n0 = len(httpx.get(B + "/api/wishes", timeout=10).json())
+    ev = chat("能不能给你加一个导出聊天记录的功能？")
+    names = [s[0] for s in ev.get("steps") or []]
+    check("记进想要的功能" in names, f"步骤里有「记进想要的功能」：{names}")
+    check(ev.get("to") == "ds" or "交给 DeepSeek" in names, f"交给了 DeepSeek（to={ev.get('to')}）")
+    w = httpx.get(B + "/api/wishes", timeout=10).json()
+    check(len(w) == n0 + 1 and "导出聊天记录" in w[0]["text"] and w[0]["event"] == ev["id"], "记进了「想要的功能」（/api/wishes 最新一条）")
+    last = httpx.get("http://127.0.0.1:8099/__last", timeout=10).json()["chat"] or {}
+    u = json.dumps(last.get("messages", [])[-1:], ensure_ascii=False)
+    check("改代码" in u and "系统限制" in u, "发给 DeepSeek 的消息里带着「老实说要改代码、别说系统限制」的提示")
+    ev = chat("帮我做个今天的待办清单")
+    check("记进想要的功能" not in [s[0] for s in ev.get("steps") or []], "普通的「帮我做个……」不算加功能")
 finally:
     put(strongOn=True, strongName="")
 
