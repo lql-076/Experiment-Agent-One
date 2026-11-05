@@ -38,7 +38,7 @@ with sync_playwright() as pw:
     p.evaluate("var b=document.getElementById('boot'); if (b.classList.contains('on')) b.click()")
     p.evaluate("localStorage.removeItem('agentTTS.v1'); TTS.form=null")
     p.evaluate("api('PUT', '/api/settings', {ttsOut: 'dev/.run/配音输出-测试'})")     # 测试存的配音放 dev/.run，不放进「配音输出」
-    p.click('.nav[data-view="tts"]')
+    p.evaluate("goView('tts')")
     p.wait_for_selector("#ttsText")
     p.fill("#ttsText", "大家好，欢迎回来。今天聊三个工具！\n\n第一个是本地配音。")
     check("字" in p.inner_text("#ttsCount"), "贴了文案：显示字数和大概多长：" + p.inner_text("#ttsCount"))
@@ -252,14 +252,18 @@ with sync_playwright() as pw:
     p.evaluate("api('PUT', '/api/secrets', {k: 'blKey', v: ''}).then(function (j) { SECRETS = j.hints; return ttsLoad(); }).then(ttsSync)")
     p.wait_for_selector('[data-act="gokey"]', timeout=8000)
     check(p.is_disabled('[data-act="gen"]') and "还没填百炼 API Key" in p.inner_text("#ttsGen"), "没填百炼 Key：提示去 设置 › 云端，生成按钮灰着")
-    p.click('[data-act="gokey"]')
-    p.wait_for_selector("#f-blKey", timeout=5000)
-    p.fill("#f-blKey", "sk-test-0000")
-    p.click('[data-secret-save="blKey"]')
-    p.wait_for_function("(document.getElementById('f-blKey') || {}).placeholder && document.getElementById('f-blKey').placeholder.indexOf('0000') >= 0", timeout=8000)
-    check("••••0000" in p.get_attribute("#f-blKey", "placeholder") and p.input_value("#f-blKey") == "", "设置 › 云端 填百炼 Key、保存：只显示最后 4 位")
-    check(p.locator("#f-blModel").input_value() == "qwen-audio-3.1-tts-plus" and p.locator("#f-blPrice").count() == 1 and p.locator("#f-blMax").count() == 1,
+    with p.expect_popup() as pop:                 # v2.0：「去 设置 › 云端」打开设置窗口（?tool=settings），跳到云端
+        p.click('[data-act="gokey"]')
+    s = pop.value
+    s.wait_for_selector("#f-blKey", timeout=8000)
+    check("tool=settings" in s.url and s.evaluate("S.sec") == "cloud", "点「去 设置 › 云端」：弹出设置窗口，直接在云端那一块")
+    s.fill("#f-blKey", "sk-test-0000")
+    s.click('[data-secret-save="blKey"]')
+    s.wait_for_function("(document.getElementById('f-blKey') || {}).placeholder && document.getElementById('f-blKey').placeholder.indexOf('0000') >= 0", timeout=8000)
+    check("••••0000" in s.get_attribute("#f-blKey", "placeholder") and s.input_value("#f-blKey") == "", "设置 › 云端 填百炼 Key、保存：只显示最后 4 位")
+    check(s.locator("#f-blModel").input_value() == "qwen-audio-3.1-tts-plus" and s.locator("#f-blPrice").count() == 1 and s.locator("#f-blMax").count() == 1,
           "设置 › 云端 还能改模型名（默认 Plus）、单价、一次最多发多少字")
+    s.close()
     p.evaluate("goView('tts')")
     p.wait_for_selector("#ttsEng")
     p.click('#ttsEng [data-eng="local"]')
@@ -279,6 +283,9 @@ with sync_playwright() as pw:
     check(True, "点「安装配音」：出现进度条")
     p.wait_for_selector("#ttsInst .tts-msg.ok", timeout=30000)
     check("装好了" in p.inner_text("#ttsInst"), "装完了：显示「装好了」")
+    ks = p.evaluate("[].map.call(document.querySelectorAll('#ttsInst .tti-steps li'), function (x) { return x.className; })")
+    check(len(ks) >= 3 and "k-doing" not in ks and set(ks) <= {"k-new", "k-skip", "k-fail"} and p.locator("#ttsInst .tti-sum em").count() >= 1,
+          f"装完了：每一步一行，写着新装还是跳过（{len(ks)} 步：{sorted(set(ks))}）")
     p.screenshot(path=f"{OUT}/tts-install.png")
     p.evaluate("S.sec='auto'; renderSettings(); goView('settings')")
     p.wait_for_selector("#autoSw", timeout=5000)

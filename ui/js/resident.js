@@ -85,7 +85,9 @@ var RTASK = { list: [], timer: null, busy: false };
 function rtDur(s) { s = Math.round(s || 0); return s >= 3600 ? Math.floor(s / 3600) + ' 小时 ' + Math.round(s % 3600 / 60) + ' 分' : s >= 60 ? Math.floor(s / 60) + ' 分 ' + pad(s % 60) + ' 秒' : s + ' 秒'; }
 function rtSpeed(b) { return b >= 1e6 ? (b / 1e6).toFixed(1) + ' MB/s' : b >= 1e3 ? Math.round(b / 1e3) + ' KB/s' : ''; }
 function renderTasks(list) {
-  RTASK.list = list || [];
+  RTASK.list = (list || []).slice();
+  var lv = typeof nowLive === 'function' && !TOOL ? nowLive() : null;          // 正在处理的那句话也算（v2.0：常驻时正在跑的都要看得到）
+  if (lv) { var nd = nowNodes(lv), ac = nd.filter(function (n) { return n.st === 'act'; })[0]; RTASK.list.unshift({ k: 'chat', name: '对话 · ' + String(lv.text).slice(0, 24), phase: (STEP_DOING[ac ? ac.k : ''] || '处理中') + ' · 交给 ' + routeName(lv), pct: null }); }
   var el = $('#rTasks'); if (!el) return;
   var was = el.hidden;
   el.hidden = !RTASK.list.length;

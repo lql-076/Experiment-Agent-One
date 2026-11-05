@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import urllib.request
+from urllib.parse import quote
 
 from . import paths
 
@@ -28,9 +29,11 @@ TITLE = "Agent 主控台"
 STATE = paths.DATA / "window.json"
 MUTEX = "Local\\AgentMainWindow"
 ICON = paths.UI / "icon.ico"
-TOOLS = {"img": ("生图", 1280, 800), "tts": ("配音", 1240, 800), "events": ("事件", 1120, 780), "monitor": ("后台", 1120, 780),
-         "brains": ("大脑", 1120, 780), "reports": ("报告", 1040, 780), "settings": ("设置", 1160, 840), "docs": ("说明", 1160, 840)}
+# 工具窗口的默认大小：都按 1600×975 的设计尺寸等比缩放（界面里 autoScale），这个大小下字是 0.9 倍；屏幕大就按屏幕的七成八放大
+TOOLS = {k: (v, 1440, 880) for k, v in {"img": "生图", "tts": "配音", "events": "事件", "monitor": "后台", "brains": "大脑", "reports": "报告",
+                                         "settings": "设置", "docs": "说明"}.items()}
 WINS = {}          # 开着的工具窗口：key → webview.Window
+MAIN = {}          # 主窗口（工具窗口里点「去对话」时拿到前面）
 ROOT_ST = {}       # data/window.json 的全部内容（主窗口 + tools）
 
 
@@ -97,9 +100,9 @@ class Api:
         return {"full": bool(self._st.get("full")), "max": bool(f and f.zoomed()), "native": bool(f),
                 "tool": self._key if self._key != "main" else "", "top": bool(self._st.get("top"))}
 
-    def open_tool(self, key):
-        """打开一个工具窗口（已经开着就拿到前面）。"""
-        key = str(key)
+    def open_tool(self, key, arg=""):
+        """打开一个工具窗口（已经开着就拿到前面）。arg 是「跳到哪一块」（JSON，比如设置的某个分区），已经开着的就告诉它。"""
+        key, arg = str(key), str(arg or "")[:400]
         if key not in TOOLS:
             return False
         w = WINS.get(key)
@@ -109,11 +112,29 @@ class Api:
                 w.show()
                 if paths.IS_WIN and w.native is not None:
                     self._bring(w)
+                if arg:
+                    w.evaluate_js(f"toolArg({json.dumps(arg)})")
                 return True
             except Exception:
                 WINS.pop(key, None)
-        threading.Thread(target=open_tool_window, args=(key,), daemon=True).start()
+        threading.Thread(target=open_tool_window, args=(key, arg), daemon=True).start()
         return True
+
+    def open_main(self, arg=""):
+        """工具窗口里点「去对话」这类：把主窗口拿到前面（arg：要不要展开对话）。"""
+        w = MAIN.get("w")
+        if w is None:
+            return False
+        try:
+            w.restore()
+            w.show()
+            if paths.IS_WIN and w.native is not None:
+                self._bring(w)
+            if arg:
+                w.evaluate_js(f"mainArg({json.dumps(str(arg)[:400])})")
+            return True
+        except Exception:
+            return False
 
     def _bring(self, w):
         import ctypes
@@ -195,14 +216,21 @@ class Api:
             _save(ROOT_ST)
 
 
-def open_tool_window(key):
+def open_tool_window(key, arg=""):
     """新开一个工具窗口：地址是主界面加 ?tool=key，界面只显示这一个工具（自己的标题栏：拖动、置顶、收起、关掉）。"""
     import webview
     name, dw, dh = TOOLS[key]
     st = ROOT_ST.setdefault("tools", {}).setdefault(key, {})
     api = Api(st, key)
+    if not st.get("w"):
+        try:
+            sc = webview.screens[0]
+            k = max(1.0, min(sc.width * 0.78 / dw, sc.height * 0.78 / dh))
+            dw, dh = int(dw * k), int(dh * k)
+        except Exception:
+            pass
     w, h = max(int(st.get("w") or dw), 640), max(int(st.get("h") or dh), 480)
-    opts = dict(title=f"{name} · Agent", url=f"{URL}/?tool={key}", width=w, height=h, min_size=(640, 480), frameless=True, easy_drag=False,
+    opts = dict(title=f"{name} · Agent", url=f"{URL}/?tool={key}" + (f"&arg={quote(arg)}" if arg else ""), width=w, height=h, min_size=(640, 480), frameless=True, easy_drag=False,
                 background_color="#0a0a0b", js_api=api, text_select=True, on_top=bool(st.get("top")))
     if st.get("x") is not None and st.get("y") is not None:
         opts.update(x=int(st["x"]), y=int(st["y"]))
@@ -283,6 +311,7 @@ def main():
         opts.update(x=int(st["x"]), y=int(st["y"]))
     win = webview.create_window(**opts)
     api._w = win
+    MAIN["w"] = win
     win.events.resized += api._on_resized
     win.events.moved += api._on_moved
 

@@ -1,0 +1,30 @@
+/* @id dark
+   @name 极简 · 深色
+   @desc 近黑的底、一点橙色。没有光斑、没有发光，字大、留白多：一眼看清现在在干什么、后台在跑什么。
+   @order 1
+   @fx reveal press
+   v2.0 起只有深色、浅色这两套（作者 11-05：原来的三套花里胡哨，换成极简、高效）。
+   想再加一套：复制这个文件、改名（只用英文小写），把文件里所有 "dark" 换成新名字，改 @name、@desc 和颜色，刷新界面就出现。
+*/
+[data-theme="dark"]{
+  color-scheme:dark;
+  --ring-segs:60;--ring-fill:.62;--ring-cap:butt;--ring-ticks:60;--ring-tick-w:1.2;--ring-tick-sw:4;--ring-arc-w:4;--ring-sec-r:4;--date-style:cn;--res-labels:zh;
+  --bg:#0a0a0b;--bg2:#111113;--bg3:#18181b;--bg4:#222226;
+  --line:#1f1f23;--line2:#2e2e34;
+  --text:#ededef;--text2:#a8a8b0;--text3:#8b8b94;
+  --accent:#ff5a1f;--accent2:#ff8a5c;--grad:linear-gradient(90deg,#ff5a1f,#ff7a3d);
+  --ring1:#ff5a1f;--ring2:#ffb08a;
+  --c-local:#34d399;--c-neu:#facc15;--c-ds:#60a5fa;--c-cl:#c084fc;
+  --h1:#60a5fa;--h2:#34d399;--h3:#facc15;--h4:#fb923c;--h5:#c084fc;--ok:#34d399;--bad:#f87171;--run:#60a5fa;--warn:#facc15;
+  --card:#111113;--cardb:#1f1f23;--shadow:0 2.5rem 7.5rem rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.09);--scrim:rgba(0,0,0,.55);
+  --rail:#0a0a0b;--railw:5.25rem;--r:1.125rem;--rs:.625rem;
+  --fc:var(--mono);--fcw:400;--fn:var(--mono);
+  --ease:cubic-bezier(.2,.8,.2,1);--spring:cubic-bezier(.2,.9,.25,1);--dur:.2s;--lt:none;--ls:.02em;
+}
+/* 滚动触发：轻轻往上浮出来 */
+html[data-theme="dark"] .fx-in{animation:mnIn .42s var(--ease) var(--fxd,0ms) both}
+/* 点击：一圈很淡的波纹 */
+html[data-theme="dark"] .fx-pbox i{background:color-mix(in srgb,var(--text) 14%,transparent)}
+/* 设置 › 外观 里的小预览 */
+.tprev[data-theme="dark"]{background:#0a0a0b;color:#ededef}
+.tprev[data-theme="dark"] .tp-bar{background:#ff5a1f}

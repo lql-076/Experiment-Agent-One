@@ -13,6 +13,7 @@ from collections import deque
 from . import paths
 
 FEED = deque(maxlen=600)
+DONE = deque(maxlen=20)        # 刚做完的活（v2.0，主页「刚做完」用）：生图一批、配音一段……；对话的事件另有记录
 _lock = threading.Lock()
 _st = {"seq": 0, "ver": 0}
 FILE = paths.LOGS / "report.jsonl"
@@ -55,6 +56,15 @@ def add(text, kind="info", job="", step="", key=None, prog=None):
         if kind != "prog":
             _save(e)
         return e
+
+
+def done(name, who="", sec=None, cost="", tool=""):
+    """记一件做完的活（不进日志文件，只给主页看；后端重启就清空）。"""
+    DONE.appendleft({"ts": time.time(), "name": str(name)[:80], "who": who, "sec": round(sec, 1) if sec is not None else None, "cost": cost, "tool": tool})
+
+
+def done_list(n=8):
+    return list(DONE)[:n]
 
 
 def finish(key, text, kind="ok"):

@@ -1,5 +1,6 @@
 """一页内容一屏放下（作者的规矩：闲下来"一眼看"的页，信息不靠鼠标滚轮翻）。
-每个页面、每个设置分区，横屏 1680×1000 和竖屏 1080×1860 都看一遍：除了本来就是长列表的地方
+v2.0 起主窗口只有主页（横屏 1680×1000、竖屏 1080×1860，竖屏再把字调到 130%）；工具都是独立窗口（?tool=），
+按工具窗口的默认大小 1440×880 和竖屏 1080×1860 看每个工具、每个设置分区：除了本来就是长列表的地方
 （聊天记录、事件列表、后台日志、说明文档、报告里的两张清单、事件的回复正文、配音的文案框和时间轴、生图页里自己滚的几块：清单、出好的图、历史、模板、提示词框；配音页本地、云端两种引擎都看），别的地方都不该出现滚动。
 要动手操作的页可以滚（作者说的：用它时手本来就在鼠标上），列在 SCROLL_OK 里，不查。
 用法：python dev/ui/fit.py 截图文件夹（要先 dev/serve.sh start）"""
@@ -11,7 +12,7 @@ from common import launch
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "dev/.run/shots"
 SCROLL_OK = {"prep", "remind", "models", "cloud"}   # 整备、提醒列表、本地模型（v1.8.7 加了「安装配音」）、云端（v1.8.11 加了百炼 Key）：要动手操作的页，可以上下滚（v1.8.1 起）
-LISTS = "#chatLog, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2, #ttsText, .tts-tl, .tts-vb, .fg-scroll"   # .tts-vb：配音页的音色面板（音色列表、设计、复刻表单，v1.8.12）；.fg-scroll：生图页里自己滚的几块（v1.8.16）
+LISTS = "#chatLog, .hm-pop, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2, #ttsText, .tts-tl, .tts-vb, .fg-scroll"   # .tts-vb：配音页的音色面板（音色列表、设计、复刻表单，v1.8.12）；.fg-scroll：生图页里自己滚的几块（v1.8.16）
 JS = """(lists) => { const out = []; document.querySelectorAll('#content *, #content').forEach(el => {
   if (!el.offsetParent && el.id !== 'content') return;
   if (el.closest(lists)) return;
@@ -19,53 +20,72 @@ JS = """(lists) => { const out = []; document.querySelectorAll('#content *, #con
   if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 4 && el.clientHeight > 120)
     out.push((el.id ? '#' + el.id : el.className.toString().split(' ')[0]) + ' ' + el.clientHeight + '/' + el.scrollHeight); });
   return out; }"""
+TOOLS = [("view", v) for v in ("events", "monitor", "brains", "reports", "tts", "tts-cloud", "img", "img-char")]
 bad, errs = [], []
+
+
+def look(p, w, h, name, shot):
+    over = p.evaluate(JS, LISTS)
+    print(("  ✓ " if not over else "  ✗ ") + f"{w}×{h} {name}" + (f"：要滚 {over}" if over else ""), flush=True)
+    if over:
+        bad.append(f"{w}×{h} {name}")
+        p.screenshot(path=f"{OUT}/fit-{w}-{shot}.png")
+
+
+def start(p, url):
+    p.on("pageerror", lambda e: errs.append(str(e)))
+    p.goto(url)
+    p.wait_for_timeout(1500)
+    p.wait_for_function("!S.checking", timeout=30000)
+    p.evaluate("var b=document.getElementById('boot'); if (b.classList.contains('on')) b.click()")
+
+
 with sync_playwright() as pw:
     b = launch(pw)
+    # 主窗口：主页
     for w, h in ((1680, 1000), (1080, 1860)):
         p = b.new_page(viewport={"width": w, "height": h})
-        p.on("pageerror", lambda e: errs.append(str(e)))
-        p.goto("http://127.0.0.1:8765/")
-        p.wait_for_timeout(1500)
-        p.wait_for_function("!S.checking", timeout=30000)
-        p.evaluate("var b=document.getElementById('boot'); if (b.classList.contains('on')) b.click()")
-        targets = [("view", v) for v in ("chat", "home", "events", "monitor", "brains", "reports", "tts", "tts-cloud", "img")]
-        targets += [("sec", s) for s in p.evaluate("SECTIONS.map(function (s) { return s.id; })") if s not in SCROLL_OK]
-        for kind, k in targets:
-            if k.startswith("tts"):                     # 配音页的两种引擎都看（v1.8.11 加了百炼云端；只在这页切，不存进设置）
-                p.evaluate("TTS.eng='" + ("cloud" if k == "tts-cloud" else "local") + "'; if (TTS.st) TTS.st.engine=TTS.eng; goView('tts'); if (TTS.st) renderTTS()")
-            else:
-                p.evaluate(f"goView('{k}')" if kind == "view" else f"S.sec='{k}'; renderSettings(); goView('settings')")
-            p.wait_for_timeout(900)
-            over = p.evaluate(JS, LISTS)
-            name = k if kind == "view" else "设置 › " + k
-            print(("  ✓ " if not over else "  ✗ ") + f"{w}×{h} {name}" + (f"：要滚 {over}" if over else ""), flush=True)
-            if over:
-                bad.append(f"{w}×{h} {name}")
-                p.screenshot(path=f"{OUT}/fit-{w}-{k}.png")
-        if h > w:                                      # 竖屏把字调大（设置 › 外观 › 文字大小 130%）：对话页也不该要滚（v1.8.2）
-            for k in ("chat", "home"):
-                p.evaluate(f"S.set.scale=130; applyScale(); goView('{k}')")
-                p.wait_for_timeout(1200)
-                over = p.evaluate(JS, LISTS)
-                print(("  ✓ " if not over else "  ✗ ") + f"{w}×{h} 字 130% {k}" + (f"：要滚 {over}" if over else ""), flush=True)
-                if over:
-                    bad.append(f"{w}×{h} 字 130% {k}")
-                    p.screenshot(path=f"{OUT}/fit-{w}-130-{k}.png")
-            # 竖屏对话页不能来回闪（v1.8.3）：模仿 Windows 占宽度的滚动条，连看 2 秒，布局（紧凑档、列数、状态区高度）不能变
-            p.add_style_tag(content="::-webkit-scrollbar{width:17px;height:17px}")
-            for sc in (100, 115, 130):
-                p.evaluate(f"S.set.scale={sc}; applyScale(); goView('chat')")
-                p.wait_for_timeout(1500)
-                seen = p.evaluate("""() => new Promise(r => { var out = []; var t = setInterval(function () {
-                    var d = $('#sideBody .ag-dash'), c = $('#sideBody .ag-cols'), cv = $('.chatv');
-                    out.push((d ? d.className : '') + '|' + (c ? c.dataset.c : '') + '|' + cv.style.getPropertyValue('--side-h'));
-                    if (out.length >= 20) { clearInterval(t); r(out); } }, 100); })""")
-                ok = len(set(seen)) == 1
-                print(("  ✓ " if ok else "  ✗ ") + f"{w}×{h} 字 {sc}% 对话页不来回闪" + ("" if ok else f"：{sorted(set(seen))}"), flush=True)
-                if not ok:
-                    bad.append(f"{w}×{h} 字 {sc}% 对话页来回闪")
+        start(p, "http://127.0.0.1:8765/")
+        p.wait_for_timeout(600)
+        look(p, w, h, "主页", "home")
+        if h > w:                                      # 竖屏把字调大（设置 › 外观 › 文字大小 130%）也不该要滚（v1.8.2）
+            p.evaluate("S.set.scale=130; applyScale(); homeFill()")
+            p.wait_for_timeout(1200)
+            look(p, w, h, "字 130% 主页", "130-home")
             p.evaluate("S.set.scale=100; applyScale()")
+        # 主页不能来回闪：模仿 Windows 占宽度的滚动条，连看 2 秒，每一块的大小不能变
+        p.add_style_tag(content="::-webkit-scrollbar{width:17px;height:17px}")
+        p.wait_for_timeout(600)
+        seen = p.evaluate("""() => new Promise(r => { var out = []; var t = setInterval(function () {
+            out.push([].map.call(document.querySelectorAll('.hm-card'), function (c) { var b = c.getBoundingClientRect(); return Math.round(b.width) + 'x' + Math.round(b.height); }).join(','));
+            if (out.length >= 20) { clearInterval(t); r(out); } }, 100); })""")
+        ok = len(set(seen)) == 1
+        print(("  ✓ " if ok else "  ✗ ") + f"{w}×{h} 主页不来回闪" + ("" if ok else f"：{sorted(set(seen))}"), flush=True)
+        if not ok:
+            bad.append(f"{w}×{h} 主页来回闪")
+        p.close()
+    # 工具窗口：每个工具、每个设置分区
+    for w, h in ((1440, 880), (1080, 1860)):
+        for kind, k in TOOLS:
+            tool = k.split("-")[0]
+            p = b.new_page(viewport={"width": w, "height": h})
+            start(p, "http://127.0.0.1:8765/?tool=" + tool)
+            if k.startswith("tts"):                     # 配音页的两种引擎都看（v1.8.11 加了百炼云端；只在这页切，不存进设置）
+                p.evaluate("TTS.eng='" + ("cloud" if k == "tts-cloud" else "local") + "'; if (TTS.st) TTS.st.engine=TTS.eng; if (TTS.st) renderTTS()")
+            if k.startswith("img"):                     # 生图的「角色」页（v2.0）和单张页都看
+                p.wait_for_timeout(800)
+                p.evaluate("imgTab('" + ("char" if k == "img-char" else "single") + "', true)")
+            p.wait_for_timeout(900)
+            look(p, w, h, "工具窗口 " + k, k)
+            p.close()
+        p = b.new_page(viewport={"width": w, "height": h})
+        start(p, "http://127.0.0.1:8765/?tool=settings")
+        for s in p.evaluate("SECTIONS.map(function (s) { return s.id; })"):
+            if s in SCROLL_OK:
+                continue
+            p.evaluate(f"S.sec='{s}'; renderSettings()")
+            p.wait_for_timeout(700)
+            look(p, w, h, "设置 › " + s, "set-" + s)
         p.close()
     b.close()
 print("JS 报错：", errs or "没有")

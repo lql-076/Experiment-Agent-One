@@ -7,7 +7,7 @@ with sync_playwright() as pw:
     p.on("pageerror", lambda e: errs.append(str(e)))
     p.goto("http://127.0.0.1:8765/"); p.wait_for_timeout(3500)
     p.evaluate("var b=document.getElementById('boot'); if (b.classList.contains('on')) b.click()"); p.wait_for_timeout(600)
-    p.evaluate("setTheme('abyss', 10, 10)"); p.wait_for_timeout(800)
+    p.evaluate("setTheme('dark', 10, 10)"); p.wait_for_timeout(800)
     p.evaluate("goView('settings')"); p.wait_for_timeout(400); p.evaluate("S.sec='cloud'; renderSettings()"); p.wait_for_timeout(800)
     print("tag:", p.evaluate("document.getElementById('f-dsModel').tagName"), p.evaluate("[...document.querySelectorAll('#f-dsModel option')].map(o=>o.textContent)"))
     p.select_option("#f-dsModel", "deepseek-chat"); p.wait_for_timeout(1500)

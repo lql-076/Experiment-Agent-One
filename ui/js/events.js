@@ -81,7 +81,7 @@ function syncFix() {
 }
 $('#view-events').addEventListener('click', function (ev) {
   var t = ev.target.closest('button'); if (!t) return;
-  if (t.dataset.goChat) { goView('chat'); return; }
+  if (t.dataset.goChat) { openView('chat'); return; }
   if (t.classList.contains('ev')) showEvent(+t.dataset.id);
   else if (t.dataset.filter) { S.filter = t.dataset.filter; applyFilter(); }
   else if (t.dataset.fix) {

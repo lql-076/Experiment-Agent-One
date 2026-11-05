@@ -611,8 +611,8 @@ $('#view-tts').addEventListener('click', function (ev) {
   if (act === 'gen') ttsGo(false);
   else if (act === 'same') ttsGo(true);
   else if (act === 'play') { var a = $('#ttsAudio'); if (a) { if (a.paused) { if (TTS.tryAu) TTS.tryAu.pause(); a.play().catch(function () {}); } else a.pause(); } }
-  else if (act === 'goinst') { S.sec = 'models'; renderSettings(); goView('settings'); }
-  else if (act === 'gokey') { S.sec = 'cloud'; renderSettings(); goView('settings'); }
+  else if (act === 'goinst') openSec('models');
+  else if (act === 'gokey') openSec('cloud');
   else if (act === 'reseed') { f.seed = ttsSeed(); ttsKeep(); $('#ttsSeed').value = f.seed; $$('#ttsVoice [data-voice]').forEach(function (b) { b.setAttribute('aria-pressed', 'false'); }); }
   else if (act === 'savevoice') {
     if (!f.name.trim() || !f.desc.trim()) { toast('起个名字、写好描述再存'); return; }
@@ -712,6 +712,14 @@ function ttsInstHTML() {
   } else if (i.st === 'fail') h += '<div class="tts-msg bad">上次没装完（退出码 ' + esc(i.code) + '）。再点一次会接着装；魔搭下不动就点「改从 hf-mirror 下」。原始输出：' + esc(i.log || '') + '</div>';
   else if (i.st === 'stop') h += '<div class="tts-msg">上次停下了，再点一次接着装。</div>';
   else if (i.st === 'ok') h += '<div class="tts-msg ok">装好了，左边点「配音」就能用。</div>';
+  /* 每一步一行（v2.0）：跳过的、这次新装的、正在做的、没成的，一眼看清（作者 10-28：写着「装过的跳过」，但看不出哪些跳过了、哪些新下的） */
+  var sts = i.steps || [], KW = { skip: '跳过', new: '新装', doing: '进行中', fail: '没成' };
+  if (sts.length) {
+    var cnt = {}; sts.forEach(function (x) { cnt[x.k] = (cnt[x.k] || 0) + 1; });
+    h += '<div class="tti-sum">' + ['new', 'skip', 'doing', 'fail'].filter(function (k) { return cnt[k]; }).map(function (k) { return '<em class="k-' + k + '">' + KW[k] + ' ' + cnt[k] + '</em>'; }).join('') + '</div>' +
+      '<ol class="tti-steps">' + sts.map(function (x) {
+        return '<li class="k-' + x.k + '"><i aria-hidden="true"></i><span title="' + esc(x.t) + '">' + esc(x.t) + (x.why ? ' · ' + esc(x.why) : '') + '</span><em>' + KW[x.k] + '</em></li>'; }).join('') + '</ol>';
+  }
   h += '<div class="help">约 16 GB：配音环境 5 GB + 两个配音模型各 4~5 GB + 时间轴对齐模型 1.8 GB（魔搭；云端配音也用它对时间轴）。装过的跳过、断了接着下，关掉界面也接着装，每一步在 后台 › 进展报告。备用：双击「安装配音.bat」。</div></div>' +
     '<div class="btnrow">' + (run ? '<button class="btn" data-tti="stop">停下</button>'
       : '<button class="btn primary" data-tti="go"' + (live ? '' : ' disabled') + '>' + (all ? '重新检查一遍' : i.st === 'fail' || i.st === 'stop' || some ? '接着装' : '安装配音') + '</button>' +

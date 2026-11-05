@@ -47,7 +47,7 @@ with sync_playwright() as pw:
     try:
         for w, h in ((1680, 1000), (1080, 1860)):
             p = open_page(b, w, h)
-            for th in ("abyss", "nebula", "ember"):
+            for th in ("dark", "light"):
                 p.evaluate(f"setTheme('{th}', 5, 5)")
                 p.wait_for_timeout(500)
                 p.evaluate("enterResident()")
@@ -62,7 +62,7 @@ with sync_playwright() as pw:
             p.close()
         for w, h in ((1080, 1860), (1680, 1000)):           # 字调到 130%（作者竖屏字比较大）：放不下就收紧格子，还是一屏
             p = open_page(b, w, h)
-            p.evaluate("setTheme('abyss', 5, 5); S.set.scale = 130; applyScale(); enterResident()")
+            p.evaluate("setTheme('dark', 5, 5); S.set.scale = 130; applyScale(); enterResident()")
             p.wait_for_selector('#rTasks .rtask', timeout=8000)
             p.wait_for_timeout(2500)
             r = p.evaluate(FIT)

@@ -140,5 +140,6 @@ function gotoTodo() {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
   };
-  if (S.view !== 'settings' || S.sec !== 'prep') { S.sec = 'prep'; renderSettings(); goView('settings'); setTimeout(show, 450); } else show();
+  if (S.view !== 'settings') { openSec('prep', 'todo'); return; }
+  if (S.sec !== 'prep') { S.sec = 'prep'; renderSettings(); setTimeout(show, 450); } else show();
 }

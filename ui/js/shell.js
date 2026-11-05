@@ -48,11 +48,13 @@ function applyLook() {
   root.dataset.perf = S.set.perf ? 'on' : 'off';
   syncStatus();
 }
-/* 界面随窗口放大：按 1680×1000（横屏）/ 960×1600（竖屏）的设计尺寸等比放大，所有尺寸都是 rem，一起变大 */
+/* 界面随窗口放大：按 1680×1000（横屏）/ 960×1600（竖屏）的设计尺寸等比放大，所有尺寸都是 rem，一起变大。
+   工具窗口（v2.0）没有侧栏、标题栏也矮，按 1600×975 / 900×1560 算，可以小到 0.8 倍（默认大小 1440×880 是 0.9 倍），这样每页的排版和以前在主窗口里一样 */
 function autoScale() {
-  if (S.set.autoScale === false) return 1;
-  var w = window.innerWidth, h = window.innerHeight;
-  var s = root.dataset.orient === 'portrait' ? Math.min(w / 960, h / 1600) : Math.min(w / 1680, h / 1000);
+  if (S.set.autoScale === false) return TOOL ? Math.max(0.8, Math.min(1, window.innerWidth / 1600, window.innerHeight / 975)) : 1;
+  var w = window.innerWidth, h = window.innerHeight, port = root.dataset.orient === 'portrait';
+  if (TOOL) return Math.max(0.8, Math.min(2.4, port ? Math.min(w / 900, h / 1560) : Math.min(w / 1600, h / 975)));
+  var s = port ? Math.min(w / 960, h / 1600) : Math.min(w / 1680, h / 1000);
   return Math.max(1, Math.min(2.4, s));
 }
 var lastFont = 0;
@@ -79,7 +81,7 @@ function setTheme(id, x, y) {
   if (S.set.theme === id) return;
   var apply = function () {
     S.set.theme = id; root.dataset.theme = id; save(); pushSet({ theme: id });
-    renderResident(); placeInd(true);
+    renderResident(); placeInd(true); if (typeof syncTone === 'function') syncTone();
     if (root.dataset.mode === 'resident') { cancelAnims($$('#resident .rc-svg, #resident .rc-arc, #resident .rc-glow, #resident .rc-ticks, #rcSec')); }
     $$('[data-theme-pick]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.themePick === id); });
   };
@@ -95,7 +97,7 @@ function setTheme(id, x, y) {
   toast('风格：' + themeName(id));
 }
 function cycleTheme(x, y) { var ids = THEMES.map(function (t) { return t.id; }); setTheme(ids[(ids.indexOf(S.set.theme) + 1) % ids.length], x, y); }
-$('#btnTheme').addEventListener('click', function (e) { var r = e.currentTarget.getBoundingClientRect(); cycleTheme(r.left + r.width / 2, r.top + r.height / 2); });
+$('#btnTheme').addEventListener('click', function (e) { var r = e.currentTarget.getBoundingClientRect(); toggleTone(r.left + r.width / 2, r.top + r.height / 2); });
 
 /* ================= 页面切换 ================= */
 function goView(v) {
@@ -103,6 +105,7 @@ function goView(v) {
   if (v === 'reports') fetchReport();
   if (S.view === v) return;
   closeBrain();
+  if (typeof chatClose === 'function') chatClose();
   if (S.view === 'monitor') stopMonitor();
   if (S.view === 'tts') ttsLeave();
   if (S.view === 'img') imgLeave();
@@ -111,7 +114,7 @@ function goView(v) {
     S.view = v;
     $$('.nav[data-view]').forEach(function (b) { if (b.dataset.view === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
     $$('.view').forEach(function (el) { el.classList.toggle('active', el.id === 'view-' + v); });
-    if (v === 'home' && D.homeDirty) { D.homeDirty = false; renderHome(true); }
+    if (v === 'home') { D.homeDirty = false; renderHome(true); }
     if (v === 'brains') renderBrains();
     if (v === 'reports') renderReports();
     if (v === 'events') renderEvents();
@@ -119,7 +122,6 @@ function goView(v) {
     if (v === 'docs') renderDocs();
     if (v === 'tts') { if (TTS.st) renderTTS(); ttsEnter(); }
     if (v === 'img') { if (IMG.st) renderImg(); imgEnter(); }
-    if (v === 'chat') { fillChatLog(true); fillSide(); setTimeout(function () { var i = $('#cIn'); if (i && !i.disabled) i.focus(); }, 60); }
     placeInd(usingVT);
   });
   if (!t) replay($('#view-' + v));

@@ -1,11 +1,10 @@
 'use strict';
-/* ================= 对话 =================
-   左边一条窄栏只放你和它的一来一回（QQ 上发的也在这里）；回复按 Markdown 显示。
-   每条回复下面一行小字：交给谁、把握、查了什么、花了多少——点它，右边换成"这条怎么处理的"（分数、为什么、每一步、来源、纠正）。
-   右边大块平时是「Agent 状态」仪表盘：健康环、一条消息怎么走（链路图）、一排大数字、每项一个图标卡片，缺的直接给按钮。
-   竖屏：仪表盘在上、对话在下，仪表盘能收起。
-   发消息是异步的：先拿 token，每半秒问一次处理到哪了（正在联网搜索……），处理完换成回复。 */
-var CHAT = { sel: null, tab: 'status', pending: null, more: null, dashMin: false, stick: true, sig: '', atts: [] };
+/* ================= 对话（v2.0 起收在主页最下面一条，点开是抽屉，用完 Esc 收起）=================
+   你和它的一来一回（QQ 上发的也在这里）；回复按 Markdown 显示。每条回复下面一行小字：交给谁、把握、查了什么、花了多少——
+   点它，主页上面「现在」那块停在这条、打开「细节」（分数、为什么、每一步、来源、判错了、换它重做）。
+   输入框右边「交给：自动」能指定这一条交给谁。发消息是异步的：先拿 token，每半秒问一次处理到哪了，主页「现在」跟着走。
+   下面的 Agent 状态仪表盘（agentHTML 这些）v2.0 起主页不用了，主页的「Agent 状态」见 home.js；eventSideHTML 是主页「细节」的内容。 */
+var CHAT = { sel: null, tab: 'status', pending: null, more: null, dashMin: false, stick: true, sig: '', atts: [], force: 'auto', open: false };
 var CLIP_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-7.8 7.8a5 5 0 0 1-7.1-7.1l8.3-8.3a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.6 1.6 0 0 1-2.3-2.3l7.4-7.4"/></svg>';
 var ST_TXT = { ok: '正常', idle: '闲着', warn: '要注意', bad: '缺了', off: '没开' };
 
@@ -66,28 +65,48 @@ function pendingHTML() {
   return '<div class="msg me"><div class="bubble">' + esc(p.text) + (p.imgs && p.imgs.length ? '<div class="m-imgs">' + p.imgs.map(function (u) { return '<span class="m-img"><img src="' + u + '" alt=""></span>'; }).join('') + '</div>' : '') + '</div><div class="meta">' + esc(p.t) + '</div></div>' +
     '<div class="msg ai pending"><span class="ai-dot" aria-hidden="true"></span><div class="ai-col"><div class="bubble typing"><i></i><i></i><i></i><span id="pendStep">' + esc(p.step) + '</span></div></div></div>';
 }
+var FORCE_NAME = { auto: '自动', local: '本地小脑', ds: 'DeepSeek', cl: '更强的模型' };
+function routeChips() {
+  return '<div class="c-route" id="cRoute" role="group" aria-label="这一条交给谁"' + (CHAT.routeOpen ? '' : ' hidden') + '><span class="cap">这一条交给</span>' +
+    ['auto', 'local', 'ds', 'cl'].filter(function (k) { return k !== 'cl' || strongOn(); }).map(function (k) {
+      return '<button type="button" class="chip" data-force="' + k + '" aria-pressed="' + (CHAT.force === k) + '">' + esc(k === 'cl' ? ROUTES.cl.name : FORCE_NAME[k]) + '</button>'; }).join('') + '</div>';
+}
 function renderChat() {
   var v = $('#view-chat'); if (!v) return;
   var live = useLive();
-  v.innerHTML = '<div class="chatv' + (CHAT.dashMin ? ' dash-min' : '') + '"><div class="chat-main">' +
-    '<div class="chat-log" id="chatLog"></div>' +
+  v.innerHTML = '<div class="dr-head"><b>对话</b><span class="cap">处理到哪一步，在上面「现在」那块看</span><span class="sp"></span><button class="btn mini" id="chatClose" aria-label="收起对话">收起 <kbd>Esc</kbd></button></div>' +
+    '<div class="chat-main"><div class="chat-log" id="chatLog"></div>' + routeChips() +
     '<form class="composer" id="composer"><div class="c-atts" id="cAtts"></div>' +
     '<button class="btn c-clip" type="button" id="cClip" title="带图片：点这里选，也可以 Ctrl+V 粘贴、拖进来" aria-label="带图片"' + (live ? '' : ' disabled') + '>' + CLIP_ICON + '</button>' +
     '<textarea id="cIn" rows="1" title="Enter 发送，Shift + Enter 换行；能 Ctrl+V 粘贴图片" placeholder="' + (live ? '和它说点什么……' : '演示模式：启动.bat 打开后能聊') + '"' + (live ? '' : ' disabled') + '></textarea>' +
+    '<button class="btn c-force" type="button" id="cForce" aria-expanded="' + !!CHAT.routeOpen + '" title="指定这一条交给谁（默认决策脑自己分）">交给：' + esc(CHAT.force === 'cl' ? ROUTES.cl.name : FORCE_NAME[CHAT.force]) + '</button>' +
     '<button class="btn primary" type="submit" id="cSend"' + (live ? '' : ' disabled') + '>发送</button>' +
-    '<input type="file" id="cFile" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden></form><div class="c-drop" id="cDrop">松开：把图片带上</div></div>' +
-    '<aside class="chat-side" id="chatSide"><div class="side-head"><div class="seg" role="tablist"><button data-ctab="status" aria-pressed="' + (CHAT.tab === 'status') + '">Agent 状态</button>' +
-    '<button data-ctab="event" aria-pressed="' + (CHAT.tab === 'event') + '">这条怎么处理的</button></div><span class="dash-sum" id="dashSum"></span><button class="side-toggle" id="sideToggle" aria-label="收起或展开状态">' + (CHAT.dashMin ? '展开 ▾' : '收起 ▴') + '</button></div>' +
-    '<div class="side-body" id="sideBody"></div></aside></div>';
-  CHAT.sig = ''; fillChatLog(true); fillSide(); chatAttsDraw();
+    '<input type="file" id="cFile" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden></form><div class="c-drop" id="cDrop">松开：把图片带上</div></div>';
+  CHAT.sig = ''; fillChatLog(true); chatAttsDraw();
 }
+/* 抽屉：展开、收起 */
+function chatOpen(id) {
+  var v = $('#view-chat'); if (!v || TOOL) return;
+  if (!$('#chatLog')) renderChat();
+  v.hidden = false; CHAT.open = true;
+  requestAnimationFrame(function () { v.classList.add('open'); });
+  fillChatLog(true);
+  if (id) setTimeout(function () { var m = $('.msg.ai[data-id="' + id + '"]'); if (m) m.scrollIntoView({ block: 'nearest' }); }, 60);
+  setTimeout(function () { var i = $('#cIn'); if (i && !i.disabled) i.focus(); }, 80);
+}
+function chatClose() {
+  var v = $('#view-chat'); if (!v || !CHAT.open) return;
+  CHAT.open = false; v.classList.remove('open');
+  setTimeout(function () { if (!CHAT.open) v.hidden = true; }, 260);
+}
+function chatToggle() { if (CHAT.open) chatClose(); else chatOpen(); }
 function fillChatLog(force) {
   var log = $('#chatLog'); if (!log) return;
   var near = force || log.scrollHeight - log.scrollTop - log.clientHeight < 80;
   var list = chatList();
   var more = useLive() && !CHAT.more ? '<div class="more-row"><button class="linkbtn" id="chatMore">看更早的</button></div>' : '';
   log.innerHTML = list.length || CHAT.pending ? more + list.map(msgHTML).join('') + pendingHTML()
-    : '<div class="chat-empty"><b>和它说点什么</b><p>比如：「你能做什么」「帕鲁最近更新了什么」「每天晚上十点提醒我喝水」「记住我的显示器是 27 寸的」。</p><p class="cap">QQ 上发的消息也会出现在这里。右边能看到它现在每个部分的状态。</p></div>';
+    : '<div class="chat-empty"><b>和它说点什么</b><p>比如：「你能做什么」「帕鲁最近更新了什么」「每天晚上十点提醒我喝水」「记住我的显示器是 27 寸的」。</p><p class="cap">QQ 上发的消息也会出现在这里。处理到哪一步在上面「现在」那块看。</p></div>';
   if (near) log.scrollTop = log.scrollHeight;
 }
 /* ---------- Agent 状态（对话页右边的大仪表盘 + 总览上的小卡片） ----------
@@ -393,8 +412,11 @@ function chatAsk(text, atts, undo) {
   var d = new Date(), imgs = (atts || []).map(function (a) { return a.url; });
   CHAT.pending = { text: text || '看看这张图。', imgs: imgs, t: pad(d.getHours()) + ':' + pad(d.getMinutes()), step: imgs.length ? '图片发出去了……' : '发出去了……', token: null };
   fillChatLog(true);
-  api('POST', '/api/chat', { text: text, async: true, images: imgs }, 60000).then(function (j) { CHAT.pending.token = j.token; setTimeout(chatPoll, 400); })
-    .catch(function (e) { CHAT.pending = null; fillChatLog(true); toast('没发出去：' + e.message, 5000); if (undo) undo(); });
+  var body = { text: text, async: true, images: imgs };
+  if (CHAT.force !== 'auto') body.force = CHAT.force;
+  NOW.sel = null; NOW.detail = false;
+  api('POST', '/api/chat', body, 60000).then(function (j) { CHAT.pending.token = j.token; setTimeout(chatPoll, 300); })
+    .catch(function (e) { CHAT.pending = null; fillChatLog(true); homeFill(); toast(e.status === 409 ? e.message : '没发出去：' + e.message, 5000); if (undo) undo(); });
 }
 /* 带图片：点回形针选、Ctrl+V 粘贴、拖进对话页；发之前上面一排缩略图，能去掉。一次最多 6 张、一张 10MB 以内 */
 function chatAttsDraw() {
@@ -426,15 +448,15 @@ function chatImgBox(id) {
 function chatPoll() {
   var p = CHAT.pending; if (!p || !p.token) return;
   api('GET', '/api/chat/' + p.token, null, 8000).then(function (j) {
-    if (j.event && !j.done) { p.step = j.event.result || p.step; var el = $('#pendStep'); if (el) el.textContent = p.step; }
+    if (j.event && !j.done) { p.step = j.event.result || p.step; p.ev = j.event; var el = $('#pendStep'); if (el) el.textContent = p.step; homeFill(); }
     if (j.done) {
       CHAT.pending = null;
-      if (j.event) { D.events = [j.event].concat((D.events || []).filter(function (e) { return e.id !== j.event.id; })); if (CHAT.tab === 'event') CHAT.sel = j.event.id; }
-      if (j.err) toast(j.confirm ? j.err + '（在「这条怎么处理的」里点「换它重做」可以确认后再发）' : '这条没处理完：' + j.err, 6000);
-      fillChatLog(true); fillSide();
+      if (j.event) { D.events = [j.event].concat((D.events || []).filter(function (e) { return e.id !== j.event.id; })); CHAT.sel = j.event.id; }
+      if (j.err) toast(j.confirm ? j.err + '（在主页「细节」里点「换它重做」可以确认后再发）' : '这条没处理完：' + j.err, 6000);
+      fillChatLog(true); homeFill();
       return;
     }
-    setTimeout(chatPoll, 500);
+    setTimeout(chatPoll, 400);
   }).catch(function () { setTimeout(chatPoll, 1200); });
 }
 /* 换它重做：同一句话按你选的去向再处理一遍（后端也记一次纠正）。隐私的事交给云端，要再点一次确认 */
@@ -447,7 +469,7 @@ function chatRedo(t) {
   api('POST', '/api/events/' + e.id + '/redo', { to: to, allow_private: allow }, 15000).then(function (j) {
     var d = new Date();
     CHAT.pending = { text: e.text, t: pad(d.getHours()) + ':' + pad(d.getMinutes()), step: '换「' + name + '」重做……', token: j.token };
-    e.fix = to; fillChatLog(true); fillSide(); setTimeout(chatPoll, 400);
+    e.fix = to; NOW.sel = null; NOW.detail = false; fillChatLog(true); homeFill(); setTimeout(chatPoll, 300); toast('换「' + name + '」重做了：进度在「现在」那块');
   }).catch(function (er) {
     t.disabled = false;
     if (er.status === 409) { t.dataset.arm = 1; t.textContent = '涉及隐私，再点一次确认发出本机'; t.classList.add('danger'); toast(er.message, 5000); }
@@ -457,9 +479,8 @@ function chatRedo(t) {
 function autoGrow(t) { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 200) + 'px'; }
 /* 后台每 5 秒拉一次状态：对话和右边跟着更新（不打断正在输入的） */
 function chatRefresh() {
-  if (S.view !== 'chat' || !$('#chatLog')) return;
+  if (!CHAT.open || !$('#chatLog')) return;
   fillChatLog(false);
-  if (CHAT.tab === 'status' || (CHAT.tab === 'event' && (findChatEv(CHAT.sel) || {}).status === 'running')) fillSide();
 }
 
 $('#view-chat').addEventListener('submit', function (ev) { ev.preventDefault(); chatSend(); });
@@ -467,19 +488,24 @@ $('#view-chat').addEventListener('keydown', function (ev) {
   if (ev.target.id === 'cIn' && ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); chatSend(); }
 });
 $('#view-chat').addEventListener('input', function (ev) { if (ev.target.id === 'cIn') autoGrow(ev.target); });
-$('#view-chat').addEventListener('click', function (ev) {
+/* 对话抽屉和主页「细节」共用的点击：判错了、换它重做、去设置、去事件页…… */
+function chatClick(ev) {
   var t = ev.target.closest('button, a'); if (!t) return;
-  if (t.dataset.ev) {
-    CHAT.sel = +t.dataset.ev; CHAT.tab = 'event'; CHAT.dashMin = false;
-    $$('.why-chip').forEach(function (c) { c.setAttribute('aria-pressed', +c.dataset.ev === CHAT.sel); });
-    $('#view-chat .chatv').classList.remove('dash-min'); var tg = $('#sideToggle'); if (tg) tg.textContent = '收起 ▴'; fillSide();
-    setTimeout(function () { var m = $('.msg.ai[data-id="' + CHAT.sel + '"]'); if (m) m.scrollIntoView({ block: 'nearest' }); }, 320);     // 竖屏时仪表盘展开会挤一下对话，把这条留在看得见的地方
+  if (t.dataset.ev) {                                    // 回复下面那行小字：主页「现在」停在这条，打开细节
+    var id = +t.dataset.ev, l = homeEvs();
+    CHAT.sel = id; NOW.sel = l.length && l[l.length - 1].id === id && !nowLive() ? null : id; NOW.detail = true; NOW.all = false;
+    chatClose(); homeFill();
   }
-  else if (t.dataset.ctab) { CHAT.tab = t.dataset.ctab; if (CHAT.tab === 'event' && !CHAT.sel) { var l = chatList().filter(function (e) { return e.src !== '定时任务'; }); CHAT.sel = l.length ? l[l.length - 1].id : null; } fillSide(); }
-  else if (t.id === 'sideToggle') { CHAT.dashMin = !CHAT.dashMin; $('#view-chat .chatv').classList.toggle('dash-min', CHAT.dashMin); t.textContent = CHAT.dashMin ? '展开 ▾' : '收起 ▴'; }
-  else if (t.dataset.goSec) { S.sec = t.dataset.goSec; renderSettings(); goView('settings'); }
-  else if (t.dataset.recheck) { S.sec = 'prep'; renderSettings(); goView('settings'); setTimeout(function () { checkPanel(true); }, 450); }
-  else if (t.dataset.openEvents) { S.selId = +t.dataset.openEvents; renderEvents(); goView('events'); }
+  else if (t.id === 'chatClose') chatClose();
+  else if (t.id === 'cForce') { CHAT.routeOpen = !CHAT.routeOpen; var r = $('#cRoute'); if (r) r.hidden = !CHAT.routeOpen; t.setAttribute('aria-expanded', !!CHAT.routeOpen); }
+  else if (t.dataset.force) {
+    CHAT.force = t.dataset.force; CHAT.routeOpen = false;
+    $$('#cRoute [data-force]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.force === CHAT.force); });
+    $('#cRoute').hidden = true; var f = $('#cForce'); if (f) { f.textContent = '交给：' + (CHAT.force === 'cl' ? ROUTES.cl.name : FORCE_NAME[CHAT.force]); f.setAttribute('aria-expanded', 'false'); f.classList.toggle('set', CHAT.force !== 'auto'); }
+  }
+  else if (t.dataset.goSec) openSec(t.dataset.goSec);
+  else if (t.dataset.recheck) openSec('prep', 'recheck');
+  else if (t.dataset.openEvents) openView('events', { ev: +t.dataset.openEvents });
   else if (t.id === 'chatMore') { t.disabled = true; api('GET', '/api/events?limit=300').then(function (l) { CHAT.more = l; var log = $('#chatLog'), h = log.scrollHeight; fillChatLog(false); log.scrollTop = log.scrollHeight - h; }).catch(function (e) { toast(e.message); }); }
   else if (t.dataset.redo) chatRedo(t);
   else if (t.id === 'cClip') $('#cFile').click();
@@ -495,10 +521,11 @@ $('#view-chat').addEventListener('click', function (ev) {
   else if (t.dataset.cfix) {
     var e = findChatEv(CHAT.sel), k = t.dataset.cfix; if (!e) return;
     var to = (useLive() ? e.fix : S.fix[e.id]) === k ? null : k;
-    if (useLive()) api('POST', '/api/events/' + e.id + '/fix', { to: to }).then(function (ne) { Object.assign(e, ne); fillSide(); toast(to ? '记下了：这类事以后交给「' + ROUTES[to].name + '」' : '取消了纠正'); }).catch(function (er) { toast(er.message); });
-    else { if (to) S.fix[e.id] = to; else delete S.fix[e.id]; fillSide(); }
+    if (useLive()) api('POST', '/api/events/' + e.id + '/fix', { to: to }).then(function (ne) { Object.assign(e, ne); NOW.sig = {}; homeFill(); toast(to ? '记下了：这类事以后交给「' + ROUTES[to].name + '」' : '取消了纠正'); }).catch(function (er) { toast(er.message); });
+    else { if (to) S.fix[e.id] = to; else delete S.fix[e.id]; NOW.sig = {}; homeFill(); }
   }
-});
+}
+$('#view-chat').addEventListener('click', chatClick);
 $('#view-chat').addEventListener('change', function (ev) { if (ev.target.id === 'cFile') { chatAddFiles(ev.target.files); ev.target.value = ''; } });
 $('#view-chat').addEventListener('paste', function (ev) {
   if (ev.target.id !== 'cIn' || !ev.clipboardData) return;
@@ -517,4 +544,8 @@ $('#view-chat').addEventListener('drop', function (ev) {
   if (!ev.dataTransfer || !ev.dataTransfer.files.length) return;
   ev.preventDefault(); chatAddFiles(ev.dataTransfer.files);
 });
-document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { var b = $('.c-box'); if (b) b.remove(); } });
+document.addEventListener('keydown', function (ev) {
+  if (ev.key !== 'Escape') return;
+  var b = $('.c-box'); if (b) { b.remove(); return; }
+  if (CHAT.open && $('#pal').hidden) chatClose();
+});

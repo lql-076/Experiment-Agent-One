@@ -10,7 +10,7 @@
 var IMG = { st: null, timer: null, n: 0, busy: false, tab: null, sel: null, prompt: '', refs: [], ratio: '1:1', cnt: 1, trans: false,
   hist: null, hq: '', hsel: null, cat: null, vend: null, log: [], wait: {}, mine: null, booted: false, box: null, sig: {} };
 var IMG_RNAME = { '16:9': '横', '9:16': '竖', '1:1': '方', '4:3': '横', '3:4': '竖', '3:2': '横', '2:3': '竖', '5:4': '横', '4:5': '竖', '21:9': '宽' };
-var IMG_TABS = [['single', 'SINGLE', '单张'], ['batch', 'BATCH', '批量'], ['hist', 'HISTORY', '历史'], ['tpl', 'PRESET', '模板']];
+var IMG_TABS = [['char', 'CAST', '角色'], ['single', 'SINGLE', '单张'], ['batch', 'BATCH', '批量'], ['hist', 'HISTORY', '历史'], ['tpl', 'PRESET', '模板']];
 var IMG_DEMO = (function () {
   var R = ['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9'];
   var Z = { '1k': [[1280, 720], [720, 1280], [1280, 1280], [1280, 960], [960, 1280], [1280, 848], [848, 1280], [1280, 1024], [1024, 1280], [1280, 544]],
@@ -121,7 +121,8 @@ function renderImg() {
   if (s.demo && IMG.tab === 'single' && !IMG.prompt) IMG.prompt = '一只发光的水母漂在深蓝的海里，触须像光纤，电影感的冷光。';
   var tab = IMG.tab, host = (s.cfg.base || '').replace(/^https?:\/\//, '').split('/')[0];
   var main;
-  if (tab === 'hist') main = '<section class="fp fg-col"><div class="fh"><i></i>HISTORY<em>· 出过的每一张</em><span id="fgHn"></span></div>' +
+  if (tab === 'char') main = imgCharHTML();
+  else if (tab === 'hist') main = '<section class="fp fg-col"><div class="fh"><i></i>HISTORY<em>· 出过的每一张</em><span id="fgHn"></span></div>' +
       '<div class="fg-hq"><input class="fi" id="fgHq" placeholder="搜提示词、文件名、清单名" value="' + esc(IMG.hq) + '"><button class="fb sm" data-act="hreload">刷新</button><span class="fg-cap">单张、批量出的都在这；点一张看详情</span></div>' +
       '<div class="fg-hg fg-scroll" id="fgHg"></div></section><section class="fp fg-col fg-hd" id="fgHd"></section>';
   else if (tab === 'tpl') main = '<section class="fp fg-col"><div class="fh"><i></i>PRESETS<em>· 素材模板：提示词 + 参考图 + 比例，一点就填好</em><span><button class="fb sm" data-act="tab" data-tab="single">去单张存一个</button></span></div>' +
@@ -149,13 +150,14 @@ function renderImg() {
       '<button class="fg-go start" id="fgGo"><i></i><span id="fgGoT"></span></button></div>' +
     '<div class="fg-bar"><div class="fg-tabs" role="tablist">' + IMG_TABS.map(function (t) { return '<button class="fg-tab" role="tab" data-act="tab" data-tab="' + t[0] + '" aria-selected="' + (t[0] === tab) + '">' + t[1] + '<em>' + t[2] + '</em><b id="fgT_' + t[0] + '"></b></button>'; }).join('') + '</div>' +
       '<div class="fg-par" id="fgPar"></div></div>' +
-    '<div class="fg-main ' + (tab === 'hist' ? 'hist' : tab === 'tpl' ? 'tpl' : '') + '" id="fgMain">' + main + '</div>' +
+    '<div class="fg-main ' + (tab === 'hist' ? 'hist' : tab === 'tpl' ? 'tpl' : tab === 'char' ? 'char' : '') + '" id="fgMain">' + main + '</div>' +
     '<div class="fg-bot"><section class="fp fg-log" id="fgLog"></section><section class="fp fg-scope"><div class="fh"><i></i>API LINK<em>· ' + esc(host || 'api.apiyi.com') + '</em><span id="fgLat">IDLE</span></div><canvas id="fgSc"></canvas></section></div>' +
     '<input type="file" id="fgMd" accept=".md,.markdown,.txt,text/markdown,text/plain" hidden><input type="file" id="fgImgs" accept="image/png,image/jpeg,image/webp" multiple hidden>' +
     '<div class="fg-drag" id="fgDrag">松开：清单（.md）认成批量，图片当参考图</div></div>';
   IMG.sig = {};
   if (!IMG.log.length) imgLog('◆ ' + (s.demo ? '演示模式（连上后端才能出图）' : '渲染舱就绪 · ' + esc(s.model.name)), 'c'); else imgLog(null);
   if (tab === 'single') imgCmp(true);
+  if (tab === 'char') imgChar(true);
   if (tab === 'hist') imgHist();
   if (tab === 'tpl') imgTpl();
   fgMount();
@@ -174,13 +176,15 @@ function imgSync() {
   if (IMG.tab === 'single') imgCmp();
   if (IMG.tab === 'single' || IMG.tab === 'batch') imgOut();
   if (IMG.tab === 'tpl') imgTpl();
+  if (IMG.tab === 'char') imgChar();
   fgPorts();
   if (!FG.anim) fgDraw(0);
   if (IMG.box && IMG.box.kind === 'item') imgViewItem(IMG.box.id, true);
 }
 function imgTabsDot() {
   var j = IMG.st.job, k = j && j.st === 'run' ? j.kind : '';
-  ['single', 'batch'].forEach(function (t) { var el = $('#fgT_' + t); if (el) el.innerHTML = k === t ? '<i class="dot"></i>' : t === 'batch' && IMG.st.board ? IMG.st.board.items.length : ''; });
+  if (k === 'sheet') k = 'char';
+  ['char', 'single', 'batch'].forEach(function (t) { var el = $('#fgT_' + t); if (el) el.innerHTML = k === t ? '<i class="dot"></i>' : t === 'batch' && IMG.st.board ? IMG.st.board.items.length : t === 'char' && (IMG.st.chars || []).length ? IMG.st.chars.length : ''; });
 }
 function imgPar() {
   var s = IMG.st, m = s.model, run = imgRun(), h = '';
@@ -196,7 +200,7 @@ function imgPar() {
 }
 function imgKpis() {
   var s = IMG.st, j = s.job, b = s.board, m = s.model;
-  var tabJob = j && (j.kind === IMG.tab || j.st === 'run') ? j : null;
+  var tabJob = j && (j.kind === IMG.tab || (IMG.tab === 'char' && (j.kind === 'sheet' || j.kind === 'char')) || j.st === 'run') ? j : null;
   var rs = tabJob ? tabJob.results.filter(function (r) { return r.ok && r.sec != null; }).map(function (r) { return r.sec; }) : [];
   var avg = rs.length ? rs.reduce(function (a, x) { return a + x; }, 0) / rs.length : 0;
   var q, d, f, usd, eta;
@@ -221,6 +225,7 @@ function imgGo() {
   var s = IMG.st, b = s.board, run = imgRun(), cls = 'start', t = '', dis = false;
   if (run) { cls = ''; t = '停下<small>没开始的不出了，正在出的出完</small>'; }
   else if (IMG.tab === 'single') { var n = IMG.cnt, u = imgUsd(IMG.ratio); t = '生成' + '<small>' + n + ' 张 · ' + (u == null ? '价格看 API易' : '约 ' + imgMoney(u * n)) + (IMG.refs.length ? ' · ' + IMG.refs.length + ' 张参考图' : '') + '</small>'; dis = !s.cfg.key && !s.demo; }
+  else if (IMG.tab === 'char') { var cg = imgCharGo(); t = cg.t; dis = cg.dis; }
   else if (IMG.tab === 'batch') {
     if (!b) t = '选清单<small>视频窗口出的生图清单 .md</small>';
     else {
@@ -320,7 +325,8 @@ function imgQueue() {
     if (r.className !== c) r.className = c;
     var st = r.querySelector('.st'); if (st.textContent !== g) st.textContent = g;
     r.setAttribute('aria-current', IMG.sel === it.id ? 'true' : 'false');
-    var tg = '<em>' + it.ratio + '</em>' + (it.transparent ? '<em class="c">透明</em>' : '') + (it.edited ? '<em class="amb">改过</em>' : ''), te = r.querySelector('.ftg');
+    var tg = '<em>' + it.ratio + '</em>' + (it.transparent ? '<em class="c">透明</em>' : '') + (it.edited ? '<em class="amb">改过</em>' : '') +
+      (it.chars || []).map(function (n) { return '<em class="ch" title="认出了角色「' + esc(n) + '」：自动带上她的三视图和外形描述">' + esc(n) + '</em>'; }).join(''), te = r.querySelector('.ftg');
     if (te.innerHTML !== tg) te.innerHTML = tg;
   });
   imgEditor();
@@ -1059,6 +1065,7 @@ $('#view-img').addEventListener('click', function (ev) {
   if (t.id === 'fgGo') {
     if (imgRun()) { if (!live) { toast('演示模式'); return; } api('POST', '/api/img/stop', {}).then(function (j) { IMG.st.job = j.job; imgSync(); imgLog('■ 停下：没开始的不出了，正在出的这张出完', 'bad'); }); return; }
     if (IMG.tab === 'single') imgGen();
+    else if (IMG.tab === 'char') imgCharMake();
     else if (IMG.tab === 'batch') { var b = s.board; if (!b) $('#fgMd').click(); else if (b.items.every(function (x) { return x.st === 'ok'; })) { if (live) api('POST', '/api/img/open', {}).then(function (j) { toast(j.msg, 4000); }); } else imgBatch(b.items.some(function (x) { return x.st === 'ok'; }) ? { missing: true } : {}); }
     else imgTab('single');
     return;

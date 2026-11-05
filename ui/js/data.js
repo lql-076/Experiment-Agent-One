@@ -74,7 +74,7 @@ var SAFETY = [
 ];
 
 /* 主题清单来自 themes/themes.js（Agent 启动时扫描 themes 文件夹自动生成）。一个 .css 文件就是一套主题。 */
-var THEMES = (window.AGENT_THEMES && window.AGENT_THEMES.length) ? window.AGENT_THEMES : [{ id: 'abyss', name: '深海', desc: '' }];
+var THEMES = (window.AGENT_THEMES && window.AGENT_THEMES.length) ? window.AGENT_THEMES : [{ id: 'dark', name: '极简 · 深色', desc: '' }, { id: 'light', name: '极简 · 浅色', desc: '' }];
 function themeVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
 function hasTheme(id) { return THEMES.some(function (t) { return t.id === id; }); }
 
@@ -248,7 +248,7 @@ var SECTIONS = [
   ] },
   { id: 'data', name: '数据', desc: '设置、记录、记忆都只在这台电脑上。', custom: 'data' }
 ];
-var DEFAULTS = { theme: 'abyss', demo: true, osdItems: 'fps,low1,cpu,gpu,vram,power' };
+var DEFAULTS = { theme: 'dark', demo: true, osdItems: 'fps,low1,cpu,gpu,vram,power' };
 SECTIONS.forEach(function (sec) { (sec.fields || []).forEach(function (f) { if (f.k && f.t !== 'secret') DEFAULTS[f.k] = f.d === undefined ? '' : f.d; }); });
 
 /* ================= 状态 ================= */
@@ -259,7 +259,7 @@ var S = {
   set: Object.assign({}, DEFAULTS, stored.set || {}),
   manual: stored.manual || {}, safety: stored.safety || {}, secret: {},
   check: {}, lastCheck: null, checking: false,
-  view: 'chat', sec: 'prep', selId: null, filter: 'all', fix: {}, bsel: -1, done: {}, resetArm: false
+  view: 'home', sec: 'prep', selId: null, filter: 'all', fix: {}, bsel: -1, done: {}, resetArm: false
 };
 var LIVE = false, SECRETS = {};
 var D = { state: null, events: [], brains: null, report: null, reminders: [], sig: {} };

@@ -155,7 +155,7 @@ $('#view-monitor').addEventListener('click', function (ev) {
     if (MON.logName === '@feed') { renderFeed(); fetchFeed(); }
     else { var b = $('#logBox'); if (b) b.textContent = '读取中…'; fetchLog(); }
   }
-  else if (t.dataset.goSec) { S.sec = t.dataset.goSec; renderSettings(); goView('settings'); }
+  else if (t.dataset.goSec) openSec(t.dataset.goSec);
   else if (t.id === 'logCopy') {
     var path = MON.logName === '@feed' ? ((MON.data && MON.data.root) || '') + '\\data\\logs\\report.jsonl' : ($('#logPath') || {}).textContent;
     if (path) copyText(path);

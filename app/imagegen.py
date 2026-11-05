@@ -63,6 +63,11 @@ DEFAULT_MODEL = "gpt-image-2.5-sunburst-vip"
 IMGD = paths.DATA / "img"
 BOARD, REFS, TPL = IMGD / "board.json", IMGD / "refs", IMGD / "templates"
 LOG_NAME, MD_NAME, OLD, SINGLE = "生图记录.json", "生图清单.md", "旧版", "单张"
+CHAR_DIR, SHEETS, MADE = "角色", "三视图候选", "出图"                       # 角色（v2.0）：生图输出\角色\<名字>\ 下面放定稿、候选、出过的图
+CHAR_STYLE = "日系动画平涂（赛璐璐上色），干净的黑色线稿，两阶阴影，像 TV 动画的角色设定；不要 3D、不要半写实、不要厚涂。"
+POSES = {"A": "A 字站姿（A-pose：站直，双臂自然向下、和身体分开约 45 度）", "T": "T 字站姿（T-pose：站直，双臂水平伸直）"}
+FACES = ["正常", "开心", "得意", "无语", "震惊", "崩溃", "大哭", "丑萌（高光）"]
+KIND_NAME = {"batch": "批量", "single": "单张", "sheet": "三视图", "char": "角色"}
 MAX_REF_BYTES = 10 << 20
 JOBN = "生图"
 
@@ -419,6 +424,29 @@ async def refresh_models():
 
 
 # ---------------- 提示词、图片文件、报错 ----------------
+# ---------------- 角色的提示词（v2.0） ----------------
+def sheet_prompt(ch, pose, has_refs):
+    return "\n".join(x for x in [
+        "角色设定图（三视图）：同一个角色的正面、侧面、背面三个全身像，从左到右并排；" + POSES.get(pose, POSES["A"]) +
+        "；纯白背景，三个视图一样大、脚底对齐，像动画公司的角色设定表。",
+        f"角色「{ch['name']}」：{ch.get('desc', '').strip()}" if ch.get("desc", "").strip() else f"角色「{ch['name']}」。",
+        "参考图里就是这个角色：长相、发型、衣服、配色照参考图画，别改。" if has_refs else "",
+        "画风：" + CHAR_STYLE] if x)
+
+
+def cast_lines(cast):
+    names = "、".join(x["name"] for x in cast)
+    lines = [f"画面里的{names}：照参考图里的角色画，长相、发型、衣服、配色都别变（参考图是角色设定图，只用来认人，不要画成三视图、不要并排三个人）。"]
+    lines += [f"{x['name']}：{x.get('desc', '').strip()}" for x in cast if x.get("desc", "").strip()]
+    return lines
+
+
+def make_prompt(cast, action, face, kind):
+    q = "Q 版：约 3 头身，脑袋大、身子小，可爱，线条简洁。" if kind == "Q版" else "立绘：正常身材比例。"
+    f = "表情：极度夸张的丑萌搞笑表情。" if "丑萌" in (face or "") else (f"表情：{face}。" if face else "")
+    return "\n".join(cast_lines(cast) + [f"这一张：{action}。" + f, q, "画风：" + CHAR_STYLE])
+
+
 def build_prompt(it, direction="", with_dir=False, no_text=True, kind="official"):
     """实际发出去的提示词：（视觉方向）+ 这一条 +（透明背景那句）+（不要文字那句）；不认尺寸的模型把比例写在最前面。"""
     parts = []
@@ -744,14 +772,15 @@ class Gen:
         if not self.key():
             raise HTTPException(400, "还没填 API易 的 Key：到 设置 › 云端 填好再生成")
 
-    def _new_job(self, kind, tasks):
+    def _new_job(self, kind, tasks, title=""):
         cd = card()
         q, tier = self.s.get("imgQuality") or "high", self.s.get("imgRes") or "2k"
         est = [est_usd(cd, t["ratio"], tier, q) for t in tasks]
         self.job = {"id": int(time.time() * 1000), "st": "run", "kind": kind, "n": len(tasks), "done": 0, "fail": 0, "t0": time.time(), "t1": 0.0,
                     "stop": False, "usd": 0.0, "est": None if None in est else round(sum(est), 4), "model": cd["id"], "mname": cd["name"], "quality": q,
-                    "tier": tier, "conc": max(1, min(4, int(self.s.get("imgConc") or 1))), "msg": "", "fatal": "", "results": [], "cur": None}
-        feed.add(f"开始生图（{'批量' if kind == 'batch' else '单张'}）：{len(tasks)} 张，{cd['name']}、{QUALITY.get(q, q)}、{tier.upper()}" +
+                    "tier": tier, "conc": max(1, min(4, int(self.s.get("imgConc") or 1))), "msg": "", "fatal": "", "results": [], "cur": None,
+                    "title": title or ((self.board or {}).get("title", "") if kind == "batch" else "")}
+        feed.add(f"开始生图（{KIND_NAME.get(kind, kind)}{' · ' + title if title else ''}）：{len(tasks)} 张，{cd['name']}、{QUALITY.get(q, q)}、{tier.upper()}" +
                  (f"，预估约 ${self.job['est']:.2f}" if self.job["est"] is not None else ""), "head", job=JOBN)
         self._task = asyncio.get_running_loop().create_task(self._run(self.job, tasks))
         return self.public()
@@ -772,12 +801,17 @@ class Gen:
         if not todo:
             raise HTTPException(400, "没有要出的：都出好了（要重出点那张的「重生成」），或者提示词是空的")
         d = self.folder()
+        cd = card()
         tasks = []
         for it in todo:
             it["prev"] = it["st"]
             it.update(st="queue", err="", warn="")
-            tasks.append({"kind": "batch", "item": it, "label": it["file"], "prompt": it["prompt"], "ratio": it["ratio"], "transparent": it["transparent"],
-                          "dir": d, "name": it["file"], "refs": [], "use": it.get("use", ""), "title": self.board.get("title", "")})
+            cast = self.match(" ".join((it["file"], it.get("use", ""), it["prompt"]))) if cd["refs"] else []     # 写到了白叶、紫苏：带上她们的三视图和外形
+            refs = [p for x in cast for p in self.char_refs(x)][:max(1, cd["refs"])]
+            prompt = "\n".join(cast_lines(cast) + [it["prompt"]]) if cast else it["prompt"]
+            tasks.append({"kind": "batch", "item": it, "label": it["file"], "prompt": prompt, "ratio": it["ratio"], "transparent": it["transparent"],
+                          "dir": d, "name": it["file"], "refs": refs, "use": it.get("use", ""), "title": self.board.get("title", ""),
+                          "cast": [x["name"] for x in cast]})
         self._save()
         return self._new_job("batch", tasks)
 
@@ -842,6 +876,9 @@ class Gen:
         if job["kind"] == "batch":
             self._save()
         feed.add("生图" + job["msg"], "warn" if job["fail"] or job["stop"] else "ok", job=JOBN)
+        if job["done"]:
+            feed.done(f"生图 · {KIND_NAME.get(job['kind'], job['kind'])}{' · ' + job['title'] if job.get('title') else ''} · {job['done']} 张" +
+                      (f"（{job['fail']} 张没出来）" if job["fail"] else ""), "API易", took, f"${job['usd']:.2f}", "img")
 
     async def _one(self, c, job, t):
         cd = card(job["model"])
@@ -1058,6 +1095,208 @@ class Gen:
             raise HTTPException(404, "这张参考图找不到了")
         return p
 
+    # ---------- 角色（v2.0）：存外形描述和定稿的三视图；出图时自动带上 ----------
+    def chars(self):
+        return db.kv_get("img_chars") or []
+
+    def char(self, cid):
+        ch = next((x for x in self.chars() if x["id"] == str(cid)), None)
+        if not ch:
+            raise HTTPException(404, "没有这个角色")
+        return ch
+
+    def _char_put(self, ch):
+        cs = [x for x in self.chars() if x["id"] != ch["id"]]
+        cs.append(ch)
+        db.kv_set("img_chars", cs)
+        return ch
+
+    def char_save(self, body, cid=None):
+        name = re.sub(r'[\\/:*?"<>|\r\n\t]+', "", str(body.get("name") or "")).strip(" .")[:12]
+        if not name:
+            raise HTTPException(400, "给角色起个名字（比如 白叶、紫苏）")
+        al = body.get("aliases")
+        al = re.split(r"[\s,，、;；/]+", al) if isinstance(al, str) else list(al or [])
+        aliases = []
+        for a in al:
+            a = str(a).strip()[:12]
+            if a and a != name and a not in aliases:
+                aliases.append(a)
+        aliases = aliases[:6]
+        mine = {name, *aliases}
+        for x in self.chars():
+            if x["id"] != str(cid or "") and mine & {x["name"], *x.get("aliases", [])}:
+                raise HTTPException(400, f"「{'、'.join(mine & {x['name'], *x.get('aliases', [])})}」已经是角色「{x['name']}」的名字了，换一个")
+        desc = str(body.get("desc") or "").strip()[:2000]
+        if cid:
+            ch = dict(self.char(cid), name=name, aliases=aliases, desc=desc)
+        else:
+            d, k = self.out_root() / CHAR_DIR / name, 2
+            while d.exists() and any(Path(x.get("dir", "")) == d for x in self.chars()):
+                d, k = self.out_root() / CHAR_DIR / f"{name}_{k}", k + 1
+            ch = {"id": "c" + str(int(time.time() * 1000)), "name": name, "aliases": aliases, "desc": desc, "dir": str(d), "sheet": "", "pose": "A",
+                  "refs": [], "ts": time.time()}
+            feed.add(f"建了一个角色「{name}」", "info", job=JOBN)
+        return self._char_put(ch)
+
+    def char_del(self, cid):
+        ch = self.char(cid)
+        db.kv_set("img_chars", [x for x in self.chars() if x["id"] != ch["id"]])
+        feed.add(f"角色「{ch['name']}」从列表里去掉了（图还在 {paths.show(Path(ch['dir']))}，没删）", "info", job=JOBN)
+        return self.chars()
+
+    def char_dir(self, ch):
+        return Path(ch["dir"])
+
+    def char_ref_add(self, cid, uri):
+        ch = self.char(cid)
+        if len(ch.get("refs") or []) >= 4:
+            raise HTTPException(400, "一个角色最多放 4 张自己的参考图")
+        b = read_uri(uri)
+        d = self.char_dir(ch)
+        d.mkdir(parents=True, exist_ok=True)
+        k = 1
+        while (d / f"参考_{k}.{png_info(b)['fmt']}").exists():
+            k += 1
+        name = f"参考_{k}.{png_info(b)['fmt']}"
+        (d / name).write_bytes(b)
+        ch["refs"] = (ch.get("refs") or []) + [name]
+        return self._char_put(ch)
+
+    def char_ref_del(self, cid, name):
+        ch = self.char(cid)
+        if name not in (ch.get("refs") or []):
+            raise HTTPException(404, "没有这张参考图")
+        d = self.char_dir(ch)
+        if (d / name).exists():                                      # 不删：挪进「旧版」
+            (d / OLD).mkdir(exist_ok=True)
+            (d / name).replace(d / OLD / f"{Path(name).stem}_{datetime.now():%H%M%S}{Path(name).suffix}")
+        ch["refs"] = [x for x in ch["refs"] if x != name]
+        return self._char_put(ch)
+
+    def char_path(self, cid, name):
+        ch = self.char(cid)
+        d = self.char_dir(ch)
+        p = (d / name).resolve() if name in (ch.get("refs") or []) + [ch.get("sheet")] else (d / SHEETS / Path(name).name).resolve()
+        if not name or d.resolve() not in p.parents or not p.exists():
+            raise HTTPException(404, "这张图找不到了")
+        return p
+
+    def char_cands(self, ch):
+        d = self.char_dir(ch) / SHEETS
+        try:
+            fs = [x for x in d.iterdir() if x.is_file() and x.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]
+        except OSError:
+            return []
+        return [x.name for x in sorted(fs, key=lambda x: -x.stat().st_mtime)[:8]]
+
+    def char_refs(self, ch):
+        """出图时带上的参考图：定稿的三视图；还没定稿就用你自己放的参考图（最多 2 张）。"""
+        d = self.char_dir(ch)
+        out = [d / ch["sheet"]] if ch.get("sheet") and (d / ch["sheet"]).exists() else []
+        if not out:
+            out = [d / x for x in (ch.get("refs") or [])[:2] if (d / x).exists()]
+        return out
+
+    def match(self, text):
+        """清单里一条写到了哪些角色（名字或者别名出现在文件名、用途、提示词里）。只算能用的（有三视图或参考图）。"""
+        t = text or ""
+        out = []
+        for ch in self.chars():
+            if any(n and n in t for n in [ch["name"], *ch.get("aliases", [])]) and self.char_refs(ch):
+                out.append(ch)
+        return out
+
+    def char_sheet(self, cid, body):
+        """出三视图：一次几张候选（每张都是正面、侧面、背面并排），挑一张定稿。"""
+        self._ready()
+        ch = self.char(cid)
+        if not ch.get("desc", "").strip() and not ch.get("refs"):
+            raise HTTPException(400, "先写外形描述（或者放一张参考图），再出三视图")
+        pose = "T" if body.get("pose") == "T" else "A"
+        n = max(1, min(4, int(body.get("n") or 4)))
+        refs = [self.char_dir(ch) / x for x in (ch.get("refs") or []) if (self.char_dir(ch) / x).exists()]
+        cd = card()
+        if refs and not cd["refs"]:
+            raise HTTPException(400, f"{cd['name']} 不能带参考图，换一个模型（GPT Image / Nano Banana）")
+        prompt = sheet_prompt(ch, pose, bool(refs))
+        stamp = datetime.now().strftime("%m%d_%H%M%S")
+        d = self.char_dir(ch) / SHEETS
+        ch["pose"] = pose
+        self._char_put(ch)
+        tasks = [{"kind": "sheet", "item": None, "label": f"{ch['name']} 三视图 {k + 1}/{n}", "prompt": prompt, "ratio": "16:9", "transparent": False,
+                  "dir": d, "name": f"{stamp}_{pose}_{k + 1}.png", "refs": refs[:max(1, cd["refs"])], "use": f"{ch['name']} · 三视图候选",
+                  "title": ch["name"], "char": ch["id"]} for k in range(n)]
+        return self._new_job("sheet", tasks, title=f"{ch['name']} 的三视图")
+
+    def char_final(self, cid, name):
+        ch = self.char(cid)
+        src = self.char_dir(ch) / SHEETS / Path(str(name or "")).name
+        if not name or not src.exists():
+            raise HTTPException(404, "这张候选找不到了")
+        d = self.char_dir(ch)
+        sheet = "定稿_三视图" + src.suffix.lower()
+        self._put(d, sheet, src.read_bytes())
+        ch.update(sheet=sheet, sheet_from=src.name, final_ts=time.time())
+        feed.add(f"角色「{ch['name']}」定稿了：以后出图都带上这张三视图（{paths.show(d / sheet)}）", "ok", job=JOBN)
+        return self._char_put(ch)
+
+    def char_make(self, cid, body):
+        """让角色做动作：写动作、选表情、立绘 / Q 版，自动带上三视图和外形描述。可以带上另一个角色一起出场。"""
+        self._ready()
+        ch = self.char(cid)
+        cast = [ch] + [self.char(x) for x in (body.get("with") or []) if str(x) != ch["id"]][:2]
+        for x in cast:
+            if not self.char_refs(x):
+                raise HTTPException(400, f"「{x['name']}」还没定稿（没有三视图，也没放参考图），先定稿再出")
+        action = str(body.get("action") or "").strip()[:1000]
+        if not action:
+            raise HTTPException(400, "写一句要做什么动作（比如 双手抱头往后仰）")
+        cd = card()
+        if not cd["refs"]:
+            raise HTTPException(400, f"{cd['name']} 不能带参考图，换一个模型（GPT Image / Nano Banana）")
+        refs = [p for x in cast for p in self.char_refs(x)][:max(1, cd["refs"])]
+        face = str(body.get("face") or "").strip()[:20]
+        kind = "Q版" if str(body.get("kind") or "").replace(" ", "") in ("Q版", "q", "Q") else "立绘"
+        ratio = body.get("ratio") if body.get("ratio") in RATIOS else "1:1"
+        prompt = make_prompt(cast, action, face, kind)
+        head = re.sub(r'[\\/:*?"<>|\r\n\t\s，。、；：！？,.;:!?]+', "", action)[:10] or "动作"
+        name = f"{datetime.now():%m%d_%H%M%S}_{kind}_{face or '正常'}_{head}.png"
+        tasks = [{"kind": "char", "item": None, "label": name, "prompt": prompt, "ratio": ratio, "transparent": bool(body.get("transparent")),
+                  "dir": self.char_dir(ch) / MADE, "name": name, "refs": refs, "use": "、".join(x["name"] for x in cast) + f" · {kind}",
+                  "title": ch["name"], "char": ch["id"], "src_prompt": action}]
+        return self._new_job("char", tasks, title=f"{'、'.join(x['name'] for x in cast)} · {face or '正常'} · {kind}")
+
+    def char_made(self, ch, limit=8):
+        d = self.char_dir(ch) / MADE
+        try:
+            fs = [x for x in d.iterdir() if x.is_file() and x.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]
+        except OSError:
+            return 0, []
+        fs.sort(key=lambda x: -x.stat().st_mtime)
+        return len(fs), [x.name for x in fs[:limit]]
+
+    def char_public(self, ch):
+        d = self.char_dir(ch)
+        n, made = self.char_made(ch)
+
+        def v(p):
+            try:
+                return int(p.stat().st_mtime)
+            except OSError:
+                return 0
+        return {"id": ch["id"], "name": ch["name"], "aliases": ch.get("aliases", []), "desc": ch.get("desc", ""), "pose": ch.get("pose", "A"),
+                "sheet": ch.get("sheet", ""), "sheet_v": v(d / ch["sheet"]) if ch.get("sheet") else 0, "refs": ch.get("refs", []),
+                "cands": self.char_cands(ch), "made_n": n, "made": made, "ready": bool(self.char_refs(ch)), "dir": paths.show(d)}
+
+    def char_made_path(self, cid, name):
+        ch = self.char(cid)
+        d = self.char_dir(ch) / MADE
+        p = (d / Path(str(name or "")).name).resolve()
+        if d.resolve() not in p.parents or not p.exists():
+            raise HTTPException(404, "这张图找不到了")
+        return p
+
     # ---------- 打开、打包 ----------
     def file(self, iid):
         it = self.item(iid)
@@ -1109,7 +1348,8 @@ class Gen:
             board["exists"] = bool(b.get("dir") and Path(b["dir"]).exists())
             board["items"] = [dict({k: it.get(k) for k in ("id", "file", "use", "ratio", "transparent", "prompt", "st", "err", "warn", "w", "h", "alpha",
                                                           "sec", "usd", "ver", "edited", "old", "hid")},
-                                   run_s=round(now - it["t0"]) if it.get("st") == "run" and it.get("t0") else None) for it in b["items"]]
+                                   run_s=round(now - it["t0"]) if it.get("st") == "run" and it.get("t0") else None,
+                                   chars=[x["name"] for x in self.match(" ".join((it["file"], it.get("use", ""), it["prompt"])))]) for it in b["items"]]
         cd = card()
         return {"board": board, "job": self.public(), "ratios": RATIOS, "tiers": TIERS, "quality": QUALITY,
                 "sizes": {t: {r: f"{w}×{h}" for r, (w, h) in v.items()} for t, v in SIZES.items()},
@@ -1120,7 +1360,8 @@ class Gen:
                         "withdir": bool(self.s.get("imgWithDir")), "key": bool(hint), "hint": hint, "base": self.s.get("imgBase")},
                 "usdCny": float(self.s.get("usdCny") or 7.2), "month": (db.kv_get("img_usage") or {}).get(m) or {"n": 0, "usd": 0.0},
                 "out": paths.show(self.out_root()), "templates": [dict(t, refs=len(t.get("refs") or [])) for t in self.templates()],
-                "recent": self.history(limit=12)}
+                "recent": self.history(limit=12), "chars": [self.char_public(x) for x in sorted(self.chars(), key=lambda x: x.get("ts", 0))],
+                "faces": FACES}
 
 
 G = Gen()
@@ -1204,9 +1445,76 @@ def img_tpl_ref(tid: str, k: int):
     return FileResponse(G.tpl_ref(tid, k))
 
 
+def _chars():
+    return {"chars": [G.char_public(x) for x in sorted(G.chars(), key=lambda x: x.get("ts", 0))]}
+
+
+@api.get("/api/img/chars")
+def img_chars():
+    return _chars()
+
+
+@api.post("/api/img/chars")
+def img_char_new(body: dict = Body(...)):
+    ch = G.char_save(body)
+    return dict(_chars(), id=ch["id"])
+
+
+@api.patch("/api/img/chars/{cid}")
+def img_char_edit(cid: str, body: dict = Body(...)):
+    G.char_save(body, cid)
+    return _chars()
+
+
+@api.delete("/api/img/chars/{cid}")
+def img_char_del(cid: str):
+    G.char_del(cid)
+    return _chars()
+
+
+@api.post("/api/img/chars/{cid}/ref")
+def img_char_ref(cid: str, body: dict = Body(...)):
+    G.char_ref_add(cid, body.get("img") or "")
+    return _chars()
+
+
+@api.delete("/api/img/chars/{cid}/ref/{name}")
+def img_char_ref_del(cid: str, name: str):
+    G.char_ref_del(cid, name)
+    return _chars()
+
+
+@api.post("/api/img/chars/{cid}/sheet")
+async def img_char_sheet(cid: str, body: dict = Body(default={})):
+    return {"job": G.char_sheet(cid, body)}
+
+
+@api.post("/api/img/chars/{cid}/final")
+def img_char_final(cid: str, body: dict = Body(...)):
+    G.char_final(cid, body.get("file"))
+    return _chars()
+
+
+@api.post("/api/img/chars/{cid}/make")
+async def img_char_make(cid: str, body: dict = Body(...)):
+    return {"job": G.char_make(cid, body)}
+
+
+@api.get("/api/img/chars/{cid}/f/{name}")
+def img_char_file(cid: str, name: str):
+    return FileResponse(G.char_path(cid, name), headers={"Cache-Control": "no-cache"})
+
+
+@api.get("/api/img/chars/{cid}/made/{name}")
+def img_char_made(cid: str, name: str):
+    return FileResponse(G.char_made_path(cid, name), headers={"Cache-Control": "private, max-age=31536000"})
+
+
 @api.post("/api/img/open")
 def img_open(body: dict = Body(default={})):
-    if body.get("hid"):
+    if body.get("char"):
+        d = G.char_dir(G.char(body["char"]))
+    elif body.get("hid"):
         d = G.hpath(body["hid"]).parent
     elif body.get("single"):
         d = G.out_root() / SINGLE

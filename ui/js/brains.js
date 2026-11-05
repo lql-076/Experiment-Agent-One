@@ -64,7 +64,7 @@ $('#ov').addEventListener('click', function (ev) {
 });
 function doAct(act, btn) {
   if (act === 'topup') { window.open('https://platform.deepseek.com/top_up', '_blank', 'noopener'); return; }
-  if (act === 'go_cloud') { closeBrain(); S.sec = 'cloud'; renderSettings(); goView('settings'); return; }
+  if (act === 'go_cloud') { closeBrain(); openSec('cloud'); return; }
   if (act === 'import_summary') { $('#sumFile').click(); return; }
   if (act === 'copy_prompt') { api('POST', '/api/actions/copy_prompt', {}).then(function (j) { copyText(j.prompt); }).catch(function (e) { toast(e.message); }); return; }
   var old = btn ? btn.textContent : '';

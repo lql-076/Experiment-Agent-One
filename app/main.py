@@ -20,7 +20,7 @@ from . import (agent, agentstate, autostart, checks, db, deepseek, docs, events,
 from .models import M
 from .qq import BOT
 
-VERSION = "1.8.17"
+VERSION = "2.0.0"
 PORT = 8765
 _bg = []
 
@@ -192,7 +192,7 @@ def index():
 
 
 # ---------------- 主题：ui/themes 里一个 .css 就是一套 ----------------
-_META = re.compile(r"@(id|name|desc|order|fx)[ \t]+([^\n]*)")
+_META = re.compile(r"@(id|name|desc|order|fx|retired)[ \t]+([^\n]*)")
 
 
 def theme_list():
@@ -207,6 +207,8 @@ def theme_list():
         for k, v in _META.findall(m.group(1) if m else ""):
             meta.setdefault(k, v.strip())
         tid = meta.get("id") or p.stem
+        if meta.get("retired"):                  # 停用的旧主题（v2.0 换成极简深 / 浅两套）：文件留着，不再列出来
+            continue
         if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", tid):
             continue
         order = meta.get("order", "")
@@ -332,7 +334,7 @@ async def agent_restart(k: str):
         raise HTTPException(404, "这一项不能从这里重启")
     name = {"model": "本地模型服务", "kev": "Kev", "qq": "QQ 通道", "osd": "游戏内显示"}[k]
     feed.add(f"你在 Agent 状态里点了重启：{name}", job="Agent 状态")
-    return {"ok": True}
+    return {"ok": True, "msg": f"重启了{name}，等一会儿就好"}
 
 
 @app.get("/api/hw")

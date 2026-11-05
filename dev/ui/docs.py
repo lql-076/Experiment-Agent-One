@@ -5,12 +5,12 @@ from common import launch
 OUT = sys.argv[1]; errs = []
 with sync_playwright() as pw:
     b = launch(pw)
-    for (w, h, th) in ((1999, 1077, 'abyss'), (1080, 1860, 'ember'), (1999, 1077, 'nebula')):
+    for (w, h, th) in ((1999, 1077, 'dark'), (1080, 1860, 'light'), (1440, 880, 'dark')):
         p = b.new_page(viewport={"width": w, "height": h}); p.on("pageerror", lambda e: errs.append(str(e)))
-        p.goto("http://127.0.0.1:8765/"); p.wait_for_timeout(3000)
+        p.goto("http://127.0.0.1:8765/?tool=docs"); p.wait_for_timeout(3000)
         p.evaluate("var b=document.getElementById('boot'); if (b.classList.contains('on')) b.click()"); p.wait_for_timeout(500)
         p.evaluate(f"setTheme('{th}', 10, 10)"); p.wait_for_timeout(800)
-        p.click('.nav[data-view="docs"]'); p.wait_for_timeout(1500)
+        p.wait_for_timeout(1500)
         print(w, th, "nav items:", p.evaluate("document.querySelectorAll('#docNav [data-doc]').length"), "cur:", p.evaluate("DOCS.cur"))
         p.evaluate("DOCS.mode = 'text'")      # 这里测文字版
         p.click('#docNav [data-doc="AI文档/架构/00-总览.md"]'); p.wait_for_timeout(1800)

@@ -13,17 +13,15 @@ N = len(list((ROOT / "docs" / "AI文档" / "架构").glob("*.md")))      # 每�
 errs, bad = [], []
 with sync_playwright() as pw:
     b = launch(pw)
-    for w, h, th in ((1680, 1000, "nebula"), (1080, 1860, "abyss"), (1999, 1077, "ember")):
+    for w, h, th in ((1440, 880, "dark"), (1080, 1860, "light"), (1999, 1077, "dark")):
         p = b.new_page(viewport={"width": w, "height": h})
         p.on("pageerror", lambda e: errs.append(str(e)))
         p.add_init_script("try{localStorage.removeItem('agentDocs.mode');localStorage.removeItem('agentDocs.cur')}catch(e){}")
-        p.goto("http://127.0.0.1:8765/")
+        p.goto("http://127.0.0.1:8765/?tool=docs")
         p.wait_for_timeout(1500)
-        p.wait_for_function("!S.checking", timeout=30000)
-        p.evaluate("var b=document.getElementById('boot'); if (b.classList.contains('on')) b.click()")
         p.evaluate(f"setTheme('{th}', 10, 10)")
         p.wait_for_timeout(500)
-        p.click('.nav[data-view="docs"]')
+        p.evaluate("if (S.view !== 'docs') goView('docs')")
         p.wait_for_timeout(2000)
         arch = p.evaluate("[].map.call(document.querySelectorAll('#docNav [data-doc]'), function (e) { return e.dataset.doc; }).filter(isArch)")
         if len(arch) != N:

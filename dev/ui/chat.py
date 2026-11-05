@@ -1,14 +1,20 @@
-"""对话页：发消息 → 打字中显示处理到哪一步 → 回复按 Markdown 显示 → 点小字看"这条怎么处理的"；
-右边 Agent 状态仪表盘（健康环、链路图连线、大数字、图标卡片）；聊天窄栏、状态大块；竖屏能收起；
-总览的 Agent 状态卡片；设置 › 游戏内显示的预览。
+"""主页和对话抽屉（v2.0）：一打开是主页（现在、后台在跑、刚做完、Agent 状态），对话收在最下面一条；
+Ctrl 空格展开对话 → 发消息 → 主页「现在」跟着走（正在……、每一步几秒）→ 回复按 Markdown 显示 → 「刚做完」第一行是它 →
+点回复下面的小字：抽屉收起、「现在」打开细节（每一步、查过的网页、判错了、换它重做）→ 指定交给谁 → 「全部」看每一项 →
+后台在跑的生图出现在「后台在跑」→ 左边的工具按钮开新窗口（?tool=）→ 设置 › 游戏内显示的预览（在设置的工具窗口里）。
 用法：python dev/ui/chat.py 截图文件夹（要先 dev/serve.sh start）"""
+import pathlib
 import sys
+import time
 
+import httpx
 from playwright.sync_api import sync_playwright
 
 from common import launch
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "dev/.run/shots"
+RUN = pathlib.Path(__file__).resolve().parents[1] / ".run"
+B = "http://127.0.0.1:8765"
 errs, bad = [], []
 
 
@@ -24,88 +30,136 @@ with sync_playwright() as pw:
         print(f"{w}×{h}")
         p = b.new_page(viewport={"width": w, "height": h})
         p.on("pageerror", lambda e: errs.append(str(e)))
-        p.goto("http://127.0.0.1:8765/")
+        p.goto(B + "/")
         p.wait_for_timeout(1500)
         p.wait_for_function("!S.checking", timeout=30000)
         p.evaluate("var b=document.getElementById('boot'); if (b.classList.contains('on')) b.click()")
         p.wait_for_timeout(600)
-        check(p.evaluate("S.view") == "chat", "一打开就是对话页")
+        check(p.evaluate("S.view") == "home" and p.evaluate("document.querySelectorAll('#view-home .hm-card').length") == 4,
+              "一打开是主页：现在、后台在跑、刚做完、Agent 状态四块")
+        check(p.evaluate("document.getElementById('view-chat').hidden") and p.evaluate("!!document.querySelector('.hm-strip')"), "对话收在最下面一条，平时不占地方")
+        p.keyboard.press("Control+Space")
+        p.wait_for_timeout(500)
+        check(p.evaluate("!document.getElementById('view-chat').hidden && document.activeElement.id === 'cIn'"), "Ctrl 空格展开对话，光标在输入框里")
         p.fill("#cIn", "帮我搜一下最新的显卡价格，**加粗**试试")
         p.keyboard.press("Enter")
         seen = set()
-        for _ in range(40):
+        for _ in range(60):
             t = p.evaluate("(document.getElementById('pendStep') || {}).textContent || ''")
             if t:
                 seen.add(t)
             if not p.evaluate("!!CHAT.pending"):
                 break
-            p.wait_for_timeout(100)
-        check(len(seen) >= 1, f"打字中显示了处理到哪一步：{sorted(seen)[:4]}")
-        p.wait_for_timeout(500)
+            p.wait_for_timeout(80)
+        check(len(seen) >= 1, f"对话里打字中显示了处理到哪一步：{sorted(seen)[:3]}")
+        p.wait_for_timeout(700)
         last = p.evaluate("(function(){var a=document.querySelectorAll('.msg.ai .bubble.md');return a.length?a[a.length-1].innerHTML:''})()")
         check("<a " in last or "<li>" in last or "<p>" in last, "回复按 Markdown 显示（段落、列表、链接）")
-        check("**" not in p.evaluate("(function(){var a=document.querySelectorAll('.msg.me .bubble');return a[a.length-1].textContent})()") or True, "你发的原样显示")
-        p.screenshot(path=f"{OUT}/chat-{w}.png")
+        p.screenshot(path=f"{OUT}/v2-chat-{w}.png")
+        top = p.evaluate("(document.querySelector('#hmDone .hd-row .x') || {}).textContent || ''")
+        check("显卡价格" in top, f"「刚做完」第一行就是刚才那句：{top[:20]}")
+        steps = p.evaluate("[].map.call(document.querySelectorAll('#hmNow .hm-steps b'), function (x) { return x.textContent; })")
+        check(steps[:1] == ["收到"] and "联网搜索" in steps and steps[-1] == "回答", f"「现在」那条进度：{' → '.join(steps)}")
+        # 正在处理的样子（测试环境的假服务太快，看不到中间状态：塞一条「正在联网搜索」的进去看「现在」怎么画）
+        p.evaluate("""(function(){var e=Object.assign({},homeEvs().slice(-1)[0],{id:999999,status:'running',ts:Date.now()/1000-1.6,latency:null,cost:0,
+          text:'测试：正在处理的样子',steps:[['收到','界面输入',0],['语义路由','DeepSeek 70%',0.03],['Kev','DeepSeek 80%',0.2],['联网搜索','显卡价格',0.6]]});
+          D.events=[e].concat(D.events||[]);homeFill();})()""")
+        p.wait_for_timeout(400)
+        ti = p.evaluate("document.querySelector('#hmNow .hm-title').textContent")
+        lv = p.evaluate("[document.getElementById('hmNow').classList.contains('live'), document.querySelector('#hmNow .hm-chip').textContent,"
+                        " [].map.call(document.querySelectorAll('#hmNow .hm-steps li'), function (x) { return x.className + ':' + x.querySelector('b').textContent; }).join(' ')]")
+        check(ti == "正在联网搜索" and lv[0] and lv[1].startswith("处理中") and lv[2] == "st-done:收到 st-done:分流 ×2 st-act:联网搜索 st-wait:回答",
+              f"正在处理时：大字「{ti}」、{lv[1]}、进度 {lv[2]}")
+        rt = p.evaluate("(renderTasks(RTASK.list), RTASK.list.map(function (t) { return t.k + ':' + t.name; }))")
+        check(any(x.startswith("chat:对话 · 测试") for x in rt), f"常驻屏的后台任务里也有正在处理的这句话：{rt[:2]}")
+        p.screenshot(path=f"{OUT}/v2-live-{w}.png")
+        p.evaluate("D.events=D.events.filter(function(e){return e.id!==999999}); renderTasks([]); homeFill()")
         p.click(".why-chip >> nth=-1")
-        p.wait_for_timeout(500)
-        side = p.evaluate("document.getElementById('sideBody').innerText")
-        check("每一步" in side and "联网搜索" in side and "交给" in side, "点小字，右边显示这条怎么处理的（每一步、联网搜索）")
-        check(p.evaluate("document.querySelectorAll('.es-links a').length") >= 1, "右边列出了查过的网页")
-        p.screenshot(path=f"{OUT}/chat-event-{w}.png")
-        p.click('[data-ctab="status"]')
-        p.wait_for_timeout(500)
-        st = p.evaluate("document.querySelectorAll('#sideBody .at').length")
-        check(st >= 10, f"Agent 状态列出了 {st} 张卡片")
-        ic = p.evaluate("document.querySelectorAll('#sideBody .at .ab-i').length")
-        check(ic == st, f"每张卡片都有图标（{ic}/{st}）")
-        kp = p.evaluate("document.querySelectorAll('#sideBody .kp').length")
-        check(kp >= 4, f"顶上一排大数字 {kp} 个")
-        wires = p.evaluate("document.querySelectorAll('#sideBody .fl-svg path:not(.hd)').length")
-        check(wires == 5, f"链路图连线画出来了（{wires} 条）")
-        ring = p.evaluate("document.querySelectorAll('#sideBody .hring .hr-a').length")
-        check(ring >= 1, f"健康环有 {ring} 段")
-        if w > h:
-            cw = p.evaluate("document.querySelector('.chat-main').getBoundingClientRect().width")
-            dw = p.evaluate("document.querySelector('.chat-side').getBoundingClientRect().width")
-            check(cw < dw * .7, f"聊天是窄栏（聊天 {cw:.0f}px，状态 {dw:.0f}px）")
-        else:
-            h0 = p.evaluate("document.querySelector('.chat-side').getBoundingClientRect().height")
-            p.click('#sideToggle')
-            p.wait_for_timeout(600)
-            h1 = p.evaluate("document.querySelector('.chat-side').getBoundingClientRect().height")
-            sm = p.evaluate("getComputedStyle(document.getElementById('dashSum')).display")
-            check(h1 < h0 / 3 and sm != "none", f"竖屏能收起状态（{h0:.0f}→{h1:.0f}px），收起后标题栏还留着各状态个数")
-            p.click('#sideToggle')
-            p.wait_for_timeout(600)
+        p.wait_for_timeout(600)
+        pop = p.evaluate("(document.querySelector('#hmNow .hm-pop') || {}).innerText || ''")
+        check(p.evaluate("document.getElementById('view-chat').hidden || !document.getElementById('view-chat').classList.contains('open')") and "每一步" in pop and "联网搜索" in pop,
+              "点回复下面的小字：对话收起，「现在」打开细节（每一步、联网搜索）")
+        check(p.evaluate("document.querySelectorAll('#hmNow .es-links a').length") >= 1 and p.evaluate("document.querySelectorAll('#hmNow [data-cfix]').length") == 4
+              and p.evaluate("document.querySelectorAll('#hmNow [data-redo]').length") >= 1, "细节里有查过的网页、判错了、换它重做")
+        p.screenshot(path=f"{OUT}/v2-detail-{w}.png")
+        p.keyboard.press("Escape")
+        p.wait_for_timeout(300)
+        check(not p.evaluate("!!document.querySelector('#hmNow .hm-pop')"), "Esc 关掉细节")
+        # 指定交给谁
+        p.evaluate("chatOpen()")
+        p.wait_for_timeout(400)
+        p.click("#cForce")
+        p.click('#cRoute [data-force="cl"]')
+        check(p.evaluate("ROUTES.cl.name") in p.evaluate("document.getElementById('cForce').textContent"), "输入框旁边能指定这一条交给谁")
+        p.fill("#cIn", "今天天气怎么样适合出门吗")
+        p.keyboard.press("Enter")
+        p.wait_for_function("!CHAT.pending", timeout=20000)
+        p.wait_for_timeout(400)
+        ev = p.evaluate("(function(){var l=homeEvs();return l[l.length-1]})()")
+        check(ev["to"] == "cl" and "你指定了去向" in [s[0] for s in ev["steps"]], f"指定的去向生效了（to={ev['to']}）")
+        p.click('#cForce'); p.click('#cRoute [data-force="auto"]')
+        p.keyboard.press("Escape")
+        p.wait_for_timeout(400)
+        check(not p.evaluate("CHAT.open"), "Esc 收起对话")
+        # Agent 状态
+        n_ok = p.evaluate("+(document.querySelector('.hs-sum b') || {}).textContent")
+        rows = p.evaluate("document.querySelectorAll('#hmSt .hs-row').length")
+        check(n_ok >= 1 and 1 <= rows <= 3, f"Agent 状态：写了几项正常（{n_ok}），出问题的最多列 3 行（{rows}）")
+        p.click('[data-ag-all]')
+        p.wait_for_timeout(400)
+        n_all = p.evaluate("document.querySelectorAll('.hm-all .ha-row').length")
+        check(n_all >= 12, f"「全部」列出了每一项（{n_all} 项）")
+        p.screenshot(path=f"{OUT}/v2-all-{w}.png")
+        p.click('.hm-all .hm-x')
+        # 后台在跑：生图在出的时候，这里有一根进度条
+        (RUN / "fake_img_slow.flag").write_text("4")
+        httpx.put(B + "/api/settings", json={"imgModel": "gpt-image-2.5-sunburst-vip"}, headers={"X-Agent": "1"})
+        httpx.post(B + "/api/img/single", json={"prompt": "主页后台在跑的测试", "ratio": "1:1"}, headers={"X-Agent": "1"})
+        p.evaluate("poll()")
+        p.wait_for_timeout(1500)
+        jobs = p.evaluate("(document.getElementById('hmJobs') || {}).innerText || ''")
+        check("生图" in jobs and p.evaluate("document.querySelectorAll('#hmJobs .hj-bar').length") >= 1 and p.evaluate("document.querySelector('.nav[data-tool=\"img\"]').classList.contains('on-busy')"),
+              "生图在出：「后台在跑」有一根进度条，左边「生图」按钮上有个小点")
+        p.screenshot(path=f"{OUT}/v2-jobs-{w}.png")
+        for _ in range(40):
+            if not (httpx.get(B + "/api/img").json().get("job") or {}).get("st") == "run":
+                break
+            time.sleep(0.3)
+        (RUN / "fake_img_slow.flag").unlink(missing_ok=True)
+        p.evaluate("poll()")
+        p.wait_for_timeout(900)
+        check("生图" in p.evaluate("document.getElementById('hmDone').innerText"), "出完了：「刚做完」里有这次生图")
         over = p.evaluate("document.documentElement.scrollWidth - innerWidth")
         check(over <= 1, f"没有横向溢出（{over}px）")
-        # 总览的 Agent 状态卡片
-        p.evaluate("goView('home')")
-        p.wait_for_timeout(900)
-        n = p.evaluate("document.querySelectorAll('.agcard .agm').length")
-        check(n >= 10, f"总览上有 Agent 状态卡片，一格一个图标（{n} 格）")
-        cut = p.evaluate("(function(){var l=document.querySelector('.agcard .ag-list');return l.scrollHeight-l.clientHeight})()")
-        check(cut <= 4 or w < h, f"总览的 Agent 卡片不用滚就看得全（多出 {cut}px）")
-        hov = p.evaluate("(function(){var c=document.querySelector('.hc.lift');return getComputedStyle(c).transitionProperty})()")
-        check("transform" in hov, "今日分流这些卡片也能浮起来")
-        p.screenshot(path=f"{OUT}/home-agent-{w}.png")
-        # 游戏内显示
-        p.evaluate("pushSet({osdItems: 'fps,low1,cpu,gpu,vram,power', osdPos: 'tl'}); S.set.osdItems = 'fps,low1,cpu,gpu,vram,power'; S.set.osdPos = 'tl'")
-        p.evaluate("S.sec='osd'; renderSettings(); goView('settings')")
-        p.wait_for_timeout(900)
-        n0 = p.evaluate("document.querySelectorAll('#osdPrev .osd-box b').length")
-        p.click('[data-osd-item="time"]')
-        p.wait_for_timeout(300)
-        n1 = p.evaluate("document.querySelectorAll('#osdPrev .osd-box b').length")
-        p.select_option("#f-osdPos", "br")
-        p.wait_for_timeout(400)
-        pos = p.evaluate("document.querySelector('#osdPrev .osd-box').className")
-        check(n1 == n0 + 1 and "pos-br" in pos, f"游戏内显示：加一项预览多一行（{n0}→{n1}），换位置预览跟着动（{pos}）")
-        p.screenshot(path=f"{OUT}/osd-{w}.png")
-        p.click('[data-osd-item="time"]')
-        p.select_option("#f-osdPos", "tl")
-        p.wait_for_timeout(1000)                       # 等设置存回后端再关
+        # 工具按钮：开新窗口（浏览器里用 window.open；桌面窗口里是 open_tool）
+        with p.expect_popup() as pop_info:
+            p.click('.nav[data-tool="events"]')
+        pp = pop_info.value
+        pp.wait_for_timeout(1500)
+        check("tool=events" in pp.url and pp.evaluate("S.view") == "events" and pp.evaluate("getComputedStyle(document.querySelector('.rail')).display") == "none",
+              "点「事件」：弹出一个只有事件的窗口（没有侧栏）")
+        pp.close()
+        # 游戏内显示（在设置的工具窗口里）
+        p.evaluate("pushSet({osdItems: 'fps,low1,cpu,gpu,vram,power', osdPos: 'tl'})")
         p.close()
+        s = b.new_page(viewport={"width": 1440, "height": 880} if w > h else {"width": 1080, "height": 1860})
+        s.on("pageerror", lambda e: errs.append(str(e)))
+        s.goto(B + '/?tool=settings&arg={"sec":"osd"}')
+        s.wait_for_timeout(1500)
+        check(s.evaluate("S.sec") == "osd", "设置窗口能直接跳到某个分区（游戏内显示）")
+        n0 = s.evaluate("document.querySelectorAll('#osdPrev .osd-box b').length")
+        s.click('[data-osd-item="time"]')
+        s.wait_for_timeout(300)
+        n1 = s.evaluate("document.querySelectorAll('#osdPrev .osd-box b').length")
+        s.select_option("#f-osdPos", "br")
+        s.wait_for_timeout(400)
+        pos = s.evaluate("document.querySelector('#osdPrev .osd-box').className")
+        check(n1 == n0 + 1 and "pos-br" in pos, f"游戏内显示：加一项预览多一行（{n0}→{n1}），换位置预览跟着动（{pos}）")
+        s.screenshot(path=f"{OUT}/osd-{w}.png")
+        s.click('[data-osd-item="time"]')
+        s.select_option("#f-osdPos", "tl")
+        s.wait_for_timeout(1000)                       # 等设置存回后端再关
+        s.close()
     b.close()
 print("JS 报错：", errs or "没有")
 print("不过的：", bad or "没有")

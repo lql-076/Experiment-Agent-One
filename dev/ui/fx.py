@@ -9,7 +9,7 @@ with sync_playwright() as pw:
     p.on("pageerror", lambda e: errs.append(str(e))); p.on("console", lambda m: m.type == "error" and errs.append("console: " + m.text))
     p.goto("http://127.0.0.1:8765/"); p.wait_for_timeout(3500)
     p.evaluate("var b=document.getElementById('boot'); if (b.classList.contains('on')) b.click()"); p.wait_for_timeout(600)
-    for th in ("nebula", "abyss", "ember"):
+    for th in ("dark", "light"):
         p.evaluate(f"setTheme('{th}', 10, 10)"); p.wait_for_timeout(1000)
         print("==", th, "data-fx:", p.evaluate("root.dataset.fx"), "lv", p.evaluate("root.dataset.fxlv"))
         # 报告页：长页面

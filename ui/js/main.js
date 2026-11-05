@@ -11,10 +11,11 @@ function poll() {
     if (S.set.demo) { syncStatus(); return; }
     var sig = st.events.map(function (e) { return e.id + e.status + (e.fix || ''); }).join(',');
     if (sig !== D.sig.ev) { D.sig.ev = sig; D.events = st.events; if (S.view === 'events') refreshEventList(); }
-    if (S.view === 'chat') chatRefresh();
+    chatRefresh();
     var hs = JSON.stringify([st.today, st.next && st.next.id, st.next && st.next.ts, st.asks_pending, st.prep.ready, st.cost_month, st.balance, st.setup, sig.slice(0, 60), st.agent && st.agent.head, st.agent && (st.agent.groups || []).map(function (g) { return g.items.map(function (i) { return i.st + (i.m ? i.m.txt : ''); }).join(); }).join('|')]);
-    if (hs !== D.sig.home) { D.sig.home = hs; if (S.view === 'home') renderHome(true); else D.homeDirty = true; }
-    renderCards(st.cards); syncStatus(); syncBadges(); fillResidentText(); renderTasks(st.tasks);
+    if (hs !== D.sig.home) { D.sig.home = hs; D.homeDirty = true; }
+    if (S.view === 'home') homeFill();             // 主页每一块自己比较，没变就不重画
+    renderCards(st.cards); syncStatus(); syncBadges(); fillResidentText(); renderTasks(st.tasks); syncToolBusy(st.tasks);
     // 后台每隔一会儿重查会自己变的几项（模型服务、Kev、硬件监控助手、QQ）：变了就把整备和一键补齐刷新一下，不用点重新自检
     var pts = st.prep && st.prep.ts; if (pts && D.prepTs && pts !== D.prepTs && !S.checking) refreshChecks(); if (pts && !S.checking) D.prepTs = pts;
     var cand = st.qq.candidate; if (cand && S.check.qqbind && S.check.qqbind.st === 'miss') { S.check.qqbind = { st: 'wait', d: '收到一条消息「' + cand.text.slice(0, 16) + '」，是你发的就点「是我」', action: 'qq_bind', extra: { openid: cand.openid } }; updatePrepUI('qqbind'); }
@@ -38,6 +39,7 @@ function loadServer() {
 }
 
 function renderAll() { renderChat(); renderHome(); renderEvents(); renderBrains(); renderReports(); renderSettings(); renderResident(); syncBadges(); }
+/* 工具窗口（?tool=img 这种）只要那一个工具：不弹启动自检、不自己进常驻屏 */
 
 /* ================= 启动 ================= */
 /* 第三条路的名字由设置决定（默认「更强的模型」，你可以改成「网页 Claude」之类） */
@@ -54,8 +56,13 @@ function start() {
   tickClock();
   startHW();
   requestAnimationFrame(function () { placeInd(true); });
-  boot();
-  if (S.set.startRes) setMode('resident'); else resetIdle();
+  syncTone();
+  if (TOOL) toolBoot();
+  else {
+    boot();
+    if (S.set.startRes) setMode('resident'); else resetIdle();
+    if (/[?&]chat=1/.test(location.search)) setTimeout(function () { chatOpen(); }, 300);
+  }
   if (LIVE) {
     poll(); fetchReport(); fetchBrains();
     setTimeout(prefetchMonitor, 1500);     // 先拿一次后台数据：第一次点开「后台」不用等
@@ -65,6 +72,6 @@ function start() {
 }
 var isHttp = location.protocol === 'http:' || location.protocol === 'https:';
 (isHttp ? api('GET', '/api/ping', null, 1500) : Promise.reject())
-  .then(function () { LIVE = true; return loadServer(); })
+  .then(function (j) { LIVE = true; if (j && j.version) $('#tbVer').textContent = 'v' + String(j.version).replace(/\.0$/, ''); return loadServer(); })
   .catch(function () { if (LIVE) return; LIVE = false; })
   .then(start);

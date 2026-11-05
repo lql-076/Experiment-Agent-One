@@ -13,7 +13,7 @@ from . import paths
 
 DEFAULTS = {
     # 外观
-    "theme": "abyss", "bright": 100, "warmth": 4, "scale": 100, "motion": "smooth", "perf": False,
+    "theme": "dark", "bright": 100, "warmth": 4, "scale": 100, "motion": "smooth", "perf": False,
     "layout": "auto", "h24": True, "demo": False, "autoScale": True, "uiShell": "desk", "closeAct": "ask",
     # 自动化
     "idleRes": "5", "startRes": False, "bootShow": True, "secs": False, "hideCursor": True, "drift": True,

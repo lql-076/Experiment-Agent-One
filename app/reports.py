@@ -2,7 +2,7 @@
 import time
 from datetime import datetime, timedelta
 
-from . import checks, db, deepseek, growth, notify, reminders, router, settings, setup, websearch
+from . import checks, db, deepseek, feed, growth, notify, reminders, router, settings, setup, websearch
 from .events import recent
 from .models import M
 from .qq import BOT
@@ -145,7 +145,7 @@ def _bal():
 
 
 def tasks():
-    """后台正在跑、有进度的活（常驻屏的进度条用，v1.8.8）：安装配音、一键补齐、生成配音。没有就是空列表。"""
+    """后台正在跑、有进度的活（常驻屏的进度条和主页「后台在跑」用）：安装配音、一键补齐、生成配音（v1.8.8）、生图（v2.0）。没有就是空列表。"""
     from . import tts, tts_install
     out = []
     i = tts_install.public()
@@ -162,7 +162,30 @@ def tasks():
                     "phase": f"百炼云端 · {j['n']} 句" if j.get("engine") == "cloud" else f"整段一次生成 · {j['n']} 句" if j.get("whole")
                     else f"第 {min(j['i'] + 1, j['n'])}/{j['n']} 句",
                     "pct": j.get("pct"), "speed": None, "eta": j["eta"]})
+    g = imagegen_job()
+    if g:
+        out.append(g)
     return out
+
+
+def imagegen_job():
+    """生图在跑（批量、单张、角色的三视图、让角色做动作，v2.0）：第几张、这张画了多久、大概还要多久。"""
+    from . import imagegen
+    j = imagegen.G.public()
+    if not j or j["st"] != "run":
+        return None
+    kind = imagegen.KIND_NAME.get(j["kind"], j["kind"])
+    title = imagegen.G.job.get("title") or ""
+    cur, n, fin = j.get("cur") or {}, max(1, j["n"]), j["done"] + j["fail"]
+    sec = float(cur.get("sec") or 60)
+    frac = min(0.95, (cur.get("run_s") or 0) / max(5.0, sec)) if cur else 0.0
+    ok = [r["sec"] for r in j["results"] if r.get("ok") and r.get("sec")]
+    per = sum(ok) / len(ok) if ok else sec
+    left = max(0, n - fin)
+    eta = max(0.0, left * per - (cur.get("run_s") or 0)) if left else 0.0
+    return {"k": "img", "name": f"生图 · {kind}" + (f" · {title}" if title else ""),
+            "phase": f"第 {min(fin + 1, n)}/{n} 张" + (f" · {cur.get('label')}" if cur.get("label") else "") + (f" · 没出来 {j['fail']} 张" if j["fail"] else ""),
+            "pct": round((fin + frac) / n * 100, 1), "speed": None, "eta": round(eta)}
 
 
 async def state():
@@ -181,4 +204,4 @@ async def state():
             "qq": {"status": BOT.status, "detail": BOT.detail, "candidate": db.kv_get("qq_candidate") if not settings.S["qqUser"] else None},
             "models": {"server": ms["server"], "kev": ms["kev_ready"], "yielding": ms["yielding"], "yield_reason": ms["yield_reason"],
                        "embed": bool((ms["health"] or {}).get("embed_loaded")), "base": bool((ms["health"] or {}).get("base_loaded"))},
-            "tasks": tasks(), "events": recent(40)}
+            "tasks": tasks(), "done_jobs": feed.done_list(), "events": recent(40)}

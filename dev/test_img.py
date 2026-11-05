@@ -441,6 +441,97 @@ check(r["templates"] == [] and c.delete("/api/img/templates/nope").status_code =
 r = c.post("/api/img/open", json={"hid": hist(1)[0]["id"]}).json()
 check("单张" in r["msg"], f"历史里点「打开文件夹」：打开那张图所在的文件夹（{r['msg'][-20:]}）")
 
+# ---------- 角色（v2.0）：建角色 → 出三视图 → 定稿 → 让角色做动作；批量清单里写到角色名就自动带上 ----------
+model("gpt-image-2.5-sunburst-vip")
+db.run("DELETE FROM kv WHERE k='img_chars'")
+
+
+def fn():
+    return httpx.get(FAKE + "/_fake/img/log").json()["n"]
+
+
+def since(n0):
+    j_ = httpx.get(FAKE + "/_fake/img/log").json()
+    k_ = j_["n"] - n0
+    return j_["items"][-k_:] if k_ > 0 else []
+
+
+DESC_B = "女，银白色短发、薄荷绿开衫、白色百褶裙，总抱着一本深棕色硬皮书。"
+DESC_Z = "男，深蓝黑色头发三七分，圆框细眼镜，宽大的紫色卫衣，脖子上挂着耳机。"
+r = c.post("/api/img/chars", json={"name": "白叶", "aliases": "看板娘", "desc": DESC_B})
+cb = r.json()["id"] if r.status_code == 200 else ""
+r2 = c.post("/api/img/chars", json={"name": "看板娘", "desc": "x"})
+cz = c.post("/api/img/chars", json={"name": "紫苏", "desc": DESC_Z}).json()["id"]
+chs = {x["name"]: x for x in c.get("/api/img/chars").json()["chars"]}
+check(r.status_code == 200 and r2.status_code == 400 and "白叶" in r2.json()["detail"] and list(chs) == ["白叶", "紫苏"] and chs["白叶"]["aliases"] == ["看板娘"]
+      and not chs["白叶"]["ready"] and chs["白叶"]["dir"].replace("\\", "/").endswith("角色/白叶"), "建角色：白叶（别名 看板娘）、紫苏；名字不能和别的角色撞；还没定稿")
+n0 = fn()
+r = c.post(f"/api/img/chars/{cb}/sheet", json={"pose": "A", "n": 2})
+check(r.status_code == 200 and r.json()["job"]["kind"] == "sheet" and r.json()["job"]["n"] == 2, "出三视图：一次 2 张候选")
+tk = c.get("/api/tasks").json()["tasks"]
+check(any(t["k"] == "img" and "三视图" in t["name"] for t in tk), f"后台任务里有这次生图（常驻屏、主页「后台在跑」看得到）：{[t['name'] for t in tk]}")
+j = wait()
+lg = since(n0)
+cands = {x["name"]: x for x in j["chars"]}["白叶"]["cands"]
+check(j["job"]["done"] == 2 and len(cands) == 2 and all(x["path"] == "generations" for x in lg) and "三视图" in lg[0]["body"]["prompt"] and "A 字站姿" in lg[0]["body"]["prompt"]
+      and DESC_B in lg[0]["body"]["prompt"] and lg[0]["body"]["size"] == "2048x1152", "三视图：16:9，提示词里写了正面 / 侧面 / 背面、A 字站姿和完整的外形描述；没参考图走文生图")
+r = c.post(f"/api/img/chars/{cb}/final", json={"file": cands[1]})
+b_ = {x["name"]: x for x in r.json()["chars"]}["白叶"]
+sheet = OUT / "角色" / "白叶" / b_["sheet"]
+check(r.status_code == 200 and b_["ready"] and b_["sheet"].startswith("定稿_三视图") and sheet.exists() and c.get(f"/api/img/chars/{cb}/f/{b_['sheet']}").content[:4] == b"\x89PNG",
+      f"挑一张定稿：存成 {b_['sheet']}，以后出图带上它")
+c.post(f"/api/img/chars/{cz}/ref", json={"img": ref1})
+z_ = {x["name"]: x for x in c.get("/api/img/chars").json()["chars"]}["紫苏"]
+check(z_["refs"] == ["参考_1.png"] and z_["ready"], "紫苏放了一张自己的参考图（导入已有的图）：没出三视图也能用")
+n0 = fn()
+c.post(f"/api/img/chars/{cz}/sheet", json={"pose": "T", "n": 1})
+wait()
+lg = since(n0)
+check(len(lg) == 1 and lg[0]["path"] == "edits" and "T 字站姿" in lg[0]["body"]["prompt"] and "照参考图画" in lg[0]["body"]["prompt"], "有参考图时出三视图照着参考图画（走 edits）")
+n0 = fn()
+r = c.post(f"/api/img/chars/{cb}/make", json={"action": "双手叉腰得意地笑", "face": "得意", "kind": "Q版", "ratio": "1:1", "with": [cz]})
+j = wait()
+lg = since(n0)
+made = {x["name"]: x for x in j["chars"]}["白叶"]["made"]
+check(r.status_code == 200 and len(lg) == 1 and lg[0]["path"] == "edits" and len(lg[0]["files"]) == 2 and DESC_B in lg[0]["body"]["prompt"] and DESC_Z in lg[0]["body"]["prompt"]
+      and "Q 版" in lg[0]["body"]["prompt"] and "得意" in lg[0]["body"]["prompt"] and len(made) == 1 and "Q版_得意" in made[0]
+      and c.get(f"/api/img/chars/{cb}/made/{made[0]}").status_code == 200,
+      f"让白叶做动作、紫苏一起出场：带上两个人的参考图和外形描述，Q 版、得意；存进 角色\\白叶\\出图（{made[0] if made else '没有'}）")
+r = c.post(f"/api/img/chars/{cb}/make", json={"action": "", "face": "开心"})
+check(r.status_code == 400 and "动作" in r.json()["detail"], "没写动作：说写一句要做什么")
+CL = """# 角色测试清单
+
+### img01_白叶_开场讲解.png
+- 比例：16:9
+- 透明背景：不开
+- 提示词：站在黑板前，一本正经地举着书讲解，黄昏的教室。
+
+### img02_吐槽.png
+- 比例：1:1
+- 透明背景：开
+- 提示词：紫苏抱头崩溃，Q 版，夸张的表情。
+
+### img03_道具_书.png
+- 比例：1:1
+- 透明背景：开
+- 提示词：一本深棕色硬皮书，夹着红色书签带。
+"""
+j = c.post("/api/img/load", json={"md": CL, "name": "角色测试.md"}).json()
+its = {x["file"]: x for x in j["board"]["items"]}
+check(its["img01_白叶_开场讲解.png"]["chars"] == ["白叶"] and its["img02_吐槽.png"]["chars"] == ["紫苏"] and its["img03_道具_书.png"]["chars"] == [],
+      "批量清单：标题里写了「白叶」、提示词里写了「紫苏」的认出来了，没写角色的不带")
+n0 = fn()
+c.post("/api/img/run", json={})
+j = wait()
+lg = since(n0)
+by = {("白叶" if "开场讲解" in x["body"]["prompt"] or "举着书" in x["body"]["prompt"] else "紫苏" if "抱头崩溃" in x["body"]["prompt"] else "书"): x for x in lg}
+check(j["job"]["done"] == 3 and by["白叶"]["path"] == "edits" and DESC_B in by["白叶"]["body"]["prompt"] and by["紫苏"]["path"] == "edits" and DESC_Z in by["紫苏"]["body"]["prompt"]
+      and by["书"]["path"] == "generations" and DESC_B not in by["书"]["body"]["prompt"],
+      "批量出图：写到角色的两张自动带上她们的参考图（走 edits）和外形描述，提示词只写动作就行；没写角色的照常文生图")
+r = c.delete(f"/api/img/chars/{cz}")
+check([x["name"] for x in r.json()["chars"]] == ["白叶"] and (OUT / "角色" / "紫苏" / "参考_1.png").exists(), "从列表里去掉紫苏：图还在文件夹里，不删")
+c.post("/api/img/chars", json={"name": "紫苏", "desc": DESC_Z})
+
 # 没填 Key
 c.put("/api/secrets", json={"k": "imgKey", "v": ""})
 r, r2 = c.post("/api/img/run", json={}), c.post("/api/img/single", json={"prompt": "x"})

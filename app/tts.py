@@ -1009,6 +1009,7 @@ class TTS:
                 job.update(st="done", i=len(segs), cur="", eta=0,
                            msg=f"好了：{mmss(meta['duration'])}音频，用了 {mmss(gen)}，花了约 {yuan(job['cny'])}（计费 {job['bill']} 字符）")
                 feed.add(f"配音好了（百炼云端）：{len(segs)} 句，{mmss(meta['duration'])}音频，用了 {mmss(gen)}，约 {yuan(job['cny'])}", "ok", job="配音")
+                feed.done(f"配音 · {v['label']} · {len(segs)} 句（{mmss(meta['duration'])}）", "百炼云端", gen, yuan(job["cny"]), "tts")
                 return
             speed = {"audio_s": meta["duration"], "gen_s": round(gen, 1), "per_min": round(gen / max(meta["duration"], 0.1) * 60),
                      "attn": (self._h or {}).get("attn", ""), "kind": v["kind"], "whole": job["whole"], "ts": time.time()}
@@ -1017,6 +1018,7 @@ class TTS:
                        msg=f"好了：{mmss(meta['duration'])}音频，生成用了 {mmss(gen)}（照这个速度，1 分钟音频要 {mmss(speed['per_min'])}）")
             feed.add(f"配音好了：{len(segs)} 句，{mmss(meta['duration'])}音频，生成用了 {mmss(gen)}" + ("（整段一次生成）" if job["whole"] else "（一句一句）"),
                      "ok", job="配音")
+            feed.done(f"配音 · {v['label']} · {len(segs)} 句（{mmss(meta['duration'])}）", "本地", gen, "免费", "tts")
         except Stopped as e:
             spent = f"；已经念完的部分百炼照样计费，约 {yuan(job['cny'])}" if job.get("cny") else ""
             job.update(st="stop", msg=f"停了：{e}（这次没生成完，没保存{spent}）")
