@@ -1,4 +1,4 @@
-"""读本地文件（v1.8.17）：只读你在 设置 › 记忆与文件 ›「能读的文件夹」里加的文件夹。
+"""读本地文件（v1.8.17）：只读你在 设置 › 记忆与文件 ›「能读的文件夹」里加的文件夹；v2.1 起 Agent 自己的工作文件夹（app/workspace.py）也能读。
 
 - 只读：列目录、搜文件（文件名 + 文本内容）、读文件（文本、Word、图片）。不写、不删、不改、不运行。
 - 每个文件夹一个开关「能发给 DeepSeek」：关着的只给本地小脑看（程序读出来塞进提示词），DeepSeek 的工具看不到它。
@@ -69,11 +69,26 @@ def _inside(p: Path, root: Path) -> bool:
         return False
 
 
+def _ws():
+    """Agent 自己的工作文件夹（v2.1，app/workspace.py）：也能读，算「能发给 DeepSeek」的。"""
+    try:
+        from . import workspace
+        return workspace.root_entry()
+    except Exception:
+        return None
+
+
+def roots(cloud=False):
+    """能读的文件夹 + 工作文件夹。"""
+    w = _ws()
+    return dirs(cloud) + ([w] if w else [])
+
+
 def owner(p, cloud=False):
-    """这个路径属于哪个能读的文件夹（最长的那个）；不属于返回 None。cloud=True 只看「能发给 DeepSeek」的。"""
+    """这个路径属于哪个能读的文件夹（最长的那个）；不属于返回 None。cloud=True 只看「能发给 DeepSeek」的。工作文件夹也算。"""
     rp = _real(p)
     best = None
-    for d in dirs(cloud):
+    for d in roots(cloud):
         root = _real(d["path"])
         if _inside(rp, root) and (best is None or len(str(root)) > len(str(_real(best["path"])))):
             best = d
@@ -265,11 +280,11 @@ def find(query, path=None, cloud=False):
     if not q:
         raise Denied("没给要搜的词")
     words = [w for w in re.split(r"\s+", q.lower()) if w][:5]
-    roots = [check(path, cloud)] if path else [_real(d["path"]) for d in dirs(cloud)]
-    if not roots:
+    rts = [check(path, cloud)] if path else [_real(d["path"]) for d in roots(cloud)]
+    if not rts:
         raise Denied("还没有能读的文件夹（设置 › 记忆与文件 › 能读的文件夹）")
     hits = []
-    for root in roots:
+    for root in rts:
         if not root.is_dir():
             continue
         for f in _walk(root):
@@ -316,6 +331,19 @@ TOOLS = [
 NAMES = {"list_dir", "find_files", "read_file"}
 
 
+def _tool_path(p):
+    """工具里给的相对路径：按工作文件夹算（v2.1）。"""
+    s = str(p or "").strip().strip('"')
+    w = _ws()
+    if s and w and not Path(s).is_absolute():
+        try:
+            from . import workspace
+            return str(workspace.real(s))
+        except Exception:
+            return s
+    return s
+
+
 def hint() -> str:
     ds = dirs(True)
     if not ds:
@@ -327,8 +355,12 @@ def hint() -> str:
 
 def run_tool(name, args):
     """执行一个文件工具（只给能发给 DeepSeek 的文件夹）。返回 (给模型的文字, 步骤 [名, 说明], 图片 dict 或 None, 读到的路径)。"""
+    args = dict(args or {})
+    for k in ("path",):
+        if args.get(k):
+            args[k] = _tool_path(args[k])
     if name == "list_dir":
-        r = list_dir(args.get("path"), cloud=True)
+        r = list_dir(args.get("path") or _tool_path("."), cloud=True)
         return r["text"], ["列目录", f"{_short(r['path'])} · {r['n']} 项"], None, None
     if name == "find_files":
         r = find(args.get("query"), args.get("path") or None, cloud=True)
@@ -345,7 +377,7 @@ def run_tool(name, args):
 
 def _short(p):
     p = str(p)
-    for d in dirs():
+    for d in roots():
         root = str(_real(d["path"]))
         if p.startswith(root):
             base = Path(root).name
@@ -443,7 +475,7 @@ WANT_RE = re.compile(r"笔记|文件|文档|仓库|资料|档案|设定|世界�
 
 def wants(text) -> bool:
     """看着像要查他电脑上的资料（本地小脑不会用工具，这类交给 DeepSeek 带着读文件的工具）。"""
-    return bool(dirs(True)) and bool(WANT_RE.search(text or ""))
+    return bool(roots(True)) and bool(WANT_RE.search(text or ""))
 
 
 # ---------------- 对话里发的图片、读过的文件（记在 chat_files，聊天记录里显示） ----------------

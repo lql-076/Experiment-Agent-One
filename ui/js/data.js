@@ -177,7 +177,7 @@ var SECTIONS = [
     { k: 'qqUser', l: '只回复这个用户（openid）', ph: '不用手填：给机器人发一句话后，在 整备 › 绑定你的 QQ 点「是我」', h: '其他人发来的消息一律不处理' },
     { note: '单聊主动消息官方允许，每人每天上限 1000 条；但你在 QQ 里可以关掉"允许主动发送"，这时提醒会改成电脑弹窗 + 界面卡片。你 55 分钟内说过话的话，提醒会用被动回复，最稳。' }
   ] },
-  { id: 'memory', name: '记忆与文件', custom: 'memory', desc: '记忆、技能、提示词都是中文 Markdown，你随时能打开看、改。agent 只能写自己的文件夹；别的文件夹要你在下面允许了才能读（只读）。', fields: [
+  { id: 'memory', name: '记忆与文件', custom: 'memory', desc: '记忆、技能、提示词都是中文 Markdown，你随时能打开看、改。agent 有一个自己的工作文件夹，在里面写、改、删、运行程序都不用问你；别的文件夹要你在下面允许了才能读（只读）。', fields: [
     { k: 'memDir', l: 'agent 自己的文件夹', place: 'memory', h: '想放进 Obsidian 库就填库里的一个子文件夹，比如 D:\\Obsidian\\我的库\\agent' },
     { k: 'useGit', l: '用 git 记录每次改动（可一键撤销）', t: 'toggle', d: true },
     { k: 'logDays', l: '日志保留天数', t: 'number', u: '天', d: 90 }

@@ -24,6 +24,10 @@ TIERS = {
     "tool.add":        ("ask",  False, "给自己加新工具或新权限"),
     "money":           ("ask",  False, "花钱：充值、换更贵的模型、提高额度"),
     "privacy.send":    ("ask",  False, "把隐私内容发出本机"),
+    # v2.1：它自己的工作文件夹（app/workspace.py）。作者给的权限：在里面写、改、删、挪、运行程序都不用问；改和删之前旧的先进备份（能找回来）。
+    # 工作文件夹外面照旧：删除任何文件、给自己加权限都要先问你
+    "workspace.file":  ("auto", False, "在自己的工作文件夹里写、改、删、挪文件（先备份）"),
+    "workspace.run":   ("auto", False, "在自己的工作文件夹里运行程序"),
 }
 # 界面"安全线"页面的分组键 -> 动作
 GROUPS = {"brain": ["brain.create"], "skill": ["memory.write"], "cron": ["reminder.create", "reminder.update"],

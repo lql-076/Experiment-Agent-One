@@ -79,7 +79,7 @@ function sectionBody(sec) {
   if (sec.custom === 'hw') h += '<div id="hwCtl">' + hwCtlHTML() + '</div>';
   if (sec.custom === 'models') h += '<div id="ttsInst">' + ttsInstHTML() + '</div>';
   if (sec.custom === 'auto') h += '<div id="autoSt">' + autoStHTML() + '</div>';
-  if (sec.custom === 'memory') { h += '<div id="rdirs">' + rdirsHTML() + '</div>'; if (useLive() && !RDIRS.ts) fetchRdirs(); }
+  if (sec.custom === 'memory') { h += '<div id="wsBox">' + wsHTML() + '</div><div id="rdirs">' + rdirsHTML() + '</div>'; if (useLive() && !RDIRS.ts) fetchRdirs(); if (useLive() && !WS.ts) fetchWs(); }
   if (sec.custom === 'growth') h += '<div class="btnrow" style="margin-bottom:1.5rem"><button class="btn" id="nightNow"' + (useLive() ? '' : ' disabled') + '>现在跑一次每日差事</button></div>';
   return h + '<div class="fields">' + sec.fields.map(fieldHTML).join('') + '</div>';
 }
@@ -272,6 +272,29 @@ function saveRem(row, rerender) {
     }).catch(function (e) { toast('没存上：' + e.message); });
   }, rerender ? 0 : 500);
 }
+/* Agent 自己的工作文件夹（v2.1，app/workspace.py）：在里面写、改、删、挪、运行程序都不用问你；改和删之前旧的先进备份，备份半年清一次、出清单。
+   换位置、开关「能运行程序」= 给 agent 的权限，只能在这里点（记进动作日志） */
+var WS = { st: null, ts: 0 };
+var WS_DEMO = { dir: 'F:\\Agent\\工作区', default: true, exists: true, files: 12, size: 3456789, backup: 'F:\\Agent\\工作区备份', backup_files: 4, backup_size: 23456, run: true,
+  timeout: 900, keep_days: 182, env: true, ffmpeg: true, playwright: false, last_clean: null, next_clean: Date.now() / 1000 + 150 * 86400, last_n: 0, last_list: '' };
+function wsDay(t) { if (!t) return '—'; var d = new Date(t * 1000); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+function wsSize(n) { n = +n || 0; return n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' GB' : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B'; }
+function wsHTML() {
+  var w = useLive() ? WS.st : WS_DEMO;
+  if (!w) return '<div class="field"><label>Agent 的工作文件夹</label><div class="cap">正在读取…</div></div>';
+  return '<div class="field wsbox"><label for="wsDir">Agent 的工作文件夹（能写、能删、能运行程序）</label>' +
+    '<div class="help">它自己的地方：在这个文件夹里写、改、删、挪文件、运行程序（python、ffmpeg 这些）都不用问你；改和删之前旧的先放进备份，备份半年清一次、清的时候出一份清单。别的地方照旧只读。</div>' +
+    '<div class="ws-row"><span class="rd-path" title="' + esc(w.dir) + '">' + esc(w.dir) + (w.default ? '<em class="ok">默认</em>' : '') + '</span><span class="num">' + w.files + ' 个文件 · ' + wsSize(w.size) + '</span>' +
+      '<button class="btn mini" data-ws-open="ws">打开</button></div>' +
+    '<div class="ws-row"><span>备份<b class="num">' + w.backup_files + ' 个 · ' + wsSize(w.backup_size) + '</b></span><span>上次清理<b>' + (w.last_clean ? wsDay(w.last_clean) + '（清了 ' + w.last_n + ' 个）' : '还没清过') + '</b></span>' +
+      '<span>下次清理<b class="num">' + wsDay(w.next_clean) + '</b></span><span class="sp"></span><button class="btn mini" data-ws-open="backup">打开备份</button>' + (w.last_list ? '<button class="btn mini" data-ws-open="list">看清理清单</button>' : '') + '</div>' +
+    '<div class="ws-row"><label class="rd-cl"><button class="switch" role="switch" data-ws-run aria-checked="' + !!w.run + '" aria-label="能运行程序"></button>能运行程序</label>' +
+      '<span class="ws-env">Python 环境：' + (w.env ? '有了' : '第一次运行时自动建') + ' · ffmpeg：' + (w.ffmpeg ? '有' : '它要用时自己装') + ' · 网页录屏：' + (w.playwright ? '有' : '它要用时自己装') + '</span></div>' +
+    '<div class="secret"><input class="inp" id="wsDir" spellcheck="false" placeholder="换个地方：完整路径，比如 F:\\Agent工作区（留空 = 默认）"><button class="btn" data-ws-dir' + (useLive() ? '' : ' disabled') + '>换位置</button></div></div>';
+}
+function fetchWs() { api('GET', '/api/ws').then(function (j) { WS.st = j; WS.ts = Date.now(); var b = $('#wsBox'); if (b) b.innerHTML = wsHTML(); }).catch(function () {}); }
+function wsDo(body) { return api('PUT', '/api/ws', body).then(function (j) { WS.st = j; WS.ts = Date.now(); var b = $('#wsBox'); if (b) b.innerHTML = wsHTML(); return j; }); }
+function wsOpen(what) { return api('POST', '/api/ws/open', { what: what || 'ws' }).then(function (j) { toast(j.msg, 4000); }).catch(function (e) { toast(e.message); }); }
 /* 能读的文件夹（v1.8.17，app/files.py）：只读；加一个 = 给 agent 加权限，只能在这里点（或者在对话里点「允许读这个文件夹」） */
 var RDIRS = { list: [], ts: 0 };
 var RDIRS_DEMO = [{ path: 'E:\\gongzuochengxu\\笔记仓库', show: 'E:\\gongzuochengxu\\笔记仓库', cloud: true, exists: true }];
@@ -296,6 +319,14 @@ function rdirsDo(method, body, path) {
 }
 var sv = $('#view-settings');
 sv.addEventListener('click', function (ev) {
+  var wb = ev.target.closest('[data-ws-open],[data-ws-run],[data-ws-dir]');
+  if (wb) {
+    if (!useLive()) { toast('演示模式不能改'); return; }
+    if (wb.dataset.wsOpen) wsOpen(wb.dataset.wsOpen);
+    else if (wb.hasAttribute('data-ws-run')) wsDo({ run: wb.getAttribute('aria-checked') !== 'true' }).then(function (j) { toast(j.run ? '能运行程序了（只在工作文件夹里）' : '不让它运行程序了：写、改、删文件还能用'); }).catch(function (e) { toast(e.message); });
+    else wsDo({ dir: ($('#wsDir').value || '').trim() }).then(function (j) { toast('工作文件夹换到了：' + j.dir + '（原来那个文件夹没动）', 5000); }).catch(function (e) { toast(e.message, 5000); });
+    return;
+  }
   var rd = ev.target.closest('[data-rd-add],[data-rd-del],[data-rd-cloud]');
   if (rd) {
     if (!useLive()) { toast('演示模式不能改'); return; }

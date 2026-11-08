@@ -1,9 +1,9 @@
-"""生图（v1.8.15 起；v1.8.16 重做：单张 / 批量 / 历史 / 模板，页面上换模型）。沙箱连不上 API易：用假的接口（dev/fake_apiyi.py，8096）和假 Key sk-test-0000。
+"""生图（v1.8.15 起；v1.8.16 重做：单张 / 批量 / 历史，页面上换模型；v2.1 撤掉了模板和角色）。沙箱连不上 API易：用假的接口（dev/fake_apiyi.py，8096）和假 Key sk-test-0000。
 1. 不连后端：认清单（标题 + 列表、表格、编号列表、一行写完几种写法；没写全的给提醒）、比例 × 1K/2K/4K → 尺寸（VIP 那 30 档）、
    实际发出去的提示词、模型说明卡（线路、价格、多久、认哪些参数；没收录的按名字猜厂商）、只挑生图模型、报错说人话、老设置迁移
 2. 连测试后端（dev/serve.sh start）：模型列表（按厂商分、拉 /v1/models）→ 批量：上传清单 → 一张一张出 → 按文件名存好、尺寸、透明 →
    发出去的只有提示词和参数 → 历史记录 → 改了重生成（旧的挪进旧版）→ 审核没过只坏一张 → 补齐没出的 → 余额不够整批停 → 停下 →
-   All、官转模型 → 打包 zip → 单张：文生图、带参考图（edits、multipart）→ Nano Banana、Seedream、Flux、没收录的模型 → 素材模板 → 没填 Key
+   All、官转模型 → 打包 zip → 单张：文生图、带参考图（edits、multipart）→ Nano Banana、Seedream、Flux、没收录的模型 → 没填 Key
 3. Key 不落明文、不进导出、不进日志、不进记录、不进数据库
 用法：python dev/test_img.py（要先 dev/serve.sh start）"""
 import base64
@@ -173,8 +173,6 @@ c.put("/api/settings", json=VIP)
 for fl in ("slow", "quota", "opaque"):
     (RUN / f"fake_img_{fl}.flag").unlink(missing_ok=True)
 httpx.post(FAKE + "/_fake/img/clear")
-for t_ in c.get("/api/img").json()["templates"]:
-    c.delete(f"/api/img/templates/{t_['id']}")
 from app import db  # noqa: E402
 db.run("DELETE FROM img_history")                    # 测试后端和这里用的是同一个 data\agent.db：历史、拉过的模型列表从空的开始
 db.run("DELETE FROM kv WHERE k='img_models'")
@@ -206,7 +204,7 @@ c.post("/api/img/clear")
 j = c.get("/api/img").json()
 m = j["model"]
 check(j["board"] is None and m["id"] == "gpt-image-2.5-sunburst-vip" and m["price"] == 0.03 and m["tiers"] == ["1k", "2k", "4k"] and j["cfg"]["key"] and j["cfg"]["hint"] == "••••0000"
-      and len(j["sizes"]["4k"]) == 10 and isinstance(j["templates"], list) and isinstance(j["recent"], list), "生图页拿得到状态：Sunburst VIP（$0.03/张、1K/2K/4K），Key 只看得到最后 4 位")
+      and len(j["sizes"]["4k"]) == 10 and "templates" not in j and "chars" not in j and isinstance(j["recent"], list), "生图页拿得到状态：Sunburst VIP（$0.03/张、1K/2K/4K），Key 只看得到最后 4 位；没有模板、角色了（v2.1 撤掉）")
 
 # 模型列表：按厂商分好；拉一遍 API易 的 /v1/models
 g = c.get("/api/img/models").json()
@@ -351,12 +349,15 @@ model("gpt-image-2.5-sunburst-vip", imgQuality="high")
 j = c.post("/api/img/load", json={"md": A, "name": "测试3_生图清单.md"}).json()
 check(all(x["st"] == "ok" and x["old"] for x in j["board"]["items"]), "重新上传同一份清单：文件夹里已经有的认出来（算出好了，不用再花钱）")
 r = c.post("/api/img/zip").json()
-zp = OUT / r["zip"].replace("\\", "/").split("/")[-1]
+zp = pathlib.Path(r["zip"])
+bdir = pathlib.Path(c.get("/api/img").json()["board"]["dir"])
 names = sorted(zipfile.ZipFile(io.BytesIO(zp.read_bytes())).namelist())
 check(r["n"] == 4 and names == sorted(["img01_重点_地铁站.png", "img02_道具_灶台.png", "img03_第五名_图谱.png", "img04_第二名_手机.png"]),
       f"打包 zip：4 张图，按清单的文件名，不含旧版、记录（{zp.name}）")
+check(zp.parent == bdir and not list(OUT.glob("*.zip")), f"压缩包放在这一批自己的文件夹里（{zp.parent.name}），不在「生图输出」最外面")
 r2 = c.post("/api/img/zip").json()
-check(r2["zip"] != r["zip"] and zp.exists(), "再打一次包：换个名字，上一个不覆盖")
+names2 = zipfile.ZipFile(io.BytesIO(pathlib.Path(r2["zip"]).read_bytes())).namelist()
+check(r2["zip"] != r["zip"] and zp.exists() and len(names2) == 4, "再打一次包：换个名字，上一个不覆盖；不把上一个压缩包也打进去")
 
 # ---------- 单张：文生图、带参考图 ----------
 ref1 = "data:image/png;base64," + base64.b64encode(fpng(320, 240, False, 5)).decode()
@@ -423,114 +424,11 @@ check(j["job"]["done"] == 1 and "quality" not in lb and lb["size"] == "2048x2048
       "没收录的新模型（gpt-image-3-preview）：按 OpenAI 的方式调，先试一张")
 c.put("/api/settings", json=VIP)
 
-# ---------- 素材模板 ----------
-r = c.post("/api/img/templates", json={"name": "", "prompt": "x"})
-check(r.status_code == 400 and "名字" in r.json()["detail"], "存模板要起名字")
-t1 = c.post("/api/img/templates", json={"name": "封面 · 深夜地铁风", "prompt": "深夜城市的地铁线路图", "ratio": "16:9", "n": 2, "transparent": False, "refs": [ref1],
-                                        "model": "gpt-image-2.5-sunburst-vip", "tier": "2k", "quality": "high"}).json()
-tid = t1["template"]["id"]
-tr = c.get(f"/api/img/tplref/{tid}/0")
-st = c.get("/api/img").json()["templates"]
-check(len(t1["templates"]) == 1 and st[0]["refs"] == 1 and st[0]["ratio"] == "16:9" and st[0]["n"] == 2 and tr.status_code == 200 and tr.content[:4] == b"\x89PNG"
-      and c.get(f"/api/img/tplref/{tid}/5").status_code == 404, "存模板：提示词、比例、张数、模型、参考图（存在 data\\img\\templates）；页面拿得到参考图")
-t2 = c.post("/api/img/templates", json={"name": "封面 · 深夜地铁风", "prompt": "换了一句", "ratio": "1:1"}).json()
-tpl_dir = ROOT / "data" / "img" / "templates"
-check(len(t2["templates"]) == 1 and t2["templates"][0]["prompt"] == "换了一句" and not list(tpl_dir.glob(f"{tid}_*")), "同名的模板：替换掉，旧的参考图删了")
-r = c.delete(f"/api/img/templates/{t2['template']['id']}").json()
-check(r["templates"] == [] and c.delete("/api/img/templates/nope").status_code == 404, "删模板")
 r = c.post("/api/img/open", json={"hid": hist(1)[0]["id"]}).json()
 check("单张" in r["msg"], f"历史里点「打开文件夹」：打开那张图所在的文件夹（{r['msg'][-20:]}）")
 
-# ---------- 角色（v2.0）：建角色 → 出三视图 → 定稿 → 让角色做动作；批量清单里写到角色名就自动带上 ----------
-model("gpt-image-2.5-sunburst-vip")
-db.run("DELETE FROM kv WHERE k='img_chars'")
-
-
-def fn():
-    return httpx.get(FAKE + "/_fake/img/log").json()["n"]
-
-
-def since(n0):
-    j_ = httpx.get(FAKE + "/_fake/img/log").json()
-    k_ = j_["n"] - n0
-    return j_["items"][-k_:] if k_ > 0 else []
-
-
-DESC_B = "女，银白色短发、薄荷绿开衫、白色百褶裙，总抱着一本深棕色硬皮书。"
-DESC_Z = "男，深蓝黑色头发三七分，圆框细眼镜，宽大的紫色卫衣，脖子上挂着耳机。"
-r = c.post("/api/img/chars", json={"name": "白叶", "aliases": "看板娘", "desc": DESC_B})
-cb = r.json()["id"] if r.status_code == 200 else ""
-r2 = c.post("/api/img/chars", json={"name": "看板娘", "desc": "x"})
-cz = c.post("/api/img/chars", json={"name": "紫苏", "desc": DESC_Z}).json()["id"]
-chs = {x["name"]: x for x in c.get("/api/img/chars").json()["chars"]}
-check(r.status_code == 200 and r2.status_code == 400 and "白叶" in r2.json()["detail"] and list(chs) == ["白叶", "紫苏"] and chs["白叶"]["aliases"] == ["看板娘"]
-      and not chs["白叶"]["ready"] and chs["白叶"]["dir"].replace("\\", "/").endswith("角色/白叶"), "建角色：白叶（别名 看板娘）、紫苏；名字不能和别的角色撞；还没定稿")
-n0 = fn()
-r = c.post(f"/api/img/chars/{cb}/sheet", json={"pose": "A", "n": 2})
-check(r.status_code == 200 and r.json()["job"]["kind"] == "sheet" and r.json()["job"]["n"] == 2, "出三视图：一次 2 张候选")
-tk = c.get("/api/tasks").json()["tasks"]
-check(any(t["k"] == "img" and "三视图" in t["name"] for t in tk), f"后台任务里有这次生图（常驻屏、主页「后台在跑」看得到）：{[t['name'] for t in tk]}")
-j = wait()
-lg = since(n0)
-cands = {x["name"]: x for x in j["chars"]}["白叶"]["cands"]
-check(j["job"]["done"] == 2 and len(cands) == 2 and all(x["path"] == "generations" for x in lg) and "三视图" in lg[0]["body"]["prompt"] and "A 字站姿" in lg[0]["body"]["prompt"]
-      and DESC_B in lg[0]["body"]["prompt"] and lg[0]["body"]["size"] == "2048x1152", "三视图：16:9，提示词里写了正面 / 侧面 / 背面、A 字站姿和完整的外形描述；没参考图走文生图")
-r = c.post(f"/api/img/chars/{cb}/final", json={"file": cands[1]})
-b_ = {x["name"]: x for x in r.json()["chars"]}["白叶"]
-sheet = OUT / "角色" / "白叶" / b_["sheet"]
-check(r.status_code == 200 and b_["ready"] and b_["sheet"].startswith("定稿_三视图") and sheet.exists() and c.get(f"/api/img/chars/{cb}/f/{b_['sheet']}").content[:4] == b"\x89PNG",
-      f"挑一张定稿：存成 {b_['sheet']}，以后出图带上它")
-c.post(f"/api/img/chars/{cz}/ref", json={"img": ref1})
-z_ = {x["name"]: x for x in c.get("/api/img/chars").json()["chars"]}["紫苏"]
-check(z_["refs"] == ["参考_1.png"] and z_["ready"], "紫苏放了一张自己的参考图（导入已有的图）：没出三视图也能用")
-n0 = fn()
-c.post(f"/api/img/chars/{cz}/sheet", json={"pose": "T", "n": 1})
-wait()
-lg = since(n0)
-check(len(lg) == 1 and lg[0]["path"] == "edits" and "T 字站姿" in lg[0]["body"]["prompt"] and "照参考图画" in lg[0]["body"]["prompt"], "有参考图时出三视图照着参考图画（走 edits）")
-n0 = fn()
-r = c.post(f"/api/img/chars/{cb}/make", json={"action": "双手叉腰得意地笑", "face": "得意", "kind": "Q版", "ratio": "1:1", "with": [cz]})
-j = wait()
-lg = since(n0)
-made = {x["name"]: x for x in j["chars"]}["白叶"]["made"]
-check(r.status_code == 200 and len(lg) == 1 and lg[0]["path"] == "edits" and len(lg[0]["files"]) == 2 and DESC_B in lg[0]["body"]["prompt"] and DESC_Z in lg[0]["body"]["prompt"]
-      and "Q 版" in lg[0]["body"]["prompt"] and "得意" in lg[0]["body"]["prompt"] and len(made) == 1 and "Q版_得意" in made[0]
-      and c.get(f"/api/img/chars/{cb}/made/{made[0]}").status_code == 200,
-      f"让白叶做动作、紫苏一起出场：带上两个人的参考图和外形描述，Q 版、得意；存进 角色\\白叶\\出图（{made[0] if made else '没有'}）")
-r = c.post(f"/api/img/chars/{cb}/make", json={"action": "", "face": "开心"})
-check(r.status_code == 400 and "动作" in r.json()["detail"], "没写动作：说写一句要做什么")
-CL = """# 角色测试清单
-
-### img01_白叶_开场讲解.png
-- 比例：16:9
-- 透明背景：不开
-- 提示词：站在黑板前，一本正经地举着书讲解，黄昏的教室。
-
-### img02_吐槽.png
-- 比例：1:1
-- 透明背景：开
-- 提示词：紫苏抱头崩溃，Q 版，夸张的表情。
-
-### img03_道具_书.png
-- 比例：1:1
-- 透明背景：开
-- 提示词：一本深棕色硬皮书，夹着红色书签带。
-"""
-j = c.post("/api/img/load", json={"md": CL, "name": "角色测试.md"}).json()
-its = {x["file"]: x for x in j["board"]["items"]}
-check(its["img01_白叶_开场讲解.png"]["chars"] == ["白叶"] and its["img02_吐槽.png"]["chars"] == ["紫苏"] and its["img03_道具_书.png"]["chars"] == [],
-      "批量清单：标题里写了「白叶」、提示词里写了「紫苏」的认出来了，没写角色的不带")
-n0 = fn()
-c.post("/api/img/run", json={})
-j = wait()
-lg = since(n0)
-by = {("白叶" if "开场讲解" in x["body"]["prompt"] or "举着书" in x["body"]["prompt"] else "紫苏" if "抱头崩溃" in x["body"]["prompt"] else "书"): x for x in lg}
-check(j["job"]["done"] == 3 and by["白叶"]["path"] == "edits" and DESC_B in by["白叶"]["body"]["prompt"] and by["紫苏"]["path"] == "edits" and DESC_Z in by["紫苏"]["body"]["prompt"]
-      and by["书"]["path"] == "generations" and DESC_B not in by["书"]["body"]["prompt"],
-      "批量出图：写到角色的两张自动带上她们的参考图（走 edits）和外形描述，提示词只写动作就行；没写角色的照常文生图")
-r = c.delete(f"/api/img/chars/{cz}")
-check([x["name"] for x in r.json()["chars"]] == ["白叶"] and (OUT / "角色" / "紫苏" / "参考_1.png").exists(), "从列表里去掉紫苏：图还在文件夹里，不删")
-c.post("/api/img/chars", json={"name": "紫苏", "desc": DESC_Z})
+# v2.1：角色、模板撤掉了：接口没了，批量清单写到名字也不再带别的东西
+check(c.get("/api/img/chars").status_code in (404, 405) and c.post("/api/img/templates", json={"name": "x"}).status_code in (404, 405), "角色、模板的接口没了（v2.1 撤掉）")
 
 # 没填 Key
 c.put("/api/secrets", json={"k": "imgKey", "v": ""})
@@ -554,7 +452,7 @@ for p_ in [ROOT / "data" / "settings.json", ROOT / "data" / "agent.db", RUN / "b
             leak.append(p_.name)
     except OSError:
         pass
-check(not leak, f"设置、数据库（历史、模板）、清单状态、参考图、日志、生图记录、出的图里都没有 Key{'：' + str(leak) if leak else ''}")
+check(not leak, f"设置、数据库（历史）、清单状态、参考图、日志、生图记录、出的图里都没有 Key{'：' + str(leak) if leak else ''}")
 fd = " | ".join(e["text"] for e in c.get("/api/feed?n=200").json()["items"])
 check(KEY not in fd and "sk-wrong" not in fd and "开始生图" in fd and "模型列表" in fd, "进展报告里写了生图的事（开始、拉模型列表），没有 Key")
 c.post("/api/img/clear")

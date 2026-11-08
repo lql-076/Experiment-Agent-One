@@ -1,7 +1,8 @@
 """处理一条消息的全过程：先看是不是在回提醒、设提醒、让我记东西（这些不用模型）；
 其余的过决策脑两票，交给本地小脑 / DeepSeek / 建议你带提示词去问更强的模型；每一步都写进事件日志。
 你也可以推翻决策脑：force 指定去向（界面上「换它重做」），redo_of 记下是哪一条重做的。
-交给 DeepSeek 的，带上联网搜索工具（app/websearch.py）和读文件的工具（app/files.py，只读你允许的文件夹），要不要用由它自己定；
+交给 DeepSeek 的，带上联网搜索工具（app/websearch.py）、读文件的工具（app/files.py，只读你允许的文件夹）和它自己工作文件夹的工具
+（app/workspace.py，v2.1：在里面写、改、删、挪、运行程序），要不要用由它自己定；
 问到 agent 自己怎么用的，先从说明书（docs/操作手册.md、docs/AI文档）里找相关段落一起给模型。
 v1.8.17：消息能带图片（界面上粘贴 / 选 / 拖进来），交给 DeepSeek 看（本地小脑看不了图）；消息里贴了路径的，程序直接读出来。"""
 import asyncio
@@ -12,7 +13,7 @@ import time
 from collections import defaultdict, deque
 from pathlib import Path
 
-from . import db, deepseek, events, files, growth, memory, notify, paths, privacy, reminders, router, safety, settings, websearch
+from . import db, deepseek, events, files, growth, memory, notify, paths, privacy, reminders, router, safety, settings, websearch, workspace
 from .models import M
 from .qq import BOT
 
@@ -171,7 +172,7 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
         return events.get(eid)
 
     # 3. 让我记东西？
-    m = None if force or images else REMEMBER.match(text)
+    m = None if force or images or workspace.to_file(text) else REMEMBER.match(text)      # 「记到某个文件夹里」是要写文件（v2.1），不进记忆
     if m and len(m.group(4).strip()) >= 2:
         done, _ = await memory.remember(m.group(4))
         reply = "记下了。" if done else "要写记忆文件，已放进「等你决定」。"
@@ -253,6 +254,9 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
     elif is_local and not dec["private"] and not fz and any(m["cloud"] for m in readable):
         route, is_local = "ds", False
         why_extra = "（要看你贴的文件 / 文件夹，本地小脑不会翻文件，交给 DeepSeek 带着读文件的工具）"
+    elif is_local and not dec["private"] and not fz and workspace.wants(text):
+        route, is_local = "ds", False
+        why_extra = "（要在工作文件夹里写文件、运行程序，本地小脑不会用工具，交给 DeepSeek）"
     elif is_local and not dec["private"] and not fz and files.wants(text):
         route, is_local = "ds", False
         why_extra = "（要查你电脑上的资料，本地小脑不会翻文件，交给 DeepSeek 带着读文件的工具）"
@@ -312,9 +316,10 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
             web = None
             use_web = bool(settings.S.get("searchOn", True))
             use_files = bool(files.dirs(True))
-            if (use_web or use_files) and not dec["private"]:
+            use_ws = workspace.on()                       # Agent 自己的工作文件夹（v2.1）：写、改、删、挪、运行程序
+            if (use_web or use_files or use_ws) and not dec["private"]:
                 web = await websearch.answer_with_tools(msgs, thinking=thinking, event_id=eid, purpose=purpose, user_text=text, steps=steps,
-                                                        progress=prog, web=use_web, local_files=use_files)
+                                                        progress=prog, web=use_web, local_files=use_files, ws=use_ws)
                 out = {"text": web["text"], "cny": web["cny"]}
             else:
                 if confirmed:
@@ -324,9 +329,10 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
             searched = bool(web and (web["searched"] or web["fetched"]))
             cost_all = out["cny"] + (websearch.PRICE_USD * float(settings.S["usdCny"]) * (web["searched"] + web["fetched"]) if web else 0)
             reply, cost = out["text"], cost_all
-            steps.append(["交给 DeepSeek", f"{'思考' if thinking else '快速'}模式" + (f" · 联网 {web['searched']} 搜 {web['fetched']} 读" if searched else "") + f" · ¥{cost_all:.4f}"])
+            steps.append(["交给 DeepSeek", f"{'思考' if thinking else '快速'}模式" + (f" · 联网 {web['searched']} 搜 {web['fetched']} 读" if searched else "") +
+                          (f" · 工作区 {web['ws']} 步" if web and web.get("ws") else "") + f" · ¥{cost_all:.4f}"])
             used_claude = any(s.get("claude") for s in snips)
-            if not (uris or used or (web and web.get("read"))):        # 带图片、读了文件的不存样本：光有这句话学不到东西
+            if not (uris or used or (web and (web.get("read") or web.get("ws")))):        # 带图片、读了文件、动了工作区的不存样本：光有这句话学不到东西
                 _save_sample(text, reply, "neu" if dec["neu"] else "ds", eid, dec["private"], used_claude, searched)
             if used_claude:
                 steps.append(["不进训练集", "参考了 Claude 的总结"])

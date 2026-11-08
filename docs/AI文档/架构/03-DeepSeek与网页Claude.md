@@ -1,6 +1,6 @@
 # 架构 · DeepSeek、联网搜索与更强的模型
 
-> 最后核对：v1.8.17。（文件名沿用旧的「网页Claude」，免得更新后留下两份）
+> 最后核对：v2.1.0。（文件名沿用旧的「网页Claude」，免得更新后留下两份）
 
 ## 结构图
 
@@ -106,6 +106,7 @@ mindmap
 
 - **看图：** DeepSeek 官方现在支持图片输入（`deepseek-flash`，`image_url` 里放 data URI，和文字一起按 token 计费，一张最多约 1000 token）。消息里有图片时 `deepseek.chat` 自动换成 设置 › 云端 ›「看图用的模型」（默认 `deepseek-flash`）；思考模式看图万一被拒（400），先改成不思考再试。
 - **读文件：** 有「能发给 DeepSeek」的文件夹时，交给 DeepSeek 的事带上 `list_dir`、`find_files`、`read_file` 三个工具（`app/files.py`），和联网搜索一起由 `websearch.answer_with_tools` 跑，读文件时最多 8 轮。`read_file` 读到图片：工具结果只能是文字，图片放进紧跟着的一条用户消息。系统提示里列出能读的文件夹。
+- **工作文件夹（v2.1，`app/workspace.py`）：** 交给 DeepSeek 的事（不涉及隐私的）都带上它自己工作文件夹的工具：`write_file`、`edit_file`、`delete_path`、`move_path`、`copy_path`、`run_command`，系统提示词里加 `workspace.hint()`（文件夹在哪、怎么做视频、哪些会被拦）。带着这些工具时最多 40 步、`max_tokens` 8000、一次请求最多等 300 秒。详见 [05](05-记忆与文件.md)。
 - 带图片、读了文件的不存训练样本（光有那句话学不到东西）。
 
 ## 更强的模型（第三条路）：怎么走

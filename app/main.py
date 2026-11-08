@@ -15,12 +15,12 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import (agent, agentstate, autostart, checks, db, deepseek, docs, events, exam, feed, files, growth, hw, hwctl, memory, monitor, nightly, osd,
-               imagegen, paths, reminders, reports, router, safety, settings, setup, tts, tts_install, websearch)
+from . import (agent, agentstate, autostart, checks, db, deepseek, docs, events, exam, feed, files, growth, hw, hwctl, imagegen, memory, monitor,
+               nightly, osd, paths, reminders, reports, router, safety, settings, setup, tts, tts_install, websearch, workspace)
 from .models import M
 from .qq import BOT
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 PORT = 8765
 _bg = []
 
@@ -151,7 +151,7 @@ async def lifespan(app):
             print("本地模型服务没起来：", e)
     if settings.S["qqEnabled"] and BOT.configured():
         BOT.start()
-    for fn in (reminders.loop, nightly.loop, housekeeping, live_checks):
+    for fn in (reminders.loop, nightly.loop, housekeeping, live_checks, workspace.loop):
         _bg.append(asyncio.get_event_loop().create_task(fn()))
     if os.environ.get("AGENT_OPEN_UI") == "1":
         _bg.append(asyncio.get_event_loop().create_task(_open_later()))
@@ -507,6 +507,41 @@ def files_patch(body: dict = Body(...)):
 def files_del(path: str):
     files.remove_dir(path)
     return {"dirs": files.public()}
+
+
+# ---------------- Agent 自己的工作文件夹（v2.1，app/workspace.py：在里面写、改、删、挪、运行程序都不用问你；改和删之前先备份） ----------------
+@app.get("/api/ws")
+def ws_status():
+    return workspace.status()
+
+
+@app.put("/api/ws")
+def ws_set(body: dict = Body(...)):
+    try:
+        if "dir" in body:
+            workspace.set_dir(body.get("dir"))
+        if "run" in body:
+            workspace.set_run(bool(body.get("run")))
+    except (ValueError, OSError) as e:
+        raise HTTPException(400, str(e)) from None
+    return workspace.status()
+
+
+@app.post("/api/ws/open")
+def ws_open(body: dict = Body(default={})):
+    w = body.get("what") or "ws"
+    if w == "list":
+        st = workspace.status()
+        if not st["last_list"]:
+            raise HTTPException(404, "还没清理过（半年清一次）")
+        p = Path(st["last_list"])
+    else:
+        p = workspace.BACKUP if w == "backup" else workspace.ensure()
+        p.mkdir(parents=True, exist_ok=True)
+    if paths.IS_WIN:
+        os.startfile(str(p))          # 打开资源管理器（不是黑窗口）
+        return {"msg": "打开了：" + paths.show(p)}
+    return {"msg": "在：" + paths.show(p)}
 
 
 @app.get("/api/chat/{token}")

@@ -50,6 +50,11 @@ DEFAULTS = {
     "memDir": "", "useGit": True, "logDays": 90,
     # 能读的文件夹（v1.8.17，app/files.py）：[{path, cloud}]，只读；只能在 设置 › 记忆与文件 里加（给 agent 加权限要你点），不走通用的改设置
     "readDirs": [],
+    # Agent 自己的工作文件夹（v2.1，app/workspace.py）：在里面写、改、删、挪、运行程序都不用问你；改和删之前旧的先进「工作区备份」，备份半年清一次。
+    # wsDir 留空 = Agent 文件夹里的「工作区」；wsRun 能不能运行程序。这两个有自己的接口（设置 › 记忆与文件），不走通用的改设置
+    "wsDir": "", "wsRun": True,
+    "wsTimeout": 900,                 # 一条命令最多跑多少秒（做视频渲染会久一点）
+    "wsRounds": 40,                   # 带着工作区工具时，DeepSeek 一件事最多做多少步
     # 分流旋钮
     "take": 60, "fresh": 40, "clLine": 50, "daily": 3, "quiet": False,
     "privLocal": True, "privWords": "", "voteEmbed": 50, "voteAuto": True,
@@ -66,6 +71,7 @@ DEFAULTS = {
 }
 SECRET_KEYS = ("dsKey", "qqSecret", "blKey", "imgKey")      # blKey：百炼 API Key（云端配音）；imgKey：API易 Key（生图，v1.8.15）
 LOCKED = {"gpuOnly": True, "privLocal": True}   # 这两条界面上改不了
+PERM = {"wsDir", "wsRun"}                         # 给 agent 的权限：有自己的接口（记进动作日志），通用的改设置改不了
 
 _lock = threading.Lock()
 _FILE = paths.DATA / "settings.json"
@@ -109,7 +115,7 @@ def update(changes: dict) -> dict:
     """界面传来的改动。只接受已知的键，类型跟默认值对齐。"""
     applied = {}
     for k, v in changes.items():
-        if k not in DEFAULTS or k in LOCKED:
+        if k not in DEFAULTS or k in LOCKED or k in PERM:
             continue
         d = DEFAULTS[k]
         try:

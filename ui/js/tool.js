@@ -83,6 +83,7 @@ function palItems() {
   TOOL_KEYS.forEach(function (k) { out.push({ t: '打开 ' + TOOL_NAME[k], s: '新窗口', go: function () { openView(k); } }); });
   (typeof SECTIONS !== 'undefined' ? SECTIONS : []).forEach(function (sc) { if (sc.id && sc.name) out.push({ t: '设置 › ' + sc.name, s: '', go: function () { openSec(sc.id); } }); });
   out.push({ t: '重新自检', s: '整备', go: function () { openSec('prep', 'recheck'); } });
+  out.push({ t: '打开 Agent 的工作文件夹', s: '资源管理器', go: function () { if (useLive()) wsOpen('ws'); else toast('演示模式'); } });
   out.push({ t: S.set.theme === 'light' ? '切到深色' : '切到浅色', s: '', go: function () { toggleTone(innerWidth / 2, 60); } });
   if (!TOOL) out.push({ t: '进入常驻屏', s: 'R', go: function () { enterResident(); } });
   return out;

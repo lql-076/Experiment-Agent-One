@@ -1,7 +1,7 @@
 """生图页「渲染舱」点一遍（v1.8.16；连测试后端，API易 是假的 dev/fake_apiyi.py，假 Key sk-test-0000）：
 批量：空着时有拖放区 → 粘贴一份清单 → 一行一张 → 点一行改比例、透明背景、提示词（存到后端）→ 换画质、档位 →
 批量生成（中间的核心在转、当前这行亮、右上角变「停下」）→ 出好的图落进右边格子 → 点开看大图、Esc 关 →
-单张：写提示词、选比例和张数、放一张参考图 → 生成（带参考图走 /v1/images/edits）→ 存为模板 → 模板页套用 →
+单张：写提示词、选比例和张数、放一张参考图 → 生成（带参考图走 /v1/images/edits）→ 只有单张、批量、历史三个标签（v2.1 撤掉了角色、模板）→
 换模型（按厂商分好的列表、刷新列表、换成 Seedream 再换回来）→ 历史页「再来一张」→ 三套风格、竖屏截图 → 清掉。
 用法：python dev/ui/img.py 截图文件夹（要先 dev/serve.sh start）"""
 import pathlib
@@ -65,8 +65,6 @@ with sync_playwright() as pw:
         (RUN / f"fake_img_{fl}.flag").unlink(missing_ok=True)
     p.evaluate("api('PUT', '/api/settings', {imgOut: 'dev/.run/生图输出-界面测试', imgQuality: 'high', imgRes: '2k', imgModel: 'gpt-image-2.5-sunburst-vip', imgConc: 1})")
     p.evaluate("api('POST', '/api/img/clear', {})")
-    for t in get(p, "/api/img")["templates"]:
-        p.evaluate(f"api('DELETE', '/api/img/templates/{t['id']}')")
     p.wait_for_timeout(400)
     p.evaluate("IMG.tab = 'batch'; IMG.st = null")
     p.evaluate("goView('img')")
@@ -149,22 +147,8 @@ with sync_playwright() as pw:
           "带参考图生成：走 /v1/images/edits，参考图和提示词一起发过去")
     check(p.locator('#fgOg .fg-tile[data-act="viewh"]').count() >= 2 and p.inner_text("#kD") == "02", "出好的 2 张落进右边（最近出的在最前面）")
 
-    # 存为模板 → 模板页套用
-    p.click('[data-act="tplsave"]')
-    p.wait_for_selector("#fgTn")
-    p.fill("#fgTn", "界面测试模板")
-    p.click('#fgBox [data-act="tplok"]')
-    p.wait_for_function("IMG.st.templates.length === 1", timeout=5000)
-    p.fill("#fgPrompt", "")
-    p.evaluate("IMG.prompt=''; IMG.refs=[]")
-    p.click('.fg-tab[data-tab="tpl"]')
-    p.wait_for_selector("#fgTg .fg-tc")
-    check("界面测试模板" in p.inner_text("#fgTg") and p.locator("#fgTg .fg-tc .rf img").count() == 1, "存为模板：模板页有了，带着那张参考图")
-    p.screenshot(path=f"{OUT}/img-tpl.png")
-    p.click('#fgTg [data-act="tpluse"]')
-    p.wait_for_function("document.querySelector('#fgPrompt') && document.querySelectorAll('#fgRefs .fg-ref img').length === 1", timeout=6000)
-    check(p.input_value("#fgPrompt") == "一只发光的水母漂在深蓝的海里" and p.get_attribute('#fgChips [data-ratio="3:4"]', "aria-pressed") == "true",
-          "模板页点「套用」：回到单张，提示词、比例、参考图都填好了")
+    tabs = p.evaluate("[].map.call(document.querySelectorAll('.fg-tab'), function (x) { return x.dataset.tab; })")
+    check(tabs == ["single", "batch", "hist"] and p.locator("#fgTpl, [data-act=\"tplsave\"]").count() == 0, f"只有单张、批量、历史三个标签，单张里没有模板了：{tabs}")
 
     # 换模型
     p.click("#fgMdl")
@@ -207,47 +191,7 @@ with sync_playwright() as pw:
     p.set_viewport_size({"width": 1680, "height": 1000})
     p.wait_for_timeout(600)
 
-    # 角色（v2.0）：新角色 → 写外形 → 出三视图 → 挑一张定稿 → 写动作、选表情，点顶上的大按钮出图 → 去掉
-    def job_done():
-        p.wait_for_function("IMG.st.job && IMG.st.job.st !== 'run'", timeout=40000)
-        p.wait_for_timeout(1200)
-    p.click('.fg-tab[data-tab="char"]')
-    p.wait_for_selector("#chList")
-    p.click('[data-ch="new"]')
-    p.fill("#chName", "界面测试角色")
-    p.fill("#chDesc", "女，红色短发、绿色眼睛，穿白色卫衣。")
-    p.click('[data-ch="save"]')
-    p.wait_for_function("ichCur() && ichCur().name === '界面测试角色'", timeout=5000)
-    check("界面测试角色" in p.inner_text("#chList") and "出三视图" in p.inner_text("#chBody") and "还没定稿" in p.inner_text("#chAct"),
-          "新角色存好了：左边多了一个，中间能出三视图，右边说还没定稿")
-    p.click('[data-ch="sheet"]')
-    job_done()
-    p.wait_for_selector("#chBody .ch-cand img")
-    n = p.locator("#chBody .ch-cand").count()
-    p.click('#chBody .ch-cand >> nth=1')
-    p.click('[data-ch="final"]')
-    p.wait_for_selector("#chBody .ch-sheet img")
-    check(n == 4 and "定稿" in p.inner_text("#chBody .ch-tag") and p.locator("#chDo").count() == 1, f"出了 {n} 张三视图候选，挑第 2 张定稿；右边能写动作了")
-    p.fill("#chDo", "举起右手打招呼")
-    p.click('[data-ch="face"][data-v="开心"]')
-    check("让界面测试角色做" in p.inner_text("#fgGoT") and "开心" in p.inner_text("#fgGoT"), "顶上的大按钮变成「让她做 · 开心 · Q 版……」")
-    p.click("#fgGo")
-    job_done()
-    p.wait_for_selector("#chMade .ch-mi img")
-    check(p.locator("#chMade .ch-mi").count() == 1, "出好的图落进右下角「画过的」")
-    p.screenshot(path=f"{OUT}/img-char.png")
-    p.click('[data-ch="del"]')
-    p.click('[data-ch="del"]')
-    p.wait_for_function("!ichList().some(function (x) { return x.name === '界面测试角色'; })", timeout=5000)
-    check(True, "「去掉」点两下：从列表去掉（图不删）")
-
-    # 收尾：删模板（点两下）、清掉清单
-    p.click('.fg-tab[data-tab="tpl"]')
-    p.wait_for_selector('#fgTg [data-act="tpldel"]')
-    p.click('#fgTg [data-act="tpldel"]')
-    check("再点一次删除" in p.inner_text("#fgTg"), "删模板要点两下")
-    p.click('#fgTg [data-act="tpldel"]')
-    p.wait_for_function("IMG.st.templates.length === 0", timeout=5000)
+    # 收尾：清掉清单
     p.click('.fg-tab[data-tab="batch"]')
     p.wait_for_selector('#fgQb [data-act="clear"]')
     p.click('#fgQb [data-act="clear"]')

@@ -133,6 +133,15 @@ async def dsc(r: Request):
             call = {"name": "read_file", "arguments": {"path": m_.group(1) if m_ else "/没有"}}
         call = {"id": f"call_{len(tmsgs)}", "type": "function", "function": {"name": call["name"], "arguments": json.dumps(call["arguments"], ensure_ascii=False)}}
         return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [call]}}], "usage": usage}
+    # 模仿 DeepSeek 在工作文件夹里干活（v2.1）：「【工作区】」后面跟一串要调的工具（JSON 列表），一轮调一个，调完把最后一个工具的结果说出来
+    if "【工作区】" in ask0 and "write_file" in names:
+        tail = ask0.split("【工作区】", 1)[1]
+        plan, _ = json.JSONDecoder().raw_decode(tail[tail.index("["):])
+        k = len(tmsgs)
+        if k < len(plan):
+            call = {"id": f"call_w{k}", "type": "function", "function": {"name": plan[k]["name"], "arguments": json.dumps(plan[k]["arguments"], ensure_ascii=False)}}
+            return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [call]}}], "usage": usage}
+        return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "（DeepSeek 工作区）做完了：" + (tmsgs[-1]["content"][:300] if tmsgs else "")}}], "usage": usage}
     if pics:
         return {"model": j.get("model"), "choices": [{"message": {"role": "assistant", "content": f"（DeepSeek 看图 · {j.get('model')}）看到了 {len(pics)} 张图。"}}], "usage": usage}
     if tmsgs and tmsgs[-1]["content"].startswith(("文件：", "没读成")):

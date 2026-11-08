@@ -1,16 +1,15 @@
 /* ================= 生图「渲染舱」（v1.8.16，后端 app/imagegen.py） =================
    作者定的界面档次标准（Project 里 UI标准_生图渲染舱草图.html）：整页底下一块画布——点阵球、刻度环、雷达、频谱、卫星、电线、粒子，
-   上面一层切角面板。四个标签：
+   上面一层切角面板。三个标签（v2.1 撤掉了「角色」「模板」）：
    - 单张：文生图，或者带参考图生图（拖进来 / 选 / Ctrl+V 粘贴），一次 1~4 张
    - 批量：上传生图清单（.md），左边一行一张，一张一张出；点一行能改提示词、比例、透明背景、重生成
    - 历史：出过的每一张，能再来一张、当参考图、打开文件夹
-   - 模板：存起来的提示词 + 参考图 + 比例，一点就填好
    模型在右上角换（按厂商分好的列表，能用 Key 向 API易 拉最新的）。出图时：中间的球转快、进度环走、粒子拼成画面；
    图回来了就用真图的颜色把粒子染上，图浮出来、缩小、沿线飞进右边的格子。动效「关闭」时只画一帧不动。 */
 var IMG = { st: null, timer: null, n: 0, busy: false, tab: null, sel: null, prompt: '', refs: [], ratio: '1:1', cnt: 1, trans: false,
   hist: null, hq: '', hsel: null, cat: null, vend: null, log: [], wait: {}, mine: null, booted: false, box: null, sig: {} };
 var IMG_RNAME = { '16:9': '横', '9:16': '竖', '1:1': '方', '4:3': '横', '3:4': '竖', '3:2': '横', '2:3': '竖', '5:4': '横', '4:5': '竖', '21:9': '宽' };
-var IMG_TABS = [['char', 'CAST', '角色'], ['single', 'SINGLE', '单张'], ['batch', 'BATCH', '批量'], ['hist', 'HISTORY', '历史'], ['tpl', 'PRESET', '模板']];
+var IMG_TABS = [['single', 'SINGLE', '单张'], ['batch', 'BATCH', '批量'], ['hist', 'HISTORY', '历史']];
 var IMG_DEMO = (function () {
   var R = ['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9'];
   var Z = { '1k': [[1280, 720], [720, 1280], [1280, 1280], [1280, 960], [960, 1280], [1280, 848], [848, 1280], [1280, 1024], [1024, 1280], [1280, 544]],
@@ -25,9 +24,7 @@ var IMG_DEMO = (function () {
     model: { id: 'gpt-image-2.5-sunburst-vip', name: 'GPT Image 2.5 Sunburst VIP', route: '逆向', price: 0.03, sec: 80, d: '高质量 2.5 Adobe 线路，画质与编辑精度优先；30 档尺寸（1K/2K/4K）、4 档画质、透明背景',
       warn: '当前不稳定', known: true, proto: 'openai', refs: 8, trans: 'api', size: 'preset', v: 'openai', q: ['auto', 'low', 'medium', 'high'], tiers: ['1k', '2k', '4k'], vendor: 'OpenAI' },
     cfg: { model: 'gpt-image-2.5-sunburst-vip', quality: 'high', tier: '2k', notext: true, withdir: false, key: true, hint: '••••0000', base: 'https://api.apiyi.com/v1' },
-    month: { n: 18, usd: 0.54 }, out: 'F:\\Agent\\生图输出', templates: [
-      { id: 't1', name: '封面 · 深夜地铁风', prompt: '深夜城市地铁线路图的抽象俯视，五条发光的线路在中心交汇，深蓝近黑背景，荧光黄、青色、品红的线条，留出左侧大片空白。', model: 'gpt-image-2.5-sunburst-vip', ratio: '16:9', tier: '2k', quality: 'high', transparent: false, n: 2, refs: 0 },
-      { id: 't2', name: '道具 · 透明小图标', prompt: '一个独立的小物件，等距视角，扁平插画，荧光黄描边，青色高光，干净的几何形状。', model: 'gpt-image-2.5-sunburst-vip', ratio: '1:1', tier: '2k', quality: 'high', transparent: true, n: 1, refs: 0 }],
+    month: { n: 18, usd: 0.54 }, out: 'F:\\Agent\\生图输出',
     recent: [{ id: 3, ts: now - 600, kind: 'single', title: '单张', file: '221830_一只发光的水母.png', model: 'gpt-image-2.5-sunburst-vip', prompt: '一只发光的水母漂在深蓝的海里，触须像光纤。', ratio: '3:4', tier: '2k', quality: 'high', transparent: false, w: 1536, h: 2048, alpha: false, usd: 0.03, sec: 84, refs: 0, exists: true },
       { id: 2, ts: now - 900, kind: 'batch', title: 'GitHub AI 周榜 · 测试 3', file: 'img02_道具_灶台.png', model: 'gpt-image-2.5-sunburst-vip', prompt: '一个独立的小灶台，等距视角，扁平插画。', ratio: '1:1', tier: '2k', quality: 'high', transparent: true, w: 2048, h: 2048, alpha: true, usd: 0.03, sec: 77, refs: 0, exists: true },
       { id: 1, ts: now - 1000, kind: 'batch', title: 'GitHub AI 周榜 · 测试 3', file: 'img01_重点_地铁站.png', model: 'gpt-image-2.5-sunburst-vip', prompt: '等距视角的深夜地铁站台，荧光黄的导视线条。', ratio: '16:9', tier: '2k', quality: 'high', transparent: false, w: 2048, h: 1152, alpha: false, usd: 0.03, sec: 91, refs: 0, exists: true }],
@@ -117,24 +114,20 @@ function imgLog(html, cls) {      /* 底下的日志：只记这一页上发生�
 function renderImg() {
   var v = $('#view-img'), s = IMG.st;
   if (!s) { v.innerHTML = '<div class="empty">正在读取…</div>'; return; }
-  if (!IMG.tab) { var t0 = null; try { t0 = localStorage.getItem('igTab'); } catch (e) { /* 没有就算了 */ } IMG.tab = t0 || (s.board ? 'batch' : 'single'); }
+  if (!IMG.tab) { var t0 = null; try { t0 = localStorage.getItem('igTab'); } catch (e) { /* 没有就算了 */ } IMG.tab = IMG_TABS.some(function (x) { return x[0] === t0; }) ? t0 : (s.board ? 'batch' : 'single'); }
   if (s.demo && IMG.tab === 'single' && !IMG.prompt) IMG.prompt = '一只发光的水母漂在深蓝的海里，触须像光纤，电影感的冷光。';
   var tab = IMG.tab, host = (s.cfg.base || '').replace(/^https?:\/\//, '').split('/')[0];
   var main;
-  if (tab === 'char') main = imgCharHTML();
-  else if (tab === 'hist') main = '<section class="fp fg-col"><div class="fh"><i></i>HISTORY<em>· 出过的每一张</em><span id="fgHn"></span></div>' +
+  if (tab === 'hist') main = '<section class="fp fg-col"><div class="fh"><i></i>HISTORY<em>· 出过的每一张</em><span id="fgHn"></span></div>' +
       '<div class="fg-hq"><input class="fi" id="fgHq" placeholder="搜提示词、文件名、清单名" value="' + esc(IMG.hq) + '"><button class="fb sm" data-act="hreload">刷新</button><span class="fg-cap">单张、批量出的都在这；点一张看详情</span></div>' +
       '<div class="fg-hg fg-scroll" id="fgHg"></div></section><section class="fp fg-col fg-hd" id="fgHd"></section>';
-  else if (tab === 'tpl') main = '<section class="fp fg-col"><div class="fh"><i></i>PRESETS<em>· 素材模板：提示词 + 参考图 + 比例，一点就填好</em><span><button class="fb sm" data-act="tab" data-tab="single">去单张存一个</button></span></div>' +
-      '<div class="fg-tg fg-scroll" id="fgTg"></div></section>';
   else {
     var left = tab === 'single'
       ? '<section class="fp fg-col" id="fgLeft"><div class="fh"><i></i>COMPOSE<em>· 文生图 / 参考图生图</em><span id="fgCmpS"></span></div><div class="fg-cmp">' +
         '<div class="fg-lb">REFS<em>参考图</em><span id="fgRn"></span></div><div class="fg-refs" id="fgRefs"></div>' +
         '<div class="fg-lb">PROMPT<em>提示词</em><span>Ctrl+Enter 生成</span></div><textarea class="fi fg-ta fg-scroll" id="fgPrompt" spellcheck="false" placeholder="想要一张什么样的图？写清楚主体、画风、构图、光线。只有这段字和参考图会发给 API易。">' + esc(IMG.prompt) + '</textarea>' +
         '<div class="fg-lb">RATIO<em>比例</em><span id="fgSz"></span></div><div class="fg-chips" id="fgChips"></div>' +
-        '<div class="fg-row"><span class="fg-lb">COUNT<em>张数</em></span><div class="fseg" id="fgCnt"></div><span class="sp"></span><button class="fg-sw" id="fgTr" aria-pressed="' + IMG.trans + '" title="道具、图标开；背景图不开">透明背景</button></div>' +
-        '<div class="fg-row"><select class="fi" id="fgTpl" aria-label="套用模板" style="flex:1;width:auto"></select><button class="fb sm" data-act="tplsave">存为模板</button></div></div></section>'
+        '<div class="fg-row"><span class="fg-lb">COUNT<em>张数</em></span><div class="fseg" id="fgCnt"></div><span class="sp"></span><button class="fg-sw" id="fgTr" aria-pressed="' + IMG.trans + '" title="道具、图标开；背景图不开">透明背景</button></div></div></section>'
       : '<section class="fp fg-col" id="fgLeft"><div class="fh"><i></i>QUEUE<em id="fgQn"></em><span id="fgQc"></span></div><div class="fg-ql fg-scroll" id="fgQl"></div><div class="fg-ed" id="fgEd" hidden></div><div class="fg-of" id="fgQb" hidden></div></section>';
     main = left + '<section class="fg-core" id="fgCore"><div class="fg-lab" id="fgLab"></div><div class="fg-side" id="fgSide"></div>' +
       '<div class="fg-pct"><b id="fgPct">0</b><small>PERCENT · 进度</small><i id="fgEl"></i></div>' +
@@ -150,16 +143,14 @@ function renderImg() {
       '<button class="fg-go start" id="fgGo"><i></i><span id="fgGoT"></span></button></div>' +
     '<div class="fg-bar"><div class="fg-tabs" role="tablist">' + IMG_TABS.map(function (t) { return '<button class="fg-tab" role="tab" data-act="tab" data-tab="' + t[0] + '" aria-selected="' + (t[0] === tab) + '">' + t[1] + '<em>' + t[2] + '</em><b id="fgT_' + t[0] + '"></b></button>'; }).join('') + '</div>' +
       '<div class="fg-par" id="fgPar"></div></div>' +
-    '<div class="fg-main ' + (tab === 'hist' ? 'hist' : tab === 'tpl' ? 'tpl' : tab === 'char' ? 'char' : '') + '" id="fgMain">' + main + '</div>' +
+    '<div class="fg-main ' + (tab === 'hist' ? 'hist' : '') + '" id="fgMain">' + main + '</div>' +
     '<div class="fg-bot"><section class="fp fg-log" id="fgLog"></section><section class="fp fg-scope"><div class="fh"><i></i>API LINK<em>· ' + esc(host || 'api.apiyi.com') + '</em><span id="fgLat">IDLE</span></div><canvas id="fgSc"></canvas></section></div>' +
     '<input type="file" id="fgMd" accept=".md,.markdown,.txt,text/markdown,text/plain" hidden><input type="file" id="fgImgs" accept="image/png,image/jpeg,image/webp" multiple hidden>' +
     '<div class="fg-drag" id="fgDrag">松开：清单（.md）认成批量，图片当参考图</div></div>';
   IMG.sig = {};
   if (!IMG.log.length) imgLog('◆ ' + (s.demo ? '演示模式（连上后端才能出图）' : '渲染舱就绪 · ' + esc(s.model.name)), 'c'); else imgLog(null);
   if (tab === 'single') imgCmp(true);
-  if (tab === 'char') imgChar(true);
   if (tab === 'hist') imgHist();
-  if (tab === 'tpl') imgTpl();
   fgMount();
   imgSync();
   imgBoot();
@@ -175,16 +166,13 @@ function imgSync() {
   if (IMG.tab === 'batch') imgQueue();
   if (IMG.tab === 'single') imgCmp();
   if (IMG.tab === 'single' || IMG.tab === 'batch') imgOut();
-  if (IMG.tab === 'tpl') imgTpl();
-  if (IMG.tab === 'char') imgChar();
   fgPorts();
   if (!FG.anim) fgDraw(0);
   if (IMG.box && IMG.box.kind === 'item') imgViewItem(IMG.box.id, true);
 }
 function imgTabsDot() {
   var j = IMG.st.job, k = j && j.st === 'run' ? j.kind : '';
-  if (k === 'sheet') k = 'char';
-  ['char', 'single', 'batch'].forEach(function (t) { var el = $('#fgT_' + t); if (el) el.innerHTML = k === t ? '<i class="dot"></i>' : t === 'batch' && IMG.st.board ? IMG.st.board.items.length : t === 'char' && (IMG.st.chars || []).length ? IMG.st.chars.length : ''; });
+  ['single', 'batch'].forEach(function (t) { var el = $('#fgT_' + t); if (el) el.innerHTML = k === t ? '<i class="dot"></i>' : t === 'batch' && IMG.st.board ? IMG.st.board.items.length : ''; });
 }
 function imgPar() {
   var s = IMG.st, m = s.model, run = imgRun(), h = '';
@@ -200,7 +188,7 @@ function imgPar() {
 }
 function imgKpis() {
   var s = IMG.st, j = s.job, b = s.board, m = s.model;
-  var tabJob = j && (j.kind === IMG.tab || (IMG.tab === 'char' && (j.kind === 'sheet' || j.kind === 'char')) || j.st === 'run') ? j : null;
+  var tabJob = j && (j.kind === IMG.tab || j.st === 'run') ? j : null;
   var rs = tabJob ? tabJob.results.filter(function (r) { return r.ok && r.sec != null; }).map(function (r) { return r.sec; }) : [];
   var avg = rs.length ? rs.reduce(function (a, x) { return a + x; }, 0) / rs.length : 0;
   var q, d, f, usd, eta;
@@ -225,7 +213,6 @@ function imgGo() {
   var s = IMG.st, b = s.board, run = imgRun(), cls = 'start', t = '', dis = false;
   if (run) { cls = ''; t = '停下<small>没开始的不出了，正在出的出完</small>'; }
   else if (IMG.tab === 'single') { var n = IMG.cnt, u = imgUsd(IMG.ratio); t = '生成' + '<small>' + n + ' 张 · ' + (u == null ? '价格看 API易' : '约 ' + imgMoney(u * n)) + (IMG.refs.length ? ' · ' + IMG.refs.length + ' 张参考图' : '') + '</small>'; dis = !s.cfg.key && !s.demo; }
-  else if (IMG.tab === 'char') { var cg = imgCharGo(); t = cg.t; dis = cg.dis; }
   else if (IMG.tab === 'batch') {
     if (!b) t = '选清单<small>视频窗口出的生图清单 .md</small>';
     else {
@@ -255,8 +242,6 @@ function imgCmp(first) {
   var cn = [1, 2, 3, 4].map(function (n) { return '<button data-cnt="' + n + '" aria-pressed="' + (n === IMG.cnt) + '">' + n + '</button>'; }).join('');
   if (IMG.sig.cnt !== cn) { $('#fgCnt').innerHTML = cn; IMG.sig.cnt = cn; }
   var tr = $('#fgTr'); tr.setAttribute('aria-pressed', IMG.trans); tr.textContent = '透明背景' + (IMG.trans && m.trans !== 'api' ? '（这个模型只能在提示词里要）' : '');
-  var th = '<option value="">套用模板…（' + s.templates.length + ' 个）</option>' + s.templates.map(function (t) { return '<option value="' + esc(t.id) + '">' + esc(t.name) + '</option>'; }).join('');
-  if (IMG.sig.tpl !== th) { $('#fgTpl').innerHTML = th; IMG.sig.tpl = th; }
   $('#fgCmpS').textContent = run ? '出图中' : (m.refs ? '参考图最多 ' + max + ' 张' : '');
 }
 function imgAddFiles(files) {
@@ -326,7 +311,7 @@ function imgQueue() {
     var st = r.querySelector('.st'); if (st.textContent !== g) st.textContent = g;
     r.setAttribute('aria-current', IMG.sel === it.id ? 'true' : 'false');
     var tg = '<em>' + it.ratio + '</em>' + (it.transparent ? '<em class="c">透明</em>' : '') + (it.edited ? '<em class="amb">改过</em>' : '') +
-      (it.chars || []).map(function (n) { return '<em class="ch" title="认出了角色「' + esc(n) + '」：自动带上她的三视图和外形描述">' + esc(n) + '</em>'; }).join(''), te = r.querySelector('.ftg');
+      '', te = r.querySelector('.ftg');
     if (te.innerHTML !== tg) te.innerHTML = tg;
   });
   imgEditor();
@@ -475,44 +460,6 @@ function imgAgain(h) {
   imgTab('single', true); toast('填好了：改一改，点「生成」');
 }
 
-/* ---------- 模板 ---------- */
-function imgTpl() {
-  var g = $('#fgTg'); if (!g) return;
-  var ts = IMG.st.templates, sig = JSON.stringify(ts) + (IMG.delArm || '');
-  if (IMG.sig.tg === sig) return; IMG.sig.tg = sig;
-  if (!ts.length) { g.innerHTML = '<div class="fg-none"><b>还没有模板</b>在「单张」里写好提示词、放好参考图、选好比例，点「存为模板」；下次在这里一点就填好</div>'; return; }
-  g.innerHTML = ts.map(function (t) {
-    var rf = ''; for (var k = 0; k < (t.refs || 0); k++) rf += '<img src="' + (IMG.st.demo ? '' : '/api/img/tplref/' + encodeURIComponent(t.id) + '/' + k) + '" alt="" loading="lazy">';
-    return '<article class="fg-tc"><div class="nm"><b title="' + esc(t.name) + '">' + esc(t.name) + '</b><button class="fb x" data-act="tpldel" data-id="' + esc(t.id) + '" title="删掉这个模板">' + (IMG.delArm === t.id ? '再点一次删除' : ICONS.cross) + '</button></div>' +
-      '<p title="' + esc(t.prompt) + '">' + esc(t.prompt || '（只有参考图）') + '</p><div class="rf">' + (rf || '<span class="fg-cap">没有参考图</span>') + '</div>' +
-      '<div class="ft"><span class="ftg"><em>' + t.ratio + '</em><em>' + t.n + ' 张</em>' + (t.transparent ? '<em class="c">透明</em>' : '') + '<em title="' + esc(t.model) + '">' + esc(t.model.replace(/^gpt-image-/, 'GPT ')) + '</em></span>' +
-      '<button class="fb sm pri" data-act="tpluse" data-id="' + esc(t.id) + '">套用</button></div></article>';
-  }).join('');
-}
-function imgTplUse(id) {
-  var t = IMG.st.templates.filter(function (x) { return x.id === id; })[0]; if (!t) return;
-  IMG.prompt = t.prompt; IMG.ratio = t.ratio; IMG.trans = !!t.transparent; IMG.cnt = t.n || 1; IMG.refs = [];
-  var jobs = [];
-  for (var k = 0; k < (t.refs || 0); k++) jobs.push(imgUrlToRef('/api/img/tplref/' + encodeURIComponent(t.id) + '/' + k, ''));
-  var swap = useLive() && (t.model !== IMG.st.cfg.model || t.tier !== IMG.st.cfg.tier || t.quality !== IMG.st.cfg.quality)
-    ? api('PUT', '/api/settings', { imgModel: t.model, imgRes: t.tier, imgQuality: t.quality }).then(imgLoad) : Promise.resolve();
-  Promise.all([swap].concat(jobs.map(function (p) { return p.catch(function () { return null; }); }))).then(function (rs) {
-    IMG.refs = rs.slice(1).filter(Boolean);
-    imgTab('single', true);
-    imgLog('◆ 套用模板「' + esc(t.name) + '」' + (t.model !== IMG_DEMO.cfg.model || swap ? ' · 模型 ' + esc(IMG.st.model.name) : ''), 'c');
-  });
-}
-function imgTplSave() {
-  var p = ($('#fgPrompt') ? $('#fgPrompt').value : IMG.prompt).trim();
-  if (!p && !IMG.refs.length) { toast('先写提示词或者放参考图，再存成模板'); return; }
-  IMG.box = { kind: 'tplsave' };
-  imgBox('<h3>SAVE PRESET<em>存为模板</em></h3><input class="fi" id="fgTn" maxlength="40" placeholder="起个名字，比如：封面 · 深夜地铁风">' +
-    '<div class="fg-cap">会存：提示词（' + p.length + ' 字）、' + IMG.refs.length + ' 张参考图、' + IMG.ratio + '、' + IMG.cnt + ' 张、' + (IMG.trans ? '透明背景、' : '') + '模型 ' + esc(IMG.st.model.name) + '、' +
-    String(IMG.st.cfg.tier).toUpperCase() + '、画质' + esc(IMG.st.quality[IMG.st.cfg.quality] || '') + '。同名的会被替换。</div>' +
-    '<div class="bt"><button class="fb" data-act="boxclose">取消</button><button class="fb pri" data-act="tplok">存</button></div>');
-  setTimeout(function () { var t = $('#fgTn'); if (t) t.focus(); }, 30);
-}
-
 /* ---------- 弹出层 ---------- */
 function imgBoxClose() { var x = $('#fgBox'); if (x) x.remove(); IMG.box = null; }
 function imgBox(html, cls) {
@@ -610,7 +557,7 @@ function imgBoot() {
   el.className = 'fg-boot'; el.innerHTML = '<pre id="fgBootT"></pre>'; $('#fg').appendChild(el);
   var L = ['> FORGE BOOT SEQUENCE ............ <span class="ok">OK</span>', '> LINK ' + esc((s.cfg.base || '').replace(/^https?:\/\//, '')) + ' ... <span class="ok">' + (s.cfg.key ? 'KEY ' + esc(s.cfg.hint || '') : '没填 KEY') + '</span>',
     '> MODEL ' + esc(m.id) + ' . <span class="ok">' + esc(imgMoney(m.price)) + (m.price != null ? '/IMG' : '') + '</span>',
-    '> ' + (b ? 'LIST ' + esc(b.md_name || b.title) + ' ... <span class="ok">' + b.items.length + ' ITEMS</span>' : 'TEMPLATES ............. <span class="ok">' + s.templates.length + '</span>'),
+    '> ' + (b ? 'LIST ' + esc(b.md_name || b.title) + ' ... <span class="ok">' + b.items.length + ' ITEMS</span>' : 'HISTORY ............... <span class="ok">' + (s.recent || []).length + '</span>'),
     '> OUTPUT ' + esc(s.out) + ' ... <span class="ok">READY</span>', '> IGNITION'];
   var i = 0, end = function () { if (!document.contains(el)) return; el.classList.add('off'); setTimeout(function () { el.remove(); }, 520); fgFlash(false); FG.WAVES.push({ t: FG.now, c: FG.col.c }); };
   el.onclick = end;
@@ -1065,7 +1012,6 @@ $('#view-img').addEventListener('click', function (ev) {
   if (t.id === 'fgGo') {
     if (imgRun()) { if (!live) { toast('演示模式'); return; } api('POST', '/api/img/stop', {}).then(function (j) { IMG.st.job = j.job; imgSync(); imgLog('■ 停下：没开始的不出了，正在出的这张出完', 'bad'); }); return; }
     if (IMG.tab === 'single') imgGen();
-    else if (IMG.tab === 'char') imgCharMake();
     else if (IMG.tab === 'batch') { var b = s.board; if (!b) $('#fgMd').click(); else if (b.items.every(function (x) { return x.st === 'ok'; })) { if (live) api('POST', '/api/img/open', {}).then(function (j) { toast(j.msg, 4000); }); } else imgBatch(b.items.some(function (x) { return x.st === 'ok'; }) ? { missing: true } : {}); }
     else imgTab('single');
     return;
@@ -1091,16 +1037,9 @@ $('#view-img').addEventListener('click', function (ev) {
   else if (act === 'hreload') imgHist(true);
   else if (act === 'again') { var h = (IMG.hist || []).concat(s.recent || []).filter(function (x) { return String(x.id) === id; })[0]; if (h) imgAgain(h); }
   else if (act === 'copy') { var h2 = (IMG.hist || []).filter(function (x) { return String(x.id) === id; })[0]; if (h2 && navigator.clipboard) navigator.clipboard.writeText(h2.prompt).then(function () { toast('提示词复制好了'); }, function () { toast('复制不了'); }); }
-  else if (act === 'tpluse') imgTplUse(id);
-  else if (act === 'tplsave') imgTplSave();
   else if (!live) toast('演示模式：连上后端才能用');
   else if (act === 'asref') imgUrlToRef('/api/img/hfile/' + id).then(function (r) { IMG.refs.push(r); imgTab('single', true); toast('当参考图了'); }).catch(function (e) { toast(e.message); });
   else if (act === 'hopen') api('POST', '/api/img/open', { hid: +id }).then(function (j) { toast(j.msg, 4000); }).catch(function (e) { toast(e.message); });
-  else if (act === 'tpldel') {
-    if (IMG.delArm !== id) { IMG.delArm = id; imgTpl(); setTimeout(function () { if (IMG.delArm === id) { IMG.delArm = null; imgTpl(); } }, 3000); return; }
-    IMG.delArm = null;
-    api('DELETE', '/api/img/templates/' + encodeURIComponent(id)).then(function (j) { IMG.st.templates = j.templates; imgTpl(); toast('删掉了'); }).catch(function (e) { toast(e.message); });
-  }
   else if (act === 'clear') api('POST', '/api/img/clear', {}).then(function (j) { IMG.st = j; IMG.sel = null; imgSync(); imgLog('◆ 清掉了这份清单（文件夹里的图没动）', 'c'); }).catch(function (e) { toast(e.message); });
   else if (act === 'rerunall') imgBatch({});
   else if (act === 'one') imgBatch({ ids: [id] });
@@ -1134,17 +1073,9 @@ document.addEventListener('click', function (ev) {   /* 弹出的那一层在 bo
   }
   else if (act === 'hopen') api('POST', '/api/img/open', { hid: +id }).then(function (j) { toast(j.msg, 4000); });
   else if (act === 'open') api('POST', '/api/img/open', {}).then(function (j) { toast(j.msg, 4000); });
-  else if (act === 'tplok') {
-    var name = ($('#fgTn').value || '').trim(); if (!name) { toast('起个名字'); return; }
-    if (!useLive()) { toast('演示模式'); return; }
-    var p = ($('#fgPrompt') ? $('#fgPrompt').value : IMG.prompt).trim(), cf = IMG.st.cfg;
-    api('POST', '/api/img/templates', { name: name, prompt: p, ratio: IMG.ratio, n: IMG.cnt, transparent: IMG.trans, model: cf.model, tier: cf.tier, quality: cf.quality, refs: IMG.refs.map(function (r) { return r.url; }) }, 30000)
-      .then(function (j) { IMG.st.templates = j.templates; IMG.sig.tpl = ''; imgBoxClose(); imgCmp(); toast('存好了：模板「' + name + '」'); imgLog('◆ 存了模板「' + esc(name) + '」', 'c'); }).catch(function (e) { toast(e.message); });
-  }
 });
 document.addEventListener('keydown', function (ev) {
   if (ev.key === 'Escape' && $('#fgBox')) { imgBoxClose(); ev.stopPropagation(); return; }
-  if (ev.key === 'Enter' && $('#fgBox') && ev.target.id === 'fgTn') { ev.preventDefault(); var b = $('#fgBox [data-act="tplok"]'); if (b) b.click(); }
 }, true);
 $('#view-img').addEventListener('keydown', function (ev) { if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey) && ev.target.id === 'fgPrompt') { ev.preventDefault(); imgGen(); } });
 $('#view-img').addEventListener('change', function (ev) {
@@ -1152,7 +1083,6 @@ $('#view-img').addEventListener('change', function (ev) {
   if (t.id === 'fgMd') { imgReadMd(t.files[0]); t.value = ''; }
   else if (t.id === 'fgImgs') { imgAddFiles(t.files); t.value = ''; }
   else if (t.id === 'fgEdR') { var it = imgCur(); if (it) imgEdit(it.id, { ratio: t.value }, true); }
-  else if (t.id === 'fgTpl') { if (t.value) imgTplUse(t.value); t.value = ''; }
 });
 $('#view-img').addEventListener('input', function (ev) {
   var t = ev.target;

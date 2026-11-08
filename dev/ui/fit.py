@@ -20,7 +20,7 @@ JS = """(lists) => { const out = []; document.querySelectorAll('#content *, #con
   if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 4 && el.clientHeight > 120)
     out.push((el.id ? '#' + el.id : el.className.toString().split(' ')[0]) + ' ' + el.clientHeight + '/' + el.scrollHeight); });
   return out; }"""
-TOOLS = [("view", v) for v in ("events", "monitor", "brains", "reports", "tts", "tts-cloud", "img", "img-char")]
+TOOLS = [("view", v) for v in ("events", "monitor", "brains", "reports", "tts", "tts-cloud", "img", "img-batch")]
 bad, errs = [], []
 
 
@@ -30,6 +30,19 @@ def look(p, w, h, name, shot):
     if over:
         bad.append(f"{w}×{h} {name}")
         p.screenshot(path=f"{OUT}/fit-{w}-{shot}.png")
+
+
+def edges(p, w, h, name):
+    """底栏、标题栏的每个按钮整个在屏幕里（v2.1：竖屏时最右边的「关闭」被切掉一半）。桌面窗口才有的「收起」「关闭」也放出来量。"""
+    cut = p.evaluate("""() => { ['btnMin', 'btnClose'].forEach(function (id) { var b = document.getElementById(id); if (b) b.hidden = false; });
+      var out = []; document.querySelectorAll('.rail .nav, .tw-btns button, .topbar button').forEach(function (b) {
+        var r = b.getBoundingClientRect(); if (!r.width || getComputedStyle(b).display === 'none') return;
+        if (r.left < -1 || r.right > innerWidth + 1 || r.top < -1 || r.bottom > innerHeight + 1) out.push((b.textContent || b.id).trim().slice(0, 4) + ' ' + Math.round(r.left) + '~' + Math.round(r.right)); });
+      ['btnMin', 'btnClose'].forEach(function (id) { var b = document.getElementById(id); if (b) b.hidden = true; });
+      return out; }""")
+    print(("  ✓ " if not cut else "  ✗ ") + f"{w}×{h} {name}：按钮都整个在屏幕里" + (f"，被切掉的 {cut}" if cut else ""), flush=True)
+    if cut:
+        bad.append(f"{w}×{h} {name} 按钮被切")
 
 
 def start(p, url):
@@ -48,6 +61,7 @@ with sync_playwright() as pw:
         start(p, "http://127.0.0.1:8765/")
         p.wait_for_timeout(600)
         look(p, w, h, "主页", "home")
+        edges(p, w, h, "主页")
         if h > w:                                      # 竖屏把字调大（设置 › 外观 › 文字大小 130%）也不该要滚（v1.8.2）
             p.evaluate("S.set.scale=130; applyScale(); homeFill()")
             p.wait_for_timeout(1200)
@@ -72,11 +86,13 @@ with sync_playwright() as pw:
             start(p, "http://127.0.0.1:8765/?tool=" + tool)
             if k.startswith("tts"):                     # 配音页的两种引擎都看（v1.8.11 加了百炼云端；只在这页切，不存进设置）
                 p.evaluate("TTS.eng='" + ("cloud" if k == "tts-cloud" else "local") + "'; if (TTS.st) TTS.st.engine=TTS.eng; if (TTS.st) renderTTS()")
-            if k.startswith("img"):                     # 生图的「角色」页（v2.0）和单张页都看
+            if k.startswith("img"):                     # 生图的单张页、批量页都看（v2.1 撤掉了角色、模板）
                 p.wait_for_timeout(800)
-                p.evaluate("imgTab('" + ("char" if k == "img-char" else "single") + "', true)")
+                p.evaluate("imgTab('" + ("batch" if k == "img-batch" else "single") + "', true)")
             p.wait_for_timeout(900)
             look(p, w, h, "工具窗口 " + k, k)
+            if k in ("img", "settings", "events"):
+                edges(p, w, h, "工具窗口 " + k)
             p.close()
         p = b.new_page(viewport={"width": w, "height": h})
         start(p, "http://127.0.0.1:8765/?tool=settings")

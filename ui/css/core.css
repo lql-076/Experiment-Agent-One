@@ -83,6 +83,8 @@ html.theme-vt body *{view-transition-name:none!important}
 html[data-orient="portrait"] #shell{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto}
 html[data-orient="portrait"] .rail{grid-row:3;flex-direction:row;justify-content:space-around;padding:.5rem .75rem}
 html[data-orient="portrait"] .rail .logo,html[data-orient="portrait"] .rail .spacer{display:none}
+html[data-orient="portrait"] .rail .nav{flex:1 1 0;min-width:0;width:auto;max-width:4.5rem}     /* 竖屏底栏：桌面窗口多了「收起」「关闭」也一排放得下（v2.1：以前最右边的「关闭」被切掉一半） */
+html[data-orient="portrait"] .rail{min-width:0}
 html[data-orient="portrait"] .topbar,html[data-orient="portrait"] .content{grid-column:1}
 html[data-orient="portrait"] .topbar{flex-wrap:wrap;gap:.75rem 1.25rem;padding:1rem 1.25rem}
 html[data-orient="portrait"] .clock-top{order:-1;margin-left:0;width:100%;justify-content:space-between;padding:0}
@@ -378,7 +380,7 @@ html[data-orient="portrait"] .rs{--rsz:min(82vw,44vh);grid-template-columns:minm
 .rc-cross{display:none}
 html[data-perf="on"] .rc-svg .rc-glow{display:none!important}
 .rc-ticks{fill:none;stroke:var(--text3);opacity:.45}
-.rc-sec circle{fill:var(--ring2)}
+.rc-sec circle,.rc-sec path{fill:var(--ring2)}
 .rc-sec{transform-origin:200px 200px;transition:transform .55s var(--spring)}
 .rc-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:calc(var(--rsz) * .03)}
 #clockBig{font-family:var(--fc);font-weight:var(--fcw);font-size:calc(var(--rsz) * .22);line-height:1;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -909,6 +911,13 @@ html[data-motion="reduced"] .tree-wrap.in:not(.settled) .tn{animation:none}
 .rd-row{display:flex;align-items:center;gap:.75rem;padding:.45rem .6rem;border:1px solid var(--line);border-radius:var(--rs);background:var(--bg2)}
 .rd-path{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:.8125rem}
 .rd-path em{font-style:normal;color:var(--bad);margin-left:.4rem;font-family:var(--sans)}
+.rd-path em.ok{color:var(--ok)}
+/* Agent 的工作文件夹（v2.1） */
+.wsbox{margin-bottom:1.25rem}
+.ws-row{display:flex;align-items:center;gap:.5rem 1rem;flex-wrap:wrap;padding:.45rem .6rem;margin:.4rem 0;border:1px solid var(--line);border-radius:var(--rs);background:var(--bg2);font-size:.8125rem;color:var(--text2)}
+.ws-row b{color:var(--text);font-weight:600;margin-left:.4rem}
+.ws-row .sp{flex:1}
+.ws-env{color:var(--text3)}
 .rd-cl{display:flex;align-items:center;gap:.45rem;font-size:.8125rem;color:var(--text2);white-space:nowrap}
 .chat-side{display:flex;flex-direction:column;min-height:0;min-width:0}
 .side-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.8rem 1.5rem .5rem}
@@ -1986,66 +1995,6 @@ html[data-orient="portrait"] #view-chat.drawer{left:.75rem;right:.75rem;top:28%;
 /* 旧主题留下的装饰：极简里都不要 */
 #ambient{display:none}
 .chat-side{display:none}
-
-/* ---------- 生图 · 角色（v2.0）：左边角色列表、中间三视图、右边让她做 ---------- */
-.fg-main.char{grid-template-columns:19rem minmax(0,1fr) 25rem}
-html[data-orient="portrait"] .fg-main.char{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:minmax(0,1.2fr) minmax(0,1fr)}
-html[data-orient="portrait"] .fg-main.char>.fg-col:nth-child(2){grid-column:1/-1;grid-row:1}
-html[data-orient="portrait"] .fg-main.char>.fg-col:nth-child(1),html[data-orient="portrait"] .fg-main.char>.fg-col:nth-child(3){grid-row:2}
-.ch-list{flex:1;display:flex;flex-direction:column;gap:.25rem;padding:.6rem}
-.ch-it{display:flex;align-items:center;gap:.75rem;padding:.55rem .6rem;border:1px solid transparent;background:transparent;color:var(--text);text-align:left;cursor:pointer;font-family:var(--sans)}
-.ch-it:hover{background:color-mix(in srgb,var(--c) 7%,transparent)}
-.ch-it[aria-pressed="true"],.ch-it.on{border-color:var(--ln2);background:color-mix(in srgb,var(--c) 10%,transparent)}
-.ch-av{flex:none;width:2.75rem;height:2.75rem;border-radius:50%;display:grid;place-items:center;overflow:hidden;border:1.5px dashed var(--ln2);color:var(--text2);font-size:1rem;background:var(--dk)}
-.ch-av.ok{border-style:solid;border-color:var(--c)}
-.ch-av img{width:100%;height:100%;object-fit:cover;object-position:16% 10%}
-.ch-nm{min-width:0;display:flex;flex-direction:column;gap:.15rem}
-.ch-nm b{font-weight:600;font-size:.95rem}
-.ch-nm small{font-size:.75rem;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ch-note{padding:.6rem .9rem .8rem;line-height:1.6}
-#chFlow{display:flex;align-items:center;gap:.4rem;letter-spacing:.04em;font-family:var(--sans);text-transform:none}
-#chFlow b{font-weight:500;color:var(--text3);font-size:.75rem}
-#chFlow b.ok{color:var(--text)}
-#chFlow b.cur{color:var(--c)}
-#chFlow i{width:.9rem;height:1px;background:var(--ln2)}
-.ch-body{flex:1;display:flex;flex-direction:column;gap:.7rem;padding:.8rem .9rem}
-.ch-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.6rem;text-align:center;color:var(--text3);font-family:var(--sans);font-size:.875rem;line-height:1.7;padding:1rem}
-.ch-empty b{color:var(--text);font-size:1rem}
-.ch-fig{display:flex;justify-content:center;gap:.4rem;color:var(--text3)}
-.ch-fig svg{height:7.5rem;width:auto}
-.ch-sheet{position:relative;flex:1 1 13rem;min-height:11rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.5rem;border:1px solid var(--ln);background:var(--dk);overflow:hidden}
-.ch-sheet img{width:100%;height:100%;object-fit:contain;position:absolute;inset:0}
-.ch-sheet.ch-none{border-style:dashed}
-.ch-tag{position:absolute;left:.5rem;bottom:.5rem;padding:.15rem .5rem;font-size:.6875rem;letter-spacing:.06em;color:var(--bg);background:var(--c);font-family:var(--sans)}
-.ch-re{position:absolute;right:.5rem;bottom:.5rem}
-.ch-cands{flex:1 1 13rem;min-height:11rem;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:.5rem}
-.ch-cand{position:relative;border:1.5px solid var(--ln);background:var(--dk);padding:0;cursor:pointer;overflow:hidden;display:grid;place-items:center}
-.ch-cand img{width:100%;height:100%;object-fit:contain;position:absolute;inset:0}
-.ch-cand .ch-fig svg{height:4.5rem}
-.ch-cand[aria-pressed="true"]{border-color:var(--c);box-shadow:0 0 0 1px var(--c)}
-.ch-cand .n{position:absolute;left:.35rem;top:.3rem;font-size:.75rem;color:var(--text2)}
-.ch-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto minmax(0,1.4fr);align-items:center;gap:.5rem .6rem}
-.ch-desc{min-height:4.25rem;line-height:1.6}
-.ch-refs{display:flex;gap:.5rem;flex-wrap:wrap}
-.ch-ref{position:relative;width:3.75rem;height:3.75rem;border:1px solid var(--ln);background:var(--dk);overflow:hidden}
-.ch-ref img{width:100%;height:100%;object-fit:cover}
-.ch-ref .fb{position:absolute;right:0;top:0;background:var(--dk)}
-.ch-add{width:3.75rem;height:3.75rem;border:1px dashed var(--ln2);background:transparent;color:var(--text3);font-size:.75rem;cursor:pointer;font-family:var(--sans)}
-.ch-ops{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
-.ch-act{display:flex;flex-direction:column;gap:.6rem;padding:.8rem .9rem}
-.ch-do{min-height:4.5rem;line-height:1.6}
-.ch-faces{display:flex;flex-wrap:wrap;gap:.35rem}
-.ch-faces .fb[aria-pressed="true"],.ch-row2 .fb[aria-pressed="true"]{border-color:var(--c);color:var(--bg);background:var(--c)}
-.ch-row2{display:flex;align-items:center;flex-wrap:wrap;gap:.45rem .6rem}
-.ch-auto{line-height:1.6}
-.ch-wait{display:flex;flex-direction:column;gap:.5rem;padding:1rem .2rem;font-family:var(--sans)}
-.ch-mh{border-top:1px solid var(--ln)}
-.ch-made{flex:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));grid-auto-rows:5rem;gap:.45rem;padding:.6rem .9rem;align-content:start}
-.ch-mi{border:1px solid var(--ln);background:var(--dk);padding:0;cursor:pointer;overflow:hidden;display:grid;place-items:center}
-.ch-mi img{width:100%;height:100%;object-fit:cover}
-.ch-mi .ch-fig svg{height:3.5rem}
-.fg-r .ftg em.ch{color:var(--bg);background:var(--c);border-color:var(--c)}
-.ch-box img{max-width:80vw;max-height:78vh;display:block}
 
 /* 安装配音：每一步一行（v2.0） */
 .tti-sum{display:flex;gap:.75rem;flex-wrap:wrap;font-size:.8125rem;margin-top:.5rem}

@@ -48,8 +48,10 @@ function ringSVG() {
     '<circle class="rc-track" cx="200" cy="200" r="' + RR + '"' + mk + ' style="stroke-width:' + aw + '"/>' +
     '<circle class="rc-glow" cx="200" cy="200" r="' + RR + '" transform="rotate(-90 200 200)" filter="url(#rcBlur)" style="stroke:url(#rcGrad);stroke-width:' + (aw * 1.6) + ';stroke-dasharray:' + RCC.toFixed(2) + '"/>' +
     '<g' + mk + '><circle class="rc-arc" cx="200" cy="200" r="' + RR + '" transform="rotate(-90 200 200)" style="stroke:url(#rcGrad);stroke-width:' + aw + ';stroke-dasharray:' + RCC.toFixed(2) + '"/></g>' +
-    '<g class="rc-sec" id="rcSec"><circle cx="200" cy="' + (200 - TR) + '" r="' + sr + '"/></g></svg>';
+    '<g class="rc-sec" id="rcSec"><path d="' + secTri(sr) + '"/></g></svg>';
 }
+/* 秒针那一点：倒三角，尖朝着圆心（v2.1，作者：圆点看着不舒服） */
+function secTri(sr) { var y = 200 - TR, a = sr * 1.4, h = sr * 2.3; return 'M' + (200 - a).toFixed(2) + ' ' + (y - h / 2).toFixed(2) + 'H' + (200 + a).toFixed(2) + 'L200 ' + (y + h / 2).toFixed(2) + 'Z'; }
 function rTile(i, tc, head, big, spark, foot) {
   return '<div class="rt rin" style="--i:' + i + ';--tc:' + tc + '"><div class="rt-h"><span>' + head[0] + '</span><span>' + head[1] + '</span></div><div class="rt-v num">' + big + '</div>' + (spark || '') + '<div class="rt-f">' + foot + '</div></div>';
 }
@@ -166,7 +168,7 @@ function setMode(m) {
     setTimeout(function () { $('#resident').focus({ preventScroll: true }); }, 60);
   } else { $('#resident').classList.remove('nocursor'); resetIdle(); }
 }
-function enterResident() { closeBrain(); setMode('resident'); }
+function enterResident() { if (root.dataset.tool) return; closeBrain(); setMode('resident'); }      // 生图、配音这些工具窗口不进常驻（v2.1）
 function exitResident() {
   if (root.dataset.mode !== 'resident' || leaving) return;
   if (!animOK() || !$('#resident .rc-svg')) { setMode('normal'); return; }
@@ -185,7 +187,7 @@ $('#clockTop').addEventListener('click', enterResident);
 function resetIdle() {
   clearTimeout(idleT);
   var mins = parseFloat(S.set.idleRes);
-  if (mins > 0 && root.dataset.mode === 'normal') idleT = setTimeout(enterResident, mins * 60000);
+  if (mins > 0 && root.dataset.mode === 'normal' && !root.dataset.tool) idleT = setTimeout(enterResident, mins * 60000);
 }
 ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(function (ev) {
   window.addEventListener(ev, function () { if (root.dataset.mode === 'normal') resetIdle(); }, { passive: true });

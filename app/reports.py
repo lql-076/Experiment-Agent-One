@@ -169,7 +169,7 @@ def tasks():
 
 
 def imagegen_job():
-    """生图在跑（批量、单张、角色的三视图、让角色做动作，v2.0）：第几张、这张画了多久、大概还要多久。"""
+    """生图在跑（批量、单张，v2.0）：第几张、这张画了多久、大概还要多久。"""
     from . import imagegen
     j = imagegen.G.public()
     if not j or j["st"] != "run":
