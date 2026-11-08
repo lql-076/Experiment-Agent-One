@@ -158,10 +158,10 @@ async def dsc(r: Request):
         asked = _txt(asked) if not isinstance(asked, str) else asked
         tools_used = [m for m in msgs if m.get("role") == "tool"]
         want = any(x in asked for x in ("最新", "最近", "价格", "新闻", "发布", "更新", "搜"))
-        if want and not tools_used:
+        if want and not tools_used and "web_search" in names:          # 只调给了它的工具（v2.1：带着工作区工具时，联网搜索可能没给）
             call = {"id": "call_s1", "type": "function", "function": {"name": "web_search", "arguments": json.dumps({"query": asked[:30], "count": 5}, ensure_ascii=False)}}
             return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [call], **({"reasoning_content": "先搜一下"} if think else {})}}], "usage": usage}
-        if want and len(tools_used) == 1:
+        if want and len(tools_used) == 1 and "web_fetch" in names:
             url = (__import__("re").search(r"https?://\S+", tools_used[0]["content"]) or [None])[0]
             call = {"id": "call_f1", "type": "function", "function": {"name": "web_fetch", "arguments": json.dumps({"url": url})}}
             return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [call], **({"reasoning_content": "再读一页"} if think else {})}}], "usage": usage}

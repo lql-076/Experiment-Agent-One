@@ -162,7 +162,7 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
     返回 {"text","cny","searched","fetched","read","ws","sources"}；steps 里追加每一步。progress(文字)：处理到哪一步了（对话页实时显示）。"""
     say = progress or (lambda _m: None)
     s = settings.S
-    rounds = max(1, int(s.get("searchRounds", 4)))
+    rounds = web_max = max(1, int(s.get("searchRounds", 4)))   # 联网搜索最多几轮（带着工作区工具时总步数多，但搜索照旧按这个数）
     if local_files:
         rounds = max(rounds, 8)                         # 翻文件要多几轮：搜 → 读 → 再读
     if ws:
@@ -171,8 +171,12 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
     msgs[0] = {"role": "system", "content": msgs[0]["content"] + ("\n\n" + system_hint() if web else "") + ("\n\n" + files.hint() if local_files else "") +
                ("\n\n" + workspace.hint() if ws else "")}
     total, searched, fetched, nread, nws, sources, n_res, imgs = 0.0, 0, 0, 0, 0, [], 1, 0
+    web_rnds, web_cap_said = 0, False
     for rnd in range(rounds + 1):
-        give_web = web and rnd < rounds and today_count() < int(s.get("searchDaily", 200))
+        give_web = web and rnd < rounds and web_rnds < web_max and today_count() < int(s.get("searchDaily", 200))
+        if web and web_rnds >= web_max and not web_cap_said and rounds > web_max:
+            steps.append(["联网搜索", f"查了 {web_max} 轮，到上限了，不再搜"])
+            web_cap_said = True
         tools = (TOOLS if give_web else []) + (files.TOOLS if (local_files or ws) and rnd < rounds else []) + (workspace.tools() if ws and rnd < rounds else [])
         say("DeepSeek 正在想……" if rnd == 0 else "DeepSeek 正在接着做……" if nws else "DeepSeek 正在看查到的内容……")
         out = await deepseek.chat(msgs, thinking=thinking, event_id=event_id, purpose=purpose, tools=tools or None,
@@ -189,6 +193,8 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
                 text += "\n\n来源：\n" + "\n".join(f"{i + 1}. {x['title'][:40]} {x['url']}" for i, x in enumerate(sources[:3]))
             return {"text": text, "cny": total, "searched": searched, "fetched": fetched, "read": nread, "ws": nws, "sources": sources}
         msgs.append(out["message"])
+        if any((c.get("function") or {}).get("name") in ("web_search", "web_fetch") for c in calls) and give_web:
+            web_rnds += 1
         pics = []                                        # read_file 读到的图片：工具结果只能是文字，图片放进紧跟着的一条用户消息
         for call in calls:
             fn = (call.get("function") or {})
@@ -199,7 +205,9 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
                 args = {}
             t0 = time.time()
             try:
-                if name == "web_search":
+                if name in ("web_search", "web_fetch") and not give_web:
+                    content = "这一轮没给你联网搜索（今天的次数用完了或者关着），凭已有的信息回答。"
+                elif name == "web_search":
                     say(f"正在联网搜索「{str(args.get('query', ''))[:40]}」……")
                     res = await search(args.get("query", ""), args.get("count") or 8, ori=user_text, event_id=event_id, purpose=purpose)
                     searched += 1
