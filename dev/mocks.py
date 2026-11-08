@@ -120,8 +120,27 @@ async def dsc(r: Request):
     pics = [x for m in msgs if isinstance(m.get("content"), list) for x in m["content"] if isinstance(x, dict) and x.get("type") == "image_url"]
     LAST["images"] = len(pics)
     names = {(t.get("function") or {}).get("name") for t in j.get("tools") or []}
-    ask0 = next((_txt(m.get("content")) for m in reversed(msgs) if m.get("role") == "user" and not _txt(m.get("content")).startswith("（read_file")), "")
+    ask0 = next((_txt(m.get("content")) for m in reversed(msgs) if m.get("role") == "user" and not _txt(m.get("content")).startswith(("（read_file", "（程序提示"))), "")
     tmsgs = [m for m in msgs if m.get("role") == "tool"]
+    # v2.2：「【拒工具】」带图片又带工具就 400（模仿带图片 + 工具被拒）；「【DSML】」把工具调用写成文字；「【截断】」第一次回复被截断
+    if "【拒工具】" in ask0 and pics and j.get("tools"):
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": {"message": "image input does not support tools", "type": "invalid_request_error"}}, status_code=400)
+    if "【DSML】" in ask0 and "write_file" in names and not tmsgs:
+        D = "｜DSML｜"
+        txt = (f"好的，我来写。\n<{D}function_calls>\n<{D}invoke name=\"write_file\">\n<{D}parameter name=\"path\" string=\"true\">dsml测试/a.txt</{D}parameter>\n"
+               f"<{D}parameter name=\"content\" string=\"true\">你好 DSML</{D}parameter>\n<{D}parameter name=\"append\" string=\"false\">false</{D}parameter>\n</{D}invoke>\n</{D}function_calls>")
+        return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": txt}, "finish_reason": "stop"}], "usage": usage}
+    if "【截断】" in ask0 and "write_file" in names and not tmsgs:
+        hinted = any(m.get("role") == "user" and _txt(m.get("content")).startswith("（程序提示") for m in msgs)
+        if not hinted:
+            D = "｜DSML｜"
+            txt = f"<{D}function_calls>\n<{D}invoke name=\"write_file\">\n<{D}parameter name=\"path\" string=\"true\">截断/a.html</{D}parameter>\n<{D}parameter name=\"content\" string=\"true\"><html>很长很长"
+            return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": txt}, "finish_reason": "length"}], "usage": usage}
+        call = {"id": "call_t1", "type": "function", "function": {"name": "write_file", "arguments": json.dumps({"path": "截断/a.html", "content": "<html>第一段"}, ensure_ascii=False)}}
+        return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [call]}, "finish_reason": "tool_calls"}], "usage": usage}
+    if ("【DSML】" in ask0 or "【截断】" in ask0) and tmsgs:
+        return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": "（DeepSeek 工作区）做完了：" + tmsgs[-1]["content"][:200]}}], "usage": usage}
     # 模仿 DeepSeek 翻文件：「【查笔记】词」先 find_files 再 read_file 第一个；「【读文件】路径」直接 read_file
     if "read_file" in names and ("【查笔记】" in ask0 or "【读文件】" in ask0) and not (tmsgs and tmsgs[-1]["content"].startswith(("文件：", "图片 ", "没读成"))):
         if "【读文件】" in ask0:

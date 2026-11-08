@@ -20,6 +20,21 @@ from .qq import BOT
 MEM_INSTRUCT = "Given a user message, retrieve personal notes and memories that help answer it"
 REMEMBER = re.compile(r"^(请)?(帮我)?(记住|记一下|记下来|记下|帮我记)[：:，, ]*(.+)$", re.S)
 HIST = defaultdict(lambda: deque(maxlen=8))   # 每个人最近几轮：(role, content, private, ts)
+# v2.2：同一件工作区的事，后面说「继续 / 接着做 / 开始第 2 步」沿用上一条的去向和工具，并告诉 DeepSeek 上次做到哪
+CONT_RE = re.compile(r"^(好的?|好吧|ok|嗯+|行|可以)?[，,。.！! ]*(继续|接着|下一步|开始第.{1,3}步|做第.{1,3}步|第.{1,3}步|再试|重试|往下|go\s*on|continue)", re.I)
+LAST_WS = {}                                  # user -> {"ts", "note"}：上一件动了工作区的事
+WS_STEPS = {"写文件", "改文件", "删除", "挪", "复制", "运行", "工作区", "读文件", "列目录", "认出写成文字的工具调用", "工具调用没成"}
+
+
+def _continuing(user, text) -> bool:
+    w = LAST_WS.get(user)
+    return bool(w and time.time() - w["ts"] < 7200 and len(text) <= 40 and CONT_RE.search(text.strip()))
+
+
+def _remember_ws(user, steps, reply):
+    done = [f"- {x[0]} {x[1]}" for x in steps if x and x[0] in WS_STEPS][-15:]
+    LAST_WS[user] = {"ts": time.time(), "note": "【接着上一件事：你上次在工作文件夹里做到这里（最后几步）：\n" + "\n".join(done) +
+                     f"\n你上次最后说的：{reply[:300]}\n这件事的文件夹里有 进度.md 的话先读它，从没做完的地方接着做，不要从头来。】"}
 SRC_LABEL = {"qq": "QQ 私聊", "ui": "界面输入", "cron": "定时任务"}
 # 问能不能给 agent 加功能（「能不能加个导出的功能」「你能不能支持读 PDF」）：本地小脑以前会答成"系统限制，没法加"
 WISH_RE = re.compile(r"(能不能|可不可以|可以|能否)(给你|帮你|让你|给它|在你这)?(加|做|新增|增加|添加|支持|实现|弄)(一?个|上|出)?.{0,24}"
@@ -123,11 +138,12 @@ def _quick(job, *a, **k):
     return eid
 
 
-async def handle(text: str, src="qq", user="me", job=None, force=None, allow_private=False, redo_of=None, images=None):
+async def handle(text: str, src="qq", user="me", job=None, force=None, allow_private=False, redo_of=None, images=None, received=None):
     """job：界面上异步发消息时传进来，记下事件编号，界面拿它查处理到哪一步了。
     force：你指定交给谁（local / neu / ds / cl），跳过提醒、记住这些快捷处理，直接按你说的走（决策脑的分数照样算给你看）。
     隐私的事指定给云端要 allow_private（你确认过），不然抛 router.NeedConfirm。
-    images：这条消息带的图片（已经存进 data\\chat 的，files.save_upload 的结果或路径）。"""
+    images：这条消息带的图片（已经存进 data\\chat 的，files.save_upload 的结果或路径）。
+    received：对话里发来的文件（v2.2，已经存进 工作区\\收到的\\，workspace.received 的结果）。"""
     text = (text or "").strip()
     t0 = time.time()
     is_priv_kw = privacy.check(text)[0]
@@ -151,28 +167,28 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
         return events.get(eid)
 
     # 1. 在回提醒？（你指定了去向就不走这些快捷处理）
-    r = None if force or images else reminders.try_reply(text)
+    r = None if force or images or received else reminders.try_reply(text)
     if r:
         eid = _quick(job, text, src, "回应提醒", "这是在回应刚才的提醒，直接打卡或顺延，不经过模型。", r, is_priv_kw)
         HIST[user].extend([("user", text, is_priv_kw, t0), ("assistant", r, is_priv_kw, time.time())])
         return events.get(eid)
 
     # 1.5 在回"要不要训练"？
-    g = None if force or images else growth.try_reply(text)
+    g = None if force or images or received else growth.try_reply(text)
     if g:
         eid = _quick(job, text, src, "回应提醒", "这是在回答「要不要训练新小脑」，直接记下，不经过模型。", g, is_priv_kw)
         HIST[user].extend([("user", text, is_priv_kw, t0), ("assistant", g, is_priv_kw, time.time())])
         return events.get(eid)
 
     # 2. 设提醒？
-    if not force and not images and reminders.parse_command(text):
+    if not force and not images and not received and reminders.parse_command(text):
         reply = await reminders.create_from_text(text)
         eid = _quick(job, text, src, "设提醒", "认出了时间和事情，由程序直接建提醒，不经过模型（先斩后奏，写进报告）。", reply, is_priv_kw,
                            [["收到", SRC_LABEL.get(src, src)], ["认出提醒", "时间 + 事情"], ["新建提醒", "先斩后奏"], ["回复", "已回复"]])
         return events.get(eid)
 
     # 3. 让我记东西？
-    m = None if force or images or workspace.to_file(text) else REMEMBER.match(text)      # 「记到某个文件夹里」是要写文件（v2.1），不进记忆
+    m = None if force or images or received or workspace.to_file(text) else REMEMBER.match(text)      # 「记到某个文件夹里」是要写文件（v2.1），不进记忆
     if m and len(m.group(4).strip()) >= 2:
         done, _ = await memory.remember(m.group(4))
         reply = "记下了。" if done else "要写记忆文件，已放进「等你决定」。"
@@ -213,6 +229,12 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
         files.note(eid, "img", im["path"], size=im.get("size"))
     if images:
         steps.append(["收到图片", f"{len(images)} 张"])
+    received = received or []
+    for x in received:
+        files.note(eid, "file", x["path"], x["name"], x["size"])
+    if received:
+        steps.append(["收到文件", f"{len(received)} 个 · 放进了工作区 {Path(received[0]['rel']).parent}"])
+    recv_txt = workspace.recv_note(received)
 
     def prog(msg):
         """处理到哪一步，随时写进事件，界面（对话页）每半秒来看一次。"""
@@ -251,6 +273,9 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
     elif is_local and not dec["private"] and not fz and (images or pic_file):
         route, is_local = "ds", False
         why_extra = "（带了图片，本地小脑看不了图，交给 DeepSeek 看）"
+    elif is_local and not dec["private"] and not fz and received:
+        route, is_local = "ds", False
+        why_extra = "（发来了文件，已经放进工作文件夹，本地小脑不会用工具，交给 DeepSeek）"
     elif is_local and not dec["private"] and not fz and any(m["cloud"] for m in readable):
         route, is_local = "ds", False
         why_extra = "（要看你贴的文件 / 文件夹，本地小脑不会翻文件，交给 DeepSeek 带着读文件的工具）"
@@ -260,6 +285,10 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
     elif is_local and not dec["private"] and not fz and files.wants(text):
         route, is_local = "ds", False
         why_extra = "（要查你电脑上的资料，本地小脑不会翻文件，交给 DeepSeek 带着读文件的工具）"
+    cont = _continuing(user, text) and not dec["private"] and not fz
+    if cont and (is_local or route == "cl"):
+        route, is_local = "ds", False
+        why_extra = "（接着上一件工作区的事做，交给 DeepSeek 带着同样的工具）"
     if not is_local and route == "ds" and any(not m["cloud"] for m in readable):
         route, is_local = dec["brain"] or "local", True
         dec["brain_name"] = dec["brain_name"] or "本地通用"
@@ -282,6 +311,8 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
         try:
             snips = await memory.search(qvec, allow_private=True)
             extra, _, used = await asyncio.to_thread(files.attach, readable, True)
+            if recv_txt:
+                extra += "\n\n" + recv_txt[:3000]
             _note_reads(eid, used, steps, "你贴的路径，程序读给本地小脑")
             if images:
                 extra += f"\n\n（他附了 {len(images)} 张图片，但这件事只在本地处理，你看不了图：直接告诉他看不了，请他用文字描述。）"
@@ -308,6 +339,11 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
             thinking = mode == "on" or (mode == "auto" and (dec.get("hard", dec["p"].get("cl", 0)) > 0.25 or len(text) > 150))
             snips = await memory.search(qvec, allow_private=False)
             extra, pics, used = await asyncio.to_thread(files.attach, [m for m in readable if m["cloud"]], False)
+            if recv_txt:
+                extra += "\n\n" + recv_txt
+            if cont:
+                extra += "\n\n" + LAST_WS[user]["note"]
+                steps.append(["接着上一件事", "带上了上次在工作区做到哪"])
             _note_reads(eid, used, steps, "你贴的路径，程序读出来一起发")
             uris = [await asyncio.to_thread(files.uri_of, im["path"]) for im in images] + [x["uri"] for x in pics]
             msgs = _build(text, user, snips, False, docs, src, extra + wish_extra, uris)
@@ -329,6 +365,8 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
             searched = bool(web and (web["searched"] or web["fetched"]))
             cost_all = out["cny"] + (websearch.PRICE_USD * float(settings.S["usdCny"]) * (web["searched"] + web["fetched"]) if web else 0)
             reply, cost = out["text"], cost_all
+            if web and web.get("ws"):
+                _remember_ws(user, steps, reply)
             steps.append(["交给 DeepSeek", f"{'思考' if thinking else '快速'}模式" + (f" · 联网 {web['searched']} 搜 {web['fetched']} 读" if searched else "") +
                           (f" · 工作区 {web['ws']} 步" if web and web.get("ws") else "") + f" · ¥{cost_all:.4f}"])
             used_claude = any(s.get("claude") for s in snips)
@@ -352,10 +390,14 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
         steps.append(["写提示词", "DeepSeek 附上背景" if not dec["private"] else "本地模板（涉及隐私）"])
 
     steps.append(["回复", "已回复" if reply else "没有回复"])
+    if deepseek.has_dsml(reply):                  # 工具调用写成的文字不给他看、不进历史（不然下一句它照着写）
+        reply = deepseek.strip_dsml(reply) or "这次工具调用没成功，跟我说「继续」我再试一次。"
     db.update("events", eid, {"route": route, "ui_to": dec["ui_to"] if route == dec["route"] else route, "result": reply[:2000], "reply": reply,
                               "cost": cost, "latency": time.time() - t0, "status": "done", "steps": steps,
                               "why": dec["why"] + why_extra + " " + dec["vote_line"] + "。"})
-    HIST[user].extend([("user", text + (f"（附了 {len(images)} 张图片）" if images else ""), dec["private"], t0), ("assistant", reply, dec["private"], time.time())])
+    HIST[user].extend([("user", text + (f"（附了 {len(images)} 张图片）" if images else "") +
+                        (f"（发来了文件：{'、'.join(x['rel'] for x in received[:5])}）" if received else ""), dec["private"], t0),
+                       ("assistant", reply, dec["private"], time.time())])
     return events.get(eid)
 
 

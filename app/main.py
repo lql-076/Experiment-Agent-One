@@ -11,7 +11,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -20,7 +20,7 @@ from . import (agent, agentstate, autostart, checks, db, deepseek, docs, events,
 from .models import M
 from .qq import BOT
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 PORT = 8765
 _bg = []
 
@@ -456,21 +456,49 @@ async def chat(body: dict = Body(...)):
     raw = body.get("images") or []
     if not isinstance(raw, list) or len(raw) > files.MAX_UPLOADS:
         raise HTTPException(400, f"一次最多带 {files.MAX_UPLOADS} 张图片")
-    if not text and not raw:
+    got = await asyncio.to_thread(workspace.received, body.get("files") if isinstance(body.get("files"), list) else [])   # v2.2：先传好的文件
+    if not text and not raw and not got:
         raise HTTPException(400, "空消息")
     try:
         imgs = [files.save_upload(u, k) for k, u in enumerate(raw)]      # 先存进 data\chat（聊天记录里显示、重做时再用）
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
-    text = text or "看看这张图。"
+    text = text or ("看看这张图。" if raw else "收到这些文件，先放在工作区。")
     force = body.get("force") if body.get("force") in ("local", "neu", "ds", "cl") else None   # 你指定交给谁（留的口子）
-    kw = {"force": force, "allow_private": bool(body.get("allow_private")), "images": imgs or None}
+    kw = {"force": force, "allow_private": bool(body.get("allow_private")), "images": imgs or None, "received": got or None}
     if not body.get("async"):
         try:
             return await agent.handle(text, "ui", "me", **kw)
         except router.NeedConfirm as e:
             raise HTTPException(409, str(e)) from None
     return _start_job(text, **kw)
+
+
+@app.post("/api/ws/upload")
+async def ws_upload(request: Request, name: str = ""):
+    """对话里拖进来、粘贴、回形针选的任何文件（v2.2）：原样流式存进 工作区\\收到的\\日期\\原文件名（重名加序号），一个最多 2 GB。
+    发消息时把返回的 rel 放进 /api/chat 的 files，DeepSeek 就知道文件在哪。"""
+    if int(request.headers.get("content-length") or 0) > workspace.MAX_RECV:
+        raise HTTPException(413, "太大了：一个文件最多 2 GB")
+    try:
+        dst = await asyncio.to_thread(workspace.recv_target, name)
+    except OSError as e:
+        raise HTTPException(400, f"工作文件夹用不了：{e}") from None
+    tmp, got = dst.with_name(dst.name + ".part"), 0
+    try:
+        with open(tmp, "wb") as f:
+            async for chunk in request.stream():
+                got += len(chunk)
+                if got > workspace.MAX_RECV:
+                    raise HTTPException(413, "太大了：一个文件最多 2 GB")
+                f.write(chunk)
+        os.replace(tmp, dst)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
+    safety.log("workspace.file", {"op": "收到", "path": workspace.rel(dst), "size": got}, "user")
+    return {"rel": workspace.rel(dst), "name": dst.name, "size": got}
 
 
 @app.get("/api/chat/file/{fid}")

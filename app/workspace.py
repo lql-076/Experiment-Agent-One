@@ -650,6 +650,68 @@ def status():
             "last_n": st.get("n", 0), "last_list": paths.show(Path(st["list"])) if st.get("list") and Path(st["list"]).exists() else ""}
 
 
+# ---------------- 对话里收到的文件（v2.2）----------------
+RECV = "收到的"
+MAX_RECV = 2 << 30                              # 一个文件最多 2 GB
+_BAD_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
+
+
+def safe_name(name) -> str:
+    """原文件名去掉 Windows 不认的字符（只要名字，不要路径）。"""
+    n = str(name or "").replace("\\", "/").split("/")[-1]
+    n = _BAD_NAME.sub("_", n).strip().rstrip(". ") or "文件"
+    if n.split(".")[0].upper() in _RESERVED:
+        n = "_" + n
+    if len(n) > 150:
+        stem, ext = os.path.splitext(n)
+        n = stem[:150 - len(ext)] + ext
+    return n
+
+
+def recv_target(name) -> Path:
+    """存到哪：工作区\\收到的\\日期\\原文件名，重名加 (2)、(3)。"""
+    d = ensure() / RECV / datetime.now().strftime("%Y-%m-%d")
+    d.mkdir(parents=True, exist_ok=True)
+    n = safe_name(name)
+    stem, ext = os.path.splitext(n)
+    p, k = d / n, 2
+    while p.exists() or p.with_name(p.name + ".part").exists():
+        p, k = d / f"{stem} ({k}){ext}", k + 1
+    return p
+
+
+def received(rels) -> list:
+    """界面传回来的「收到的」文件：只认工作区 收到的\\ 里真有的。"""
+    root = (folder() / RECV).resolve(strict=False)
+    out = []
+    for r in list(rels or [])[:50]:
+        try:
+            rp = real(r, must_exist=True)
+        except Denied:
+            continue
+        if rp.is_file() and files._inside(rp, root):
+            out.append({"path": str(rp), "rel": rel(rp), "name": rp.name, "size": rp.stat().st_size})
+    return out
+
+
+def recv_note(items) -> str:
+    """给 DeepSeek 的一段话：收到了哪些文件、在工作区哪；小的文字文件把内容也带上。"""
+    if not items:
+        return ""
+    lines = [f"- {x['rel']}（{_size(x['size'])}）" for x in items]
+    parts = ["【他发来的文件，已经放进你的工作文件夹（相对路径）：】\n" + "\n".join(lines) +
+             "\n直接用这些路径：read_file 读、copy_path / move_path 挪去用、run_command 里当素材。"]
+    for x in items:
+        if files.kind_of(Path(x["path"])) in ("text", "docx") and x["size"] <= 200 << 10:
+            try:
+                r = files.read(x["path"], 0, limit=12000)
+                parts.append(f"【{x['rel']} 的内容：】\n{r['text']}" + ("\n（没放完，后面的用 read_file 接着读）" if r.get("more") else ""))
+            except Exception:
+                pass
+    return "\n\n".join(parts)
+
+
 # ---------------- 给 DeepSeek 的工具 ----------------
 def _fn(name, desc, props, req):
     return {"type": "function", "function": {"name": name, "description": desc, "parameters": {"type": "object", "properties": props, "required": req}}}
@@ -658,8 +720,9 @@ def _fn(name, desc, props, req):
 P = {"type": "string", "description": "工作文件夹里的相对路径，比如 视频\\index.html"}
 TOOLS = [
     _fn("write_file", "在你的工作文件夹里写一个文字文件：新建，或者整个覆盖（append=true 接在后面写）。代码、网页、Markdown、字幕、笔记都用它。"
-        "原来有的会先自动备份。文件夹不存在会自动建。",
-        {"path": P, "content": {"type": "string", "description": "完整的文件内容"}, "append": {"type": "boolean", "description": "true = 接在原来的后面写"}},
+        "原来有的会先自动备份。文件夹不存在会自动建。长文件一定分段写：每次 content 不超过 3000 字，第一段 append=false，后面每段 append=true 接着写"
+        "（一次写太长回复会被截断，工具就执行不了）。",
+        {"path": P, "content": {"type": "string", "description": "这一段的内容（不超过 3000 字）"}, "append": {"type": "boolean", "description": "true = 接在原来的后面写"}},
         ["path", "content"]),
     _fn("edit_file", "改工作文件夹里一个文件的一段：把 old 换成 new。old 要一字不差、只出现一次（不然多带几个字，或者 all=true 全换）。改之前自动备份。",
         {"path": P, "old": {"type": "string"}, "new": {"type": "string"}, "all": {"type": "boolean"}}, ["path", "old", "new"]),
@@ -692,6 +755,9 @@ def hint() -> str:
              "命令和脚本里不要写工作文件夹外面的绝对路径、不要用 ..、%USERPROFILE%、expanduser 这类，会被拦下。"
              f"一条命令最多跑 {int(settings.S.get('wsTimeout') or 900)} 秒（timeout 参数），长的活拆成几步。\n" if run_on else
              "运行程序他关掉了（只能写、改、删文件）。\n") +
+            "工具一定用工具调用（function call）来调，不要把调用写成文字。长文件分段写（每段不超过 3000 字，后面的 append=true）。"
+            "步骤多的活（比如做视频）：在这件事的文件夹里放一个 进度.md，每做完一段就更新（做完了什么、下一步做什么、文件在哪）；"
+            "他说「继续 / 接着做」时先读 进度.md 再接着做，不要从头来。\n"
             "他让你记东西、写东西、做东西时用它；闲聊、问问题不用碰。做完告诉他放在哪（工作文件夹里的路径），出错了照实说。")
 
 

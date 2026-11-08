@@ -9,12 +9,14 @@
 - 可以带工具（tools，OpenAI 格式）：联网搜索就是这样接的（app/websearch.py）。模型要调工具时，返回里有 tool_calls 和
   原样的 message（思考模式下带 reasoning_content，同一轮里要原样传回去）。
 """
+import json
+import re
 import time
 from datetime import datetime, timezone
 
 import httpx
 
-from . import db, settings
+from . import db, paths, settings
 
 
 class NoBalance(Exception):
@@ -83,19 +85,29 @@ async def chat(messages, *, thinking=False, max_tokens=1200, json_mode=False, pu
     if temperature is not None and not thinking:
         body["temperature"] = temperature
     t0 = time.time()
-    for _ in range(3):
+    ws = any((t.get("function") or {}).get("name") == "write_file" for t in (tools or []))
+    fallback = []
+    for _ in range(4):
         async with httpx.AsyncClient(timeout=timeout) as c:
             r = await c.post(s["dsBase"].rstrip("/") + "/chat/completions", json=body,
                              headers={"Authorization": f"Bearer {_key()}"})
         # 带工具时官方要求思考模式把 reasoning_content 原样传回；万一哪条历史消息没带上被拒（400），
-        # 先改成不思考再试，还不行就不带工具直接答——不让一条消息卡死
+        # 先改成不思考再试；在工作区干活时（v2.2）再试去掉图片（带图片 + 工具最容易被拒）；还不行才不带工具直接答——不让一条消息卡死
         if r.status_code == 400 and (body.get("tools") or (img and body["thinking"]["type"] == "enabled")):     # 看图时思考模式万一不支持，也先改成不思考再试
+            _log400(r.text, body)
             if body["thinking"]["type"] == "enabled":
                 body["thinking"] = {"type": "disabled"}
                 body["max_tokens"] = max_tokens
                 thinking = False
+                fallback.append("不思考")
+            elif ws and img and body.get("tools"):
+                body["messages"] = no_images(body["messages"])
+                body["model"] = s["dsModel"]
+                img = False
+                fallback.append("去掉图片")
             else:
                 body.pop("tools")
+                fallback.append("不带工具")
             continue
         break
     if r.status_code == 402:
@@ -123,7 +135,78 @@ async def chat(messages, *, thinking=False, max_tokens=1200, json_mode=False, pu
     if msg.get("reasoning_content"):
         keep["reasoning_content"] = msg["reasoning_content"]
     return {"text": (msg.get("content") or "").strip(), "usd": usd, "cny": usd * float(s["usdCny"]),
-            "latency": time.time() - t0, "model": j.get("model"), "tool_calls": calls, "message": keep, "thinking": thinking}
+            "latency": time.time() - t0, "model": j.get("model"), "tool_calls": calls, "message": keep, "thinking": thinking,
+            "finish": j["choices"][0].get("finish_reason") or "", "fallback": fallback}
+
+
+def _log400(text, body):
+    """DeepSeek 拒了请求（400）：原因写进 data\\logs\\deepseek.log，排查用（不写 Key、不写消息内容）。"""
+    try:
+        paths.LOGS.mkdir(parents=True, exist_ok=True)
+        p = paths.LOGS / "deepseek.log"
+        if p.exists() and p.stat().st_size > 2 << 20:
+            p.replace(p.with_suffix(".old.log"))
+        n_img = sum(1 for m in body.get("messages", []) if isinstance(m.get("content"), list))
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} 400 model={body.get('model')} thinking={body['thinking']['type']} "
+                    f"tools={len(body.get('tools') or [])} msgs={len(body.get('messages', []))} img_msgs={n_img}：{str(text)[:400]}\n")
+    except OSError:
+        pass
+
+
+def no_images(messages):
+    """把消息里的图片换成一句话（带图片 + 工具被拒时用）。"""
+    out = []
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, list):
+            txt = "".join(x.get("text", "") for x in c if x.get("type") == "text")
+            n = sum(1 for x in c if x.get("type") == "image_url")
+            m = dict(m, content=(txt + f"（这里原来有 {n} 张图片，这次带不上）").strip())
+        out.append(m)
+    return out
+
+
+# ---------------- DeepSeek 把工具调用写成了文字（v2.2）----------------
+# 没给它工具、或者回复被截断时，它会把调用按自己的内部格式写进正文：
+# <｜DSML｜function_calls><｜DSML｜invoke name="write_file"><｜DSML｜parameter name="path" string="true">a.txt</｜DSML｜parameter>…
+_B = r"[｜|]\s*DSML\s*[｜|]\s*"
+DSML_RE = re.compile(_B, re.I)
+_INVOKE = re.compile(r"<" + _B + r"invoke\s+name\s*=\s*\"([^\"]+)\"\s*>(.*?)</" + _B + r"invoke\s*>", re.S | re.I)
+_PARAM = re.compile(r"<" + _B + r"parameter\s+name\s*=\s*\"([^\"]+)\"(?:\s+string\s*=\s*\"(true|false)\")?\s*>(.*?)</" + _B + r"parameter\s*>", re.S | re.I)
+_BLOCK = re.compile(r"<" + _B + r"function_calls\s*>.*?(</" + _B + r"function_calls\s*>|\Z)", re.S | re.I)
+
+
+def has_dsml(text) -> bool:
+    return bool(DSML_RE.search(text or ""))
+
+
+def parse_dsml(text):
+    """认出文字里的工具调用：[(名字, 参数), …]；没写完（被截断）的不算。"""
+    out = []
+    for name, inner in _INVOKE.findall(text or ""):
+        args = {}
+        for k, is_str, v in _PARAM.findall(inner):
+            if is_str.lower() != "true":
+                try:
+                    v = json.loads(v)
+                except (ValueError, TypeError):
+                    pass
+            args[k] = v
+        for k in ("append", "all"):
+            if isinstance(args.get(k), str):
+                args[k] = args[k].strip().lower() == "true"
+        out.append((name.strip(), args))
+    return out
+
+
+def strip_dsml(text) -> str:
+    """去掉文字里的工具调用（不给他看这串）。"""
+    t = _BLOCK.sub("", text or "")
+    m = re.search(r"<?" + _B, t)
+    if m:
+        t = t[:m.start()]
+    return t.strip()
 
 
 async def balance():

@@ -171,21 +171,52 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
     msgs[0] = {"role": "system", "content": msgs[0]["content"] + ("\n\n" + system_hint() if web else "") + ("\n\n" + files.hint() if local_files else "") +
                ("\n\n" + workspace.hint() if ws else "")}
     total, searched, fetched, nread, nws, sources, n_res, imgs = 0.0, 0, 0, 0, 0, [], 1, 0
-    web_rnds, web_cap_said = 0, False
+    web_rnds, web_cap_said, dsml_retry = 0, False, 0
     for rnd in range(rounds + 1):
+        if ws and nws and rnd == rounds - 3:             # 快到上限：先记下做到哪（v2.2）
+            msgs.append({"role": "user", "content": "（程序提示：只剩 3 步了。先把做到哪、下一步做什么写进这件事文件夹里的 进度.md，做不完就停下来汇报。）"})
+        if ws and nws and rnd == rounds:
+            msgs.append({"role": "user", "content": "（程序提示：步数用完了，这一轮不能再调用工具。用中文简短汇报：做完了什么、文件在哪、下一步做什么；他说「继续」你接着做。）"})
         give_web = web and rnd < rounds and web_rnds < web_max and today_count() < int(s.get("searchDaily", 200))
         if web and web_rnds >= web_max and not web_cap_said and rounds > web_max:
             steps.append(["联网搜索", f"查了 {web_max} 轮，到上限了，不再搜"])
             web_cap_said = True
         tools = (TOOLS if give_web else []) + (files.TOOLS if (local_files or ws) and rnd < rounds else []) + (workspace.tools() if ws and rnd < rounds else [])
-        say("DeepSeek 正在想……" if rnd == 0 else "DeepSeek 正在接着做……" if nws else "DeepSeek 正在看查到的内容……")
+        say("DeepSeek 正在想……" if rnd == 0 else f"DeepSeek 正在接着做（第 {rnd + 1} 步，最多 {rounds} 步）……" if nws else "DeepSeek 正在看查到的内容……")
         out = await deepseek.chat(msgs, thinking=thinking, event_id=event_id, purpose=purpose, tools=tools or None,
                                   max_tokens=8000 if ws else 1600, timeout=300 if ws else 90)
         total += out["cny"]
         thinking = out.get("thinking", thinking)          # 被官方拒了改成不思考的话，后面几轮也不思考
+        if out.get("fallback"):
+            steps.append(["DeepSeek 拒了一次", "改成" + "、".join(out["fallback"]) + "再试（原因记在 data\\logs\\deepseek.log）"])
+            if "去掉图片" in out["fallback"]:
+                msgs, imgs = deepseek.no_images(msgs), 99    # 后面也不带图片了，免得每一步都被拒一次
         calls = out.get("tool_calls") or []
+        if calls and ws and out.get("finish") == "length":   # 被截断的调用参数不完整，不执行，下面提醒它分段再来
+            calls = []
+        if not calls and (deepseek.has_dsml(out["text"]) or (ws and out.get("finish") == "length")):
+            # v2.2：工具调用被写成了文字（没给工具 / 回复被截断）。认得出就照常执行，认不出就提醒它再来一次，这串文字不给他看
+            names = {(t.get("function") or {}).get("name") for t in tools}
+            got = deepseek.parse_dsml(out["text"]) if out.get("finish") != "length" else []
+            if got and all(n in names for n, _ in got):
+                calls = [{"id": f"dsml_{rnd}_{i}", "type": "function", "function": {"name": n, "arguments": json.dumps(a, ensure_ascii=False)}}
+                         for i, (n, a) in enumerate(got)]
+                out["message"] = dict(out["message"], content=deepseek.strip_dsml(out["text"]), tool_calls=calls)
+                steps.append(["认出写成文字的工具调用", f"{len(calls)} 个，照常执行"])
+            elif rnd < rounds and dsml_retry < 2:
+                dsml_retry += 1
+                why = "回复太长被截断了" if out.get("finish") == "length" else "写成了文字"
+                steps.append(["工具调用没成", f"{why}，提醒它分段写、用工具调用，再试一次"])
+                msgs.append({"role": "user", "content": f"（程序提示：你刚才的工具调用没执行——{why}。请直接用工具调用（function call），不要把调用写成文字；"
+                             "长文件分段写，每次不超过 3000 字，后面的 append=true。接着做，不用道歉。）"})
+                continue
         if not calls:
             text = out["text"]
+            if deepseek.has_dsml(text):
+                text = deepseek.strip_dsml(text) or (f"做了 {nws} 步，最后一步的工具调用没成功（被截断了）。跟我说「继续」我接着做。" if nws else
+                                                    "这次工具调用没成功，跟我说「继续」我再试一次。")
+            if not text.strip() and nws:
+                text = f"做了 {nws} 步，最后一步没回上来（回复被截断了）。跟我说「继续」我接着做。"
             if not tools and searched + fetched + nread + nws and rnd >= rounds:
                 steps.append(["工作区" if nws else "联网搜索" if searched + fetched else "读文件",
                               f"做了 {rounds} 步，到上限了，先停在这" if nws else f"查了 {rounds} 轮，到上限了，用已有的结果回答"])

@@ -60,6 +60,8 @@ with sync_playwright() as pw:
     check(True, "Ctrl+V 粘贴截图：也带上了")
     p.set_input_files("#cFile", str(IMG))
     p.wait_for_function("document.querySelectorAll('#cAtts .c-att img').length === 2", timeout=5000)
+    p.wait_for_function("CHAT.atts.length === 2 && CHAT.atts.every(function (a) { return a.rel; })", timeout=10000)
+    check("放进工作区" in p.inner_text("#cAtts"), "图片也传进了工作区（v2.2）")
     p.fill("#cIn", "这两张截图里是什么")
     p.click("#cSend")
     p.wait_for_function("!CHAT.pending", timeout=30000)
@@ -76,6 +78,18 @@ with sync_playwright() as pw:
     p.keyboard.press("Escape")
     check(p.locator(".c-box").count() == 0, "Esc 关掉")
 
+    up = RUN / "界面上传.txt"
+    up.write_text("界面上传的文字文件", encoding="utf-8")
+    p.set_input_files("#cFile", str(up))
+    p.wait_for_function("CHAT.atts.length === 1 && CHAT.atts[0].rel", timeout=10000)
+    check(p.locator("#cAtts .c-att.file").count() == 1 and "TXT" in p.inner_text("#cAtts") and "1 个文件" in p.inner_text("#cAtts"),
+          "不是图片的文件也收（v2.2）：显示扩展名、传完放进工作区")
+    p.screenshot(path=f"{OUT}/chat-file.png")
+    p.fill("#cIn", "看看这个文件")
+    p.click("#cSend")
+    p.wait_for_function("!CHAT.pending", timeout=30000)
+    got = list((ROOT / "工作区" / "收到的").glob("*/界面上传*.txt"))
+    check(got and got[-1].read_text("utf-8") == "界面上传的文字文件" and p.locator("#cAtts .c-att").count() == 0, f"发出去：文件在 工作区\\收到的 里（{got[-1].name if got else '没有'}）")
     p.fill("#cIn", f"看看 {T}/笔记/设定.md 写了啥")
     p.click("#cSend")
     p.wait_for_function("!CHAT.pending", timeout=30000)

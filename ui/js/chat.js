@@ -77,11 +77,11 @@ function renderChat() {
   v.innerHTML = '<div class="dr-head"><b>对话</b><span class="cap">处理到哪一步，在上面「现在」那块看</span><span class="sp"></span><button class="btn mini" id="chatClose" aria-label="收起对话">收起 <kbd>Esc</kbd></button></div>' +
     '<div class="chat-main"><div class="chat-log" id="chatLog"></div>' + routeChips() +
     '<form class="composer" id="composer"><div class="c-atts" id="cAtts"></div>' +
-    '<button class="btn c-clip" type="button" id="cClip" title="带图片：点这里选，也可以 Ctrl+V 粘贴、拖进来" aria-label="带图片"' + (live ? '' : ' disabled') + '>' + CLIP_ICON + '</button>' +
+    '<button class="btn c-clip" type="button" id="cClip" title="带文件：点这里选，也可以 Ctrl+V 粘贴、拖进来（任何文件都收，放进工作区；图片也给 DeepSeek 看）" aria-label="带文件"' + (live ? '' : ' disabled') + '>' + CLIP_ICON + '</button>' +
     '<textarea id="cIn" rows="1" title="Enter 发送，Shift + Enter 换行；能 Ctrl+V 粘贴图片" placeholder="' + (live ? '和它说点什么……' : '演示模式：启动.bat 打开后能聊') + '"' + (live ? '' : ' disabled') + '></textarea>' +
     '<button class="btn c-force" type="button" id="cForce" aria-expanded="' + !!CHAT.routeOpen + '" title="指定这一条交给谁（默认决策脑自己分）">交给：' + esc(CHAT.force === 'cl' ? ROUTES.cl.name : FORCE_NAME[CHAT.force]) + '</button>' +
     '<button class="btn primary" type="submit" id="cSend"' + (live ? '' : ' disabled') + '>发送</button>' +
-    '<input type="file" id="cFile" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden></form><div class="c-drop" id="cDrop">松开：把图片带上</div></div>';
+    '<input type="file" id="cFile" multiple hidden></form><div class="c-drop" id="cDrop">松开：把文件带上（放进工作区）</div></div>';
   CHAT.sig = ''; fillChatLog(true); chatAttsDraw();
 }
 /* 抽屉：展开、收起 */
@@ -404,37 +404,59 @@ function chatSend() {
   var inp = $('#cIn'); if (!inp || !useLive()) return;
   var text = inp.value.trim(), atts = CHAT.atts.slice();
   if ((!text && !atts.length) || CHAT.pending) return;
-  if (atts.some(function (a) { return !a.url; })) { toast('图片还在读，等一下'); return; }
+  if (atts.some(function (a) { return a.img && !a.url; })) { toast('图片还在读，等一下'); return; }
+  if (atts.some(function (a) { return a.err; })) { toast('有文件没传上去，先去掉它（点 ×）'); return; }
+  if (atts.some(function (a) { return !a.rel; })) { toast('文件还在传，等一下'); return; }
   inp.value = ''; autoGrow(inp); CHAT.atts = []; chatAttsDraw();
   chatAsk(text, atts, function () { inp.value = text; CHAT.atts = atts; chatAttsDraw(); });
 }
 function chatAsk(text, atts, undo) {
-  var d = new Date(), imgs = (atts || []).map(function (a) { return a.url; });
-  CHAT.pending = { text: text || '看看这张图。', imgs: imgs, t: pad(d.getHours()) + ':' + pad(d.getMinutes()), step: imgs.length ? '图片发出去了……' : '发出去了……', token: null };
+  var d = new Date(), imgs = (atts || []).filter(function (a) { return a.img; }).map(function (a) { return a.url; }),
+    rels = (atts || []).map(function (a) { return a.rel; }).filter(Boolean);
+  CHAT.pending = { text: text || (imgs.length ? '看看这张图。' : '收到这些文件，先放在工作区。'), imgs: imgs, t: pad(d.getHours()) + ':' + pad(d.getMinutes()), step: imgs.length ? '图片发出去了……' : '发出去了……', token: null };
   fillChatLog(true);
-  var body = { text: text, async: true, images: imgs };
+  var body = { text: text, async: true, images: imgs, files: rels };
   if (CHAT.force !== 'auto') body.force = CHAT.force;
   NOW.sel = null; NOW.detail = false;
   api('POST', '/api/chat', body, 60000).then(function (j) { CHAT.pending.token = j.token; setTimeout(chatPoll, 300); })
     .catch(function (e) { CHAT.pending = null; fillChatLog(true); homeFill(); toast(e.status === 409 ? e.message : '没发出去：' + e.message, 5000); if (undo) undo(); });
 }
-/* 带图片：点回形针选、Ctrl+V 粘贴、拖进对话页；发之前上面一排缩略图，能去掉。一次最多 6 张、一张 10MB 以内 */
+/* 带文件（v2.2）：点回形针选、Ctrl+V 粘贴、拖进对话页。任何文件都收，马上传进 工作区\收到的\日期\（一个最多 2GB，有进度）；
+   PNG / JPEG / WEBP / GIF 10MB 以内的图片还会交给 DeepSeek 看（最多 6 张）。发之前上面一排，能去掉 */
 function chatAttsDraw() {
   var b = $('#cAtts'); if (!b) return;
-  b.innerHTML = CHAT.atts.map(function (a, i) { return '<span class="c-att">' + (a.url ? '<img src="' + a.url + '" alt="">' : '<i>读取中</i>') + '<button type="button" data-unatt="' + i + '" aria-label="去掉这张">' + ICONS.cross + '</button></span>'; }).join('') +
-    (CHAT.atts.length ? '<span class="cap">' + CHAT.atts.length + ' 张图片会交给 DeepSeek 看</span>' : '');
+  var ni = CHAT.atts.filter(function (a) { return a.img; }).length, nf = CHAT.atts.length - ni;
+  b.innerHTML = CHAT.atts.map(function (a, i) {
+    var ext = (a.name.split('.').pop() || '文件').slice(0, 5).toUpperCase();
+    var st = a.err ? '<i class="err">没传上</i>' : a.rel ? '' : '<i>' + (a.pct || 0) + '%</i>';
+    return '<span class="c-att' + (a.img ? '' : ' file') + '" title="' + esc(a.name) + '">' + (a.img && a.url ? '<img src="' + a.url + '" alt="">' : '<b>' + esc(ext) + '</b>') + st +
+      '<button type="button" data-unatt="' + i + '" aria-label="去掉">' + ICONS.cross + '</button></span>';
+  }).join('') +
+    (CHAT.atts.length ? '<span class="cap">放进工作区' + (ni ? ' · ' + ni + ' 张图片会交给 DeepSeek 看' : '') + (nf ? ' · ' + nf + ' 个文件' : '') + '</span>' : '');
+}
+function chatUpload(a, f) {
+  var x = new XMLHttpRequest(); a.xhr = x;
+  x.open('POST', '/api/ws/upload?name=' + encodeURIComponent(a.name));
+  x.setRequestHeader('X-Agent', '1');
+  x.upload.onprogress = function (ev) { if (ev.lengthComputable) { a.pct = Math.floor(ev.loaded * 100 / ev.total); chatAttsDraw(); } };
+  x.onload = function () {
+    var j = {}; try { j = JSON.parse(x.responseText); } catch (e) { /* 不是 JSON */ }
+    if (x.status === 200 && j.rel) { a.rel = j.rel; a.xhr = null; } else { a.err = true; toast(a.name + ' 没传上：' + (j.detail || x.status), 5000); }
+    chatAttsDraw();
+  };
+  x.onerror = function () { a.err = true; toast(a.name + ' 没传上（连不上后端）', 5000); chatAttsDraw(); };
+  x.send(f);
 }
 function chatAddFiles(list) {
-  if (!useLive()) { toast('演示模式不能发图片'); return; }
-  var fs = [].slice.call(list || []).filter(function (f) { return /^image\/(png|jpeg|webp|gif)$/.test(f.type); });
-  if (!fs.length) { toast('只认图片（PNG / JPEG / WEBP / GIF）'); return; }
-  fs.forEach(function (f) {
-    if (CHAT.atts.length >= 6) { toast('一次最多带 6 张图片'); return; }
-    if (f.size > 10 * 1024 * 1024) { toast(f.name + ' 太大了：一张最多 10MB'); return; }
-    var a = { url: '', name: f.name || '粘贴的图片' }, r = new FileReader();
+  if (!useLive()) { toast('演示模式不能发文件'); return; }
+  [].slice.call(list || []).forEach(function (f) {
+    if (f.size > 2 * 1024 * 1024 * 1024) { toast(f.name + ' 太大了：一个最多 2GB'); return; }
+    var img = /^image\/(png|jpeg|webp|gif)$/.test(f.type) && f.size <= 10 * 1024 * 1024 && CHAT.atts.filter(function (a) { return a.img; }).length < 6;
+    var name = f.name || ('粘贴的图片_' + Date.now() + '.' + ((f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')));
+    var a = { url: '', name: name, img: img, pct: 0, rel: '' };
     CHAT.atts.push(a);
-    r.onload = function () { a.url = String(r.result); chatAttsDraw(); };
-    r.readAsDataURL(f);
+    if (img) { var r = new FileReader(); r.onload = function () { a.url = String(r.result); chatAttsDraw(); }; r.readAsDataURL(f); }
+    chatUpload(a, f);
   });
   chatAttsDraw();
   var inp = $('#cIn'); if (inp) inp.focus();
@@ -509,7 +531,7 @@ function chatClick(ev) {
   else if (t.id === 'chatMore') { t.disabled = true; api('GET', '/api/events?limit=300').then(function (l) { CHAT.more = l; var log = $('#chatLog'), h = log.scrollHeight; fillChatLog(false); log.scrollTop = log.scrollHeight - h; }).catch(function (e) { toast(e.message); }); }
   else if (t.dataset.redo) chatRedo(t);
   else if (t.id === 'cClip') $('#cFile').click();
-  else if (t.dataset.unatt != null) { CHAT.atts.splice(+t.dataset.unatt, 1); chatAttsDraw(); }
+  else if (t.dataset.unatt != null) { var ua = CHAT.atts.splice(+t.dataset.unatt, 1)[0]; if (ua && ua.xhr) ua.xhr.abort(); chatAttsDraw(); }
   else if (t.dataset.img) chatImgBox(t.dataset.img);
   else if (t.dataset.allowDir) {
     var ae = findChatEv(+t.dataset.ask); t.disabled = true;
@@ -529,7 +551,7 @@ $('#view-chat').addEventListener('click', chatClick);
 $('#view-chat').addEventListener('change', function (ev) { if (ev.target.id === 'cFile') { chatAddFiles(ev.target.files); ev.target.value = ''; } });
 $('#view-chat').addEventListener('paste', function (ev) {
   if (ev.target.id !== 'cIn' || !ev.clipboardData) return;
-  var fs = [].slice.call(ev.clipboardData.files || []).filter(function (f) { return /^image\//.test(f.type); });
+  var fs = [].slice.call(ev.clipboardData.files || []);
   if (fs.length) { ev.preventDefault(); chatAddFiles(fs); }
 });
 ['dragenter', 'dragover'].forEach(function (k) {

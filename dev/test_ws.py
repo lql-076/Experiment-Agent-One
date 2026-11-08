@@ -249,6 +249,76 @@ acts = (paths.LOGS / "actions.jsonl").read_text("utf-8")
 check('"workspace.file"' in acts and '"workspace.run"' in acts and '"blocked"' in acts, "每一次操作都记进动作日志（写、运行、拦下的）")
 v = c.get("/api/log/verify").json()
 check(v.get("ok") and v.get("lines", 0) > 0, f"动作日志的哈希链没断（{v.get('lines')} 行）")
+
+# ---------- v2.2：DeepSeek 把工具调用写成文字、回复被截断、带图片被拒；对话里发来任何文件；「继续」接着做 ----------
+from app import deepseek as dsk  # noqa: E402
+D = "｜DSML｜"
+sample = (f"我来写。<{D}function_calls>\n<{D}invoke name=\"write_file\">\n<{D}parameter name=\"path\" string=\"true\">a\\b.txt</{D}parameter>\n"
+          f"<{D}parameter name=\"content\" string=\"true\">第一行\n第二行</{D}parameter>\n<{D}parameter name=\"append\" string=\"false\">true</{D}parameter>\n</{D}invoke>\n"
+          f"<{D}invoke name=\"run_command\">\n<{D}parameter name=\"command\" string=\"true\">python make.py</{D}parameter>\n<{D}parameter name=\"timeout\" string=\"false\">60</{D}parameter>\n</{D}invoke>\n</{D}function_calls>")
+got = dsk.parse_dsml(sample)
+check(got == [("write_file", {"path": "a\\b.txt", "content": "第一行\n第二行", "append": True}), ("run_command", {"command": "python make.py", "timeout": 60})],
+      "认出 DSML 写法的工具调用：名字、参数（字符串原样，string=false 的按 JSON 解析）")
+check(dsk.has_dsml(sample) and dsk.strip_dsml(sample) == "我来写。", "去掉那串文字，只留前面正常的话")
+cut = f"<{D}function_calls>\n<{D}invoke name=\"write_file\">\n<{D}parameter name=\"path\" string=\"true\">a.html</{D}parameter>\n<{D}parameter name=\"content\" string=\"true\"><html>很长"
+check(dsk.parse_dsml(cut) == [] and dsk.strip_dsml(cut) == "", "被截断、没写完的调用不执行，也不显示")
+check(W.safe_name("a<b>:c.txt") == "a_b__c.txt" and W.safe_name("CON.txt") == "_CON.txt" and W.safe_name("..\\..\\x.exe") == "x.exe" and W.safe_name("") == "文件",
+      "收到的文件名：去掉 Windows 不认的字符、不带路径、避开 CON 这类保留名")
+
+r1 = c.post("/api/ws/upload", params={"name": "说明.txt"}, content="hello 世界\n第二行".encode("utf-8")).json()
+r2 = c.post("/api/ws/upload", params={"name": "说明.txt"}, content=b"again").json()
+r3 = c.post("/api/ws/upload", params={"name": "..\\..\\evil.bin"}, content=bytes(range(256)) * 4096).json()
+day = time.strftime("%Y-%m-%d")
+check(r1.get("rel", "").replace("\\", "/") == f"收到的/{day}/说明.txt" and (WS2 / "收到的" / day / "说明.txt").read_text("utf-8").startswith("hello 世界"),
+      f"上传任何文件：原样存进 工作区\\收到的\\日期\\原文件名（{r1.get('rel')}）")
+check(r2.get("name") == "说明 (2).txt" and r3.get("name") == "evil.bin" and r3.get("size") == 256 * 4096 and (WS2 / "收到的" / day / "evil.bin").exists(),
+      "重名加 (2)；名字里带路径的只留名字（出不去）；二进制原样存（1MB）")
+check(not list((WS2 / "收到的" / day).glob("*.part")), "传完不留 .part 临时文件")
+r = c.post("/api/chat", json={"text": "这是什么文件", "async": True, "files": [r1["rel"], "视频/make.py", "../../app/main.py"]})
+tok = r.json()["token"]
+for _ in range(200):
+    j = c.get("/api/chat/" + tok).json()
+    if j["done"]:
+        break
+    time.sleep(0.25)
+ev = j.get("event") or {}
+last = httpx.get("http://127.0.0.1:8099/__last", timeout=10).json()["chat"] or {}
+umsg = json.dumps(last.get("messages", [])[-1:], ensure_ascii=False)
+rcv = [s for s in ev.get("steps") or [] if s[0] == "收到文件"]
+check(ev.get("to") == "ds" and rcv and "1 个" in rcv[0][1] and "他发来的文件" in umsg and "hello 世界" in umsg and "make.py" not in umsg,
+      f"发消息带上收到的文件：交给 DeepSeek，告诉它文件在工作区哪、小的文字文件带上内容；不在「收到的」里的不认（{rcv[0][1] if rcv else '没有'}）")
+
+ev = ask("帮我在工作区写个文件【DSML】")
+names = [s[0] for s in ev.get("steps") or []]
+f1 = WS2 / "dsml测试" / "a.txt"
+check(f1.exists() and f1.read_text("utf-8") == "你好 DSML" and "认出写成文字的工具调用" in names and "DSML" not in (ev.get("reply") or ""),
+      f"DeepSeek 把工具调用写成了文字：认出来照常执行，那串文字不显示（{' → '.join(names[-4:])}）")
+ev = ask("帮我在工作区写个网页【截断】")
+names = [s[0] for s in ev.get("steps") or []]
+f2 = WS2 / "截断" / "a.html"
+check("工具调用没成" in names and f2.exists() and f2.read_text("utf-8") == "<html>第一段" and "DSML" not in (ev.get("reply") or ""),
+      f"回复被截断：不执行半截的，提醒它分段写再试一次，第二次写成了（{' → '.join(names[-4:])}）")
+PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+plan2 = [{"name": "write_file", "arguments": {"path": "拒工具/ok.txt", "content": "带图片也写成了"}}]
+r = c.post("/api/chat", json={"text": "帮我在工作区写个文件【拒工具】【工作区】" + json.dumps(plan2, ensure_ascii=False), "async": True, "images": [PNG]})
+tok = r.json()["token"]
+for _ in range(200):
+    j = c.get("/api/chat/" + tok).json()
+    if j["done"]:
+        break
+    time.sleep(0.25)
+ev = j.get("event") or {}
+rej = [s for s in ev.get("steps") or [] if s[0] == "DeepSeek 拒了一次"]
+check(rej and "去掉图片" in rej[0][1] and (WS2 / "拒工具" / "ok.txt").exists() and "400" in (paths.LOGS / "deepseek.log").read_text("utf-8"),
+      f"带图片 + 工具被 DeepSeek 拒（400）：去掉图片再试，工具照样用上，原因记进 deepseek.log（{rej[0][1] if rej else '没有'}）")
+ev = ask("继续")
+last = httpx.get("http://127.0.0.1:8099/__last", timeout=10).json()["chat"] or {}
+umsg = json.dumps(last.get("messages", [])[-1:], ensure_ascii=False)
+names = [s[0] for s in ev.get("steps") or []]
+check(ev.get("to") == "ds" and "接着上一件事" in names and "接着上一件事" in umsg and "拒工具" in umsg and "write_file" in json.dumps(last.get("tools") or []),
+      "说「继续」：沿用上一条的去向和工具，告诉 DeepSeek 上次在工作区做到哪")
+sysm = (last.get("messages") or [{}])[0].get("content", "")
+check("进度.md" in sysm and "3000 字" in sysm, "给 DeepSeek 的说明里有：长文件分段写、步骤多的活记 进度.md")
 shutil.rmtree(T, ignore_errors=True)
 print("不过的：", bad or "没有")
 sys.exit(1 if bad else 0)
