@@ -165,6 +165,10 @@ def tasks():
     g = imagegen_job()
     if g:
         out.append(g)
+    from . import bgm
+    m = bgm.B.public()
+    if m and m["st"] == "run":                            # 配乐在出（v3.0）：出一首要一两分钟，没有精确进度
+        out.append({"k": "bgm", "name": f"配乐 · {m['prompt'][:16]}", "phase": m["msg"] or f"{m['seconds']} 秒的曲子", "pct": None, "speed": None, "eta": None})
     return out
 
 

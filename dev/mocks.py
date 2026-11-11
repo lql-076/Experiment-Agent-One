@@ -120,7 +120,7 @@ async def dsc(r: Request):
     pics = [x for m in msgs if isinstance(m.get("content"), list) for x in m["content"] if isinstance(x, dict) and x.get("type") == "image_url"]
     LAST["images"] = len(pics)
     names = {(t.get("function") or {}).get("name") for t in j.get("tools") or []}
-    ask0 = next((_txt(m.get("content")) for m in reversed(msgs) if m.get("role") == "user" and not _txt(m.get("content")).startswith(("（read_file", "（程序提示"))), "")
+    ask0 = next((_txt(m.get("content")) for m in reversed(msgs) if m.get("role") == "user" and not _txt(m.get("content")).startswith(("（read_file", "（程序提示", "（他中途"))), "")
     tmsgs = [m for m in msgs if m.get("role") == "tool"]
     # v2.2：「【拒工具】」带图片又带工具就 400（模仿带图片 + 工具被拒）；「【DSML】」把工具调用写成文字；「【截断】」第一次回复被截断
     if "【拒工具】" in ask0 and pics and j.get("tools"):
@@ -267,6 +267,107 @@ def qq_seen():
     return QQ
 
 
+# ---------- 假的 ACE-Step 1.5 接口（v3.0，8001）：交任务 → 问结果 → 下音频 ----------
+ace = FastAPI()
+ACE = {"tasks": {}, "last": None}
+
+
+def _wav(sec, sr=16000, f=330):
+    import struct
+    n = int(sec * sr)
+    pcm = b"".join(struct.pack("<h", int(9000 * math.sin(2 * math.pi * f * i / sr))) for i in range(n))
+    return b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16) + b"data" + struct.pack("<I", len(pcm)) + pcm
+
+
+def _env(d):
+    return {"data": d, "code": 200, "error": None, "timestamp": int(time.time() * 1000), "extra": None}
+
+
+@ace.get("/health")
+def ace_health():
+    return _env({"status": "ok", "service": "ACE-Step API", "version": "1.0"})
+
+
+@ace.post("/release_task")
+async def ace_release(r: Request):
+    j = await r.json()
+    ACE["last"] = j
+    tid = f"T{len(ACE['tasks']) + 1}"
+    ACE["tasks"][tid] = {"t0": time.time(), "body": j}
+    return _env({"task_id": tid, "status": "queued", "queue_position": 1})
+
+
+@ace.post("/query_result")
+async def ace_query(r: Request):
+    j = await r.json()
+    out = []
+    for tid in j.get("task_id_list") or []:
+        t = ACE["tasks"].get(tid)
+        if not t:
+            out.append({"task_id": tid, "result": "[]", "status": 0})
+        elif "【失败】" in (t["body"].get("prompt") or ""):
+            out.append({"task_id": tid, "result": "[]", "status": 2})
+        elif time.time() - t["t0"] < (6 if "【慢】" in (t["body"].get("prompt") or "") else 1.0):
+            out.append({"task_id": tid, "result": "[]", "status": 0})
+        else:
+            sec = float(t["body"].get("audio_duration") or 10)
+            res = [{"file": f"/v1/audio?path=%2Ftmp%2F{tid}_{int(min(sec, 20))}.wav", "status": 1, "metas": {"bpm": 120, "duration": sec}, "dit_model": "acestep-v15-turbo"}]
+            out.append({"task_id": tid, "result": json.dumps(res), "status": 1})
+    return _env(out)
+
+
+@ace.get("/v1/audio")
+def ace_audio(path: str):
+    from fastapi.responses import Response
+    sec = int(path.rsplit("_", 1)[-1].split(".")[0] or 5)
+    return Response(_wav(sec), media_type="audio/wav")
+
+
+@ace.get("/__last")
+def ace_last():
+    return {"last": ACE["last"], "n": len(ACE["tasks"])}
+
+
+# ---------- 假的 Breeze TTS 2 接口（v3.0，8093）：表单进来，24 kHz 单声道 16 位 PCM 一块一块出去 ----------
+brz = FastAPI()
+BRZ = {"last": None, "n": 0}
+
+
+@brz.get("/v1/model")
+def brz_model():
+    return {"model": "breeze-tts-2", "sample_rate": 24000, "max_batch": 128}
+
+
+@brz.post("/v1/audio/speech")
+async def brz_speech(r: Request):
+    from fastapi.responses import JSONResponse, StreamingResponse
+    raw = await r.body()
+    txt = raw.decode("utf-8", "replace")
+    form = {k: v[0] for k, v in __import__("urllib.parse").parse.parse_qs(txt).items()} if "urlencoded" in r.headers.get("content-type", "") else None
+
+    def field(k):                                          # 真的服务两种表单都收：没带参考音频的时候 httpx 发的是 urlencoded
+        if form is not None:
+            return form.get(k)
+        m_ = __import__("re").search(r'name="' + k + r'"\r\n\r\n(.*?)\r\n--', txt, __import__("re").S)
+        return m_.group(1) if m_ else None
+    BRZ["n"] += 1
+    BRZ["last"] = {k: field(k) for k in ("text", "instruction", "cfg_scale", "seed", "ref_text")} | {"ref_audio": 'name="ref_audio"' in txt}
+    if "【忙】" in (BRZ["last"]["text"] or "") and BRZ["n"] % 2:
+        return JSONResponse({"detail": "busy"}, status_code=409)
+    sec = max(0.4, min(6.0, len(BRZ["last"]["text"] or "") * 0.08))
+    pcm = _wav(sec, 24000, 440)[44:]
+
+    async def gen():
+        for i in range(0, len(pcm), 4801):                 # 故意用奇数的块：看接的那头会不会把一个采样切成两半
+            yield pcm[i:i + 4801]
+    return StreamingResponse(gen(), media_type="audio/L16")
+
+
+@brz.get("/__last")
+def brz_last():
+    return BRZ
+
+
 lhm = FastAPI()
 
 
@@ -295,7 +396,7 @@ if __name__ == "__main__":
     from fake_apiyi import app as yi
     from fake_bailian import app as bl
     apps = ((k, 8091), (ds, 8099), (lhm, 8085)) if "--no-model" in sys.argv else ((m, 8090), (k, 8091), (ds, 8099), (lhm, 8085))
-    apps += ((bl, 8097), (yi, 8096))
+    apps += ((bl, 8097), (yi, 8096), (ace, 8001), (brz, 8093))
     for app, port in apps:
         threading.Thread(target=serve, args=(app, port), daemon=True).start()
     while True:

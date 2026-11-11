@@ -66,6 +66,7 @@ class Voice:
         M.extra.append(self.proc)
         self.last = 0.0
         self.speaking = False
+        self.sr_out = SR
         self._lock = asyncio.Lock()
 
     @property
@@ -103,6 +104,13 @@ class Voice:
         return HF_ID
 
     def cmd(self):
+        custom = str(self.s.get("voiceCmd") or "").strip()
+        if custom:                                              # 自己写的启动命令（比如用 WSL 跑：wsl -d Ubuntu -- bash -lc "cd ~/breeze-tts && python -m breeze_infer.api ../breeze-tts-2 --port 8093"）
+            import shlex
+            try:
+                return shlex.split(custom, posix=not paths.IS_WIN)
+            except ValueError:
+                return None
         d, py = self.folder(), self.python()
         if not (d and d.is_dir() and py):
             return None
@@ -139,7 +147,7 @@ class Voice:
                     tts.T.stop("给语音让显存")
             env = M.env()
             env.update(PYTHONUTF8="1")
-            self.proc.start(cmd, self.folder(), env)
+            self.proc.start(cmd, self.folder() or paths.ROOT, env)
             self.last = time.time()
             feed.add("语音（Breeze TTS 2）启动中：装模型要几十秒（日志 data\\logs\\voice.log）", "info", job=JOBN)
         t0 = time.time()
@@ -177,6 +185,53 @@ class Voice:
         if not self.speaking and time.time() - (self.last or self.proc.started) > idle:
             self.stop(f"闲置 {int(idle // 60)} 分钟")
 
+    def engine(self):
+        """用谁出声：breeze（配好了）/ local（现有的本地配音，Breeze 没配好时的退路）/ none。"""
+        want = str(self.s.get("voiceEngine") or "auto")
+        if want != "local" and self.configured():
+            return "breeze"
+        if want != "breeze" and tts.T.env_ok() and tts.T.model_ok("custom"):
+            return "local"
+        return "breeze" if want == "breeze" else "none"
+
+    async def speak_local(self, text):
+        """退路：用配音服务里的预设音色一句一句念（Qwen3-TTS，本地）。给出的也是 16 位单声道 PCM，采样率在 self.sr_out。"""
+        if M.yielding:
+            raise VoiceError(f"现在在让路（{M.yield_reason or '显存不够'}），先不开口")
+        try:
+            await tts.T.ensure()
+        except RuntimeError as e:
+            raise VoiceError(str(e)[:200]) from None
+        parts = [p for p in re.split(r"(?<=[。！？!?\n])", text) if p.strip()]
+        buf, chunks = "", []
+        for p in parts:                                          # 短句并一并，一次念二三十个字：太碎了停顿怪，太长了等得久
+            buf += p
+            if len(buf) >= 24:
+                chunks.append(buf)
+                buf = ""
+        if buf.strip():
+            chunks.append(buf)
+        self.speaking = True
+        try:
+            async with httpx.AsyncClient(timeout=180) as c:
+                for ch in chunks:
+                    r = await c.post(tts.T.url("/generate"), json={"kind": "custom", "text": ch.strip(), "speaker": self.s.get("voiceSpeaker") or "Vivian",
+                                                                   "language": "Chinese", "seed": int(self.s.get("voiceSeed") or 0)})
+                    if r.status_code != 200:
+                        try:
+                            d = r.json().get("detail")
+                        except Exception:
+                            d = r.text
+                        raise VoiceError(f"本地配音没念（{r.status_code}）：{str(d)[:120]}")
+                    sr, pcm = tts.read_wav(r.content)
+                    self.sr_out = sr
+                    tts.T.last = time.time()
+                    yield bytes(pcm) + b"\x00\x00" * int(sr * 0.12)
+        except httpx.HTTPError as e:
+            raise VoiceError(f"配音服务断了：{type(e).__name__}") from None
+        finally:
+            self.speaking = False
+
     def form(self, text):
         """发给 Breeze 的表单：有参考音频就照它的声音（克隆），没有就按音色描述造（设计）。"""
         data = {"text": text, "seed": str(int(self.s.get("voiceSeed") or 0))}
@@ -195,6 +250,14 @@ class Voice:
         text = speakable(text)
         if not text:
             raise VoiceError("没有要念的字")
+        eng = self.engine()
+        self.sr_out = SR
+        if eng == "local":
+            async for chunk in self.speak_local(text):
+                yield chunk
+            return
+        if eng == "none":
+            raise VoiceError("还没有能出声的：到 设置 › 语音 配 Breeze TTS 2，或者先在 设置 › 本地模型 装配音（用它的声音顶着）")
         await self.ensure()
         data, fs = self.form(text)
         async with self._lock:
@@ -202,7 +265,7 @@ class Voice:
             try:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=120, write=30, pool=None)) as c:
                     for attempt in range(40):
-                        async with c.stream("POST", self.url("/v1/audio/speech"), data=data, files=fs) as r:
+                        async with c.stream("POST", self.url("/v1/audio/speech"), files={k: (None, v) for k, v in data.items()} | (fs or {})) as r:   # 一律 multipart（它的说明里就是这么收的）
                             if r.status_code == 409 and attempt < 39:          # 它一次只念一段：上一段还没完，等一下
                                 await asyncio.sleep(0.5)
                                 continue
@@ -269,8 +332,9 @@ class Voice:
         return {"text": (j.get("text") or "").strip(), "sec": j.get("sec"), "audio_s": round(len(pcm) / 2 / sr, 1)}
 
     async def status(self):
-        d = self.folder()
-        return {"on": bool(self.s.get("voiceOn")), "up": await self.health(), "alive": self.proc.alive(), "configured": self.configured(), "url": self.url(),
+        d, up = self.folder(), await self.health()
+        return {"on": bool(self.s.get("voiceOn")), "engine": self.engine(), "want": self.s.get("voiceEngine") or "auto", "cmd": self.s.get("voiceCmd") or "",
+                "speaker": self.s.get("voiceSpeaker") or "Vivian", "up": up, "alive": self.proc.alive(), "configured": self.configured(), "url": self.url(),
                 "dir": str(d) if d else "", "dir_ok": bool(d and d.is_dir()), "python": paths.show(self.python()) if self.python() else "",
                 "model": self.model(), "can_start": bool(self.cmd()), "ref": REF.exists(), "ref_text": self.s.get("voiceRefText") or "",
                 "desc": self.s.get("voiceDesc") or "", "asr": self.asr_ok(), "asr_why": self.asr_why(), "tts_env": tts.T.env_ok(),
@@ -308,7 +372,8 @@ async def voice_speak(body: dict = Body(...)):
                 yield chunk
         except VoiceError:
             return
-    return StreamingResponse(body_(), media_type="audio/L16;rate=24000;channels=1", headers={"X-Sr": str(SR), "Cache-Control": "no-store"})
+    sr = int(getattr(V, "sr_out", SR) or SR)
+    return StreamingResponse(body_(), media_type=f"audio/L16;rate={sr};channels=1", headers={"X-Sr": str(sr), "X-Engine": V.engine(), "Cache-Control": "no-store"})
 
 
 @api.post("/api/voice/asr")

@@ -35,3 +35,5 @@ __pycache__/
 *.pyc
 .ruff_cache/
 *.egg-info/
+# 配乐（本地 ACE-Step 出的）、语音的参考音频都是你自己的
+配乐输出/

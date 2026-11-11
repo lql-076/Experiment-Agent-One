@@ -69,6 +69,7 @@ DEFAULTS = {
     "voiceOn": False, "voiceUrl": "http://127.0.0.1:8093", "voiceDir": "", "voiceModel": "", "voicePython": "", "voiceIdle": 10,
     "voiceDesc": "二十岁出头的年轻女声，声音清亮温柔，语速自然，像朋友聊天", "voiceCfg": 4.0, "voiceSeed": 20261111,
     "voiceRefText": "", "voiceMax": 400, "voiceAuto": True, "voiceHands": False,
+    "voiceEngine": "auto", "voiceCmd": "", "voiceSpeaker": "Vivian",   # auto = Breeze 配好了用它，没配好用本地配音的预设音色顶着；voiceCmd = 自己写的启动命令（比如用 WSL）
     # 分流旋钮
     "take": 60, "fresh": 40, "clLine": 50, "daily": 3, "quiet": False,
     "privLocal": True, "privWords": "", "voteEmbed": 50, "voteAuto": True,
@@ -85,7 +86,7 @@ DEFAULTS = {
 }
 SECRET_KEYS = ("dsKey", "qqSecret", "blKey", "imgKey")      # blKey：百炼 API Key（云端配音）；imgKey：API易 Key（生图，v1.8.15）
 LOCKED = {"gpuOnly": True, "privLocal": True}   # 这两条界面上改不了
-PERM = {"wsDir", "wsRun", "agDownload", "agVoice", "agVoiceCloud", "agImage", "agMusic", "ccOn"}                         # 给 agent 的权限：有自己的接口（记进动作日志），通用的改设置改不了
+PERM = {"wsDir", "wsRun", "agDownload", "agVoice", "agVoiceCloud", "agImage", "agMusic", "ccOn", "ccCmd", "ccBash"}                         # 给 agent 的权限：有自己的接口（记进动作日志），通用的改设置改不了
 
 _lock = threading.Lock()
 _FILE = paths.DATA / "settings.json"

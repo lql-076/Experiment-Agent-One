@@ -5,7 +5,7 @@ from datetime import datetime
 
 from . import db
 
-SRC = {"qq": "QQ", "ui": "界面", "cron": "定时任务", "system": "系统"}
+SRC = {"qq": "QQ", "ui": "界面", "voice": "语音", "cron": "定时任务", "system": "系统"}
 
 
 CH = {"qq": "QQ", "toast": "电脑弹窗", "card": "界面卡片"}

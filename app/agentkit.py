@@ -78,7 +78,9 @@ def push(eid, text):
 
 def set_plan(eid, items):
     plan = []
-    for it in (items or [])[:PLAN_MAX]:
+    for it in (items or []):
+        if len(plan) >= PLAN_MAX:
+            break
         if isinstance(it, str):
             it = {"text": it}
         if not isinstance(it, dict):
@@ -199,6 +201,12 @@ def caps():
 def set_cap(k, v):
     """打开 / 关上一项本事（只有界面上他点的才走到这里），记进动作日志。"""
     keys = {"download": "agDownload", "voice": "agVoice", "voice_cloud": "agVoiceCloud", "image": "agImage", "music": "agMusic", "cc": "ccOn"}
+    texts = {"cc_cmd": "ccCmd", "cc_bash": "ccBash"}             # Claude Code 在哪、许它跑哪些程序：也是权限
+    if k in texts:
+        settings.S[texts[k]] = str(v or "").strip()[:400]
+        settings.save()
+        safety.log("tool.add", {"perm": "agent." + k, "value": settings.S[texts[k]][:120]}, "user")
+        return caps()
     if k not in keys:
         raise ValueError("没有这一项")
     settings.S[keys[k]] = bool(v)
@@ -294,20 +302,22 @@ def _frames(rp: Path, at):
         raise workspace.Denied("看视频画面要 ffmpeg：先 run_command 跑 pip install imageio-ffmpeg")
     info = mediainfo.probe(rp)
     dur = info.get("duration") or 0
-    ts = [float(x) for x in (at or []) if isinstance(x, (int, float))][:4]
+    ts = [float(x) for x in (at if isinstance(at, list) else [at] if at is not None else []) if isinstance(x, (int, float)) and not isinstance(x, bool)][:4]
     if not ts:
         ts = [dur * 0.08, dur * 0.5, dur * 0.92] if dur > 1.5 else [0.0]
     out = []
     tmp = workspace.ensure() / workspace.TMP
     tmp.mkdir(exist_ok=True)
     for k, t in enumerate(ts):
-        t = max(0.0, min(t, max(0.0, dur - 0.05)) if dur else t)
+        t = max(0.0, min(t, max(0.0, dur - 0.2)) if dur else t)
         f = tmp / f"look_{os.getpid()}_{int(time.time() * 1000) % 100000}_{k}.jpg"
         try:
-            subprocess.run([ff, "-y", "-loglevel", "error", "-ss", f"{t:.3f}", "-i", str(rp), "-frames:v", "1", "-vf", "scale='min(960,iw)':-2", "-q:v", "4", str(f)],
-                           capture_output=True, timeout=60, creationflags=workspace.NOWIN)
-            if f.exists() and f.stat().st_size:
-                out.append((t, f.read_bytes()))
+            for tt in (t, max(0.0, t - 1.0)):                    # 太靠近结尾有时抽不出来：往前一秒再试一次
+                subprocess.run([ff, "-y", "-loglevel", "error", "-ss", f"{tt:.3f}", "-i", str(rp), "-frames:v", "1", "-vf", "scale='min(960,iw)':-2", "-q:v", "4", str(f)],
+                               capture_output=True, timeout=60, creationflags=workspace.NOWIN)
+                if f.exists() and f.stat().st_size:
+                    out.append((tt, f.read_bytes()))
+                    break
         finally:
             with __import__("contextlib").suppress(OSError):
                 f.unlink()

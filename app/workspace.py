@@ -790,7 +790,7 @@ def recv_note(items) -> str:
 
 # ---------------- 做好的文件（v2.3）：这件事做下来，工作区里新出现、改过的 ----------------
 MEDIA_ORDER = {"video": 0, "audio": 1, "image": 2, "": 3}
-MADE_SKIP = {RECV, "ws-env", "venv"}
+MADE_SKIP = {RECV, "ws-env", "venv", "工具箱"}        # 工具箱是程序同步进来的，不算它做的
 PROGRESS = "进度.md"
 
 

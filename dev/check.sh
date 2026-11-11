@@ -26,6 +26,8 @@ step "联网搜索和查说明书" "$PY" dev/test_search.py
 step "更强的模型和换它重做" "$PY" dev/test_route.py
 step "读本地文件（只读能读的文件夹）、对话里带图片（交给 DeepSeek 看）" "$PY" dev/test_files.py
 step "Agent 的工作文件夹：写、改、删先备份、运行程序、拦越界的命令、备份半年清一次出清单" "$PY" dev/test_ws.py
+step "文件进出工作区：收文件夹、PDF 和表格、音视频信息、做好的文件、QQ 收发文件" "$PY" dev/test_v23.py
+step "Agent 的本事：计划、停下、插话、预算、看画面、下载、技能、工具箱、配音配乐生图当工具、Claude Code 引擎、配乐、语音" "$PY" dev/test_agent.py
 step "设置里的联网搜索" "$PY" dev/ui/search.py dev/.run/shots
 step "对话页、Agent 状态、游戏内显示设置" "$PY" dev/ui/chat.py dev/.run/shots
 step "对话页带图片、允许读文件夹、设置里的能读的文件夹" "$PY" dev/ui/attach.py dev/.run/shots

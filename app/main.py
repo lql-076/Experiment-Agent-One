@@ -437,7 +437,7 @@ async def redo_event(eid: int, body: dict = Body(...)):
 CHAT_JOBS = {}
 
 
-def _start_job(text, **kw):
+def _start_job(text, src="ui", **kw):
     for k in [k for k, j in CHAT_JOBS.items() if time.time() - j["ts"] > 900]:
         CHAT_JOBS.pop(k, None)
     token = os.urandom(6).hex()
@@ -445,7 +445,7 @@ def _start_job(text, **kw):
 
     async def run():
         try:
-            job["event"] = await agent.handle(text, "ui", "me", job=job, **kw)
+            job["event"] = await agent.handle(text, src, "me", job=job, **kw)
         except router.NeedConfirm as e:
             job["err"] = str(e)
             job["confirm"] = True
@@ -473,13 +473,15 @@ async def chat(body: dict = Body(...)):
         raise HTTPException(400, str(e)) from None
     text = text or ("看看这张图。" if raw else "收到这些文件，先放在工作区。")
     force = body.get("force") if body.get("force") in ("local", "neu", "ds", "cl") else None   # 你指定交给谁（留的口子）
-    kw = {"force": force, "allow_private": bool(body.get("allow_private")), "images": imgs or None, "received": got or None}
+    kw = {"force": force, "allow_private": bool(body.get("allow_private")), "images": imgs or None, "received": got or None,
+          "engine": body.get("engine") if body.get("engine") in ("cc", "ds") else None}     # v3.0：指定执行引擎（cc = Claude Code，ds = DeepSeek 自己做）
+    src = "voice" if body.get("voice") else "ui"                                             # v3.0：语音说的（回复写得适合念）
     if not body.get("async"):
         try:
-            return await agent.handle(text, "ui", "me", **kw)
+            return await agent.handle(text, src, "me", **kw)
         except router.NeedConfirm as e:
             raise HTTPException(409, str(e)) from None
-    return _start_job(text, **kw)
+    return _start_job(text, src=src, **kw)
 
 
 @app.post("/api/ws/recvdir")
@@ -614,7 +616,8 @@ def ws_open(body: dict = Body(default={})):
 @app.post("/api/events/{eid}/stop")
 def event_stop(eid: int):
     """停下一件正在做的事：这一步做完就停，正在跑的命令也停。做好的文件留着，说「继续」能接着做。"""
-    if not agentkit.request_stop(eid) and not ccode.request_stop(eid):
+    a, b = agentkit.request_stop(eid), ccode.request_stop(eid)     # 两边都要喊到：Claude Code 在做的时候两个都开着
+    if not a and not b:
         raise HTTPException(409, "这件事已经不在做了")
     feed.add(f"你点了停下：事件 #{eid}", "warn", job="Agent")
     return {"ok": True}
@@ -638,7 +641,7 @@ def agent_caps_set(body: dict = Body(...)):
     """打开 / 关上一项本事（下载、配音、云端配音、生图、配乐、Claude Code 引擎）。给 agent 加权限：只有界面上你点的才算，记进动作日志。"""
     try:
         for k, v in body.items():
-            agentkit.set_cap(k, bool(v))
+            agentkit.set_cap(k, v)
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
     return agent_caps()

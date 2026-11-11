@@ -82,6 +82,7 @@ def _history(user, allow_private):
     return out
 
 
+VOICE_PLAIN = "\n这条回复会被念出来给他听：像说话一样回答，简短（三四句以内），不要用列表、表格、代码、链接、Markdown 记号；要给长内容就说一句结论，告诉他细节在屏幕上。"
 QQ_PLAIN = "\n这条回复会发到 QQ 私聊，QQ 不显示格式：不要用 **、#、- 列表、表格、代码块这些符号，用纯文字和换行；链接直接写网址。"
 
 
@@ -97,7 +98,7 @@ def plain(t: str) -> str:
 
 def _build(text, user, snips, allow_private, docs=None, src="ui", extra="", images=None):
     d = time.localtime()
-    sys = memory.persona() + f"\n现在是 {d.tm_year} 年 {d.tm_mon} 月 {d.tm_mday} 日 {d.tm_hour:02d}:{d.tm_min:02d}（星期{'一二三四五六日'[d.tm_wday]}）。" + (QQ_PLAIN if src == "qq" else "")
+    sys = memory.persona() + f"\n现在是 {d.tm_year} 年 {d.tm_mon} 月 {d.tm_mday} 日 {d.tm_hour:02d}:{d.tm_min:02d}（星期{'一二三四五六日'[d.tm_wday]}）。" + (QQ_PLAIN if src == "qq" else VOICE_PLAIN if src == "voice" else "")
     if snips:
         sys += "\n\n下面是他的记忆文件里和这条消息相关的内容，用得上就用，用不上别提：\n" + "\n".join(f"- {m['text']}" for m in snips)
     if docs:
@@ -365,7 +366,7 @@ async def _handle2(text, src, user, t0, eid, dec, steps, images, received, fz, c
             purpose = "neu" if dec["neu"] else "chat"
             web = None
             last = LAST_WS.get(user) or {}
-            use_cc = ccode.usable() and not dec["private"] and (engine == "cc" or (settings.S.get("ccAuto", True) and engine is None and (
+            use_cc = ccode.usable() and not dec["private"] and engine != "ds" and (engine == "cc" or (settings.S.get("ccAuto", True) and engine is None and (
                 workspace.wants(text) or bool(received) or (cont and last.get("cc")))))
             if use_cc:
                 # v3.0：整件事交给他本地的 Claude Code（在工作区里干活，每一步进事件）；出不来就退回 DeepSeek 自己带工具做

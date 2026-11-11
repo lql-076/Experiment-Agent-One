@@ -20,6 +20,12 @@ tts.T.align_ok = lambda: not (RUN / "fake_tts_noalign.flag").exists()       # �
 tts.T.cmd = lambda: [sys.executable, DEV / "fake_tts.py", "--port", settings.S["ttsPort"]]
 tts_install.command = lambda: [sys.executable, DEV / "fake_tts_install.py"]      # 「安装配音」按钮：假的安装，几秒就完
 
+# v3.0：听写模型当它下好了（放 fake_tts_noasr.flag 就当没下）；下载工具在沙箱里许下本机的假服务；假的 claude 命令行由测试自己在设置里指过去
+from app import voice  # noqa: E402
+voice.V.asr_ok = lambda: not (RUN / "fake_tts_noasr.flag").exists()
+os.environ["AGENT_DL_ANY"] = "1"
+os.environ.setdefault("AGENT_CHROMIUM", "/opt/pw-browsers/chromium")
+
 
 async def fake(k, opts):
     code = await setup._run(k, [sys.executable, str(DEV / "fake_step.py"), k, str(RUN)])

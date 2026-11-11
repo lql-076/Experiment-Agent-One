@@ -66,7 +66,8 @@ def speak(text, f):
 def health():
     return {"ok": True, "cuda": True, "gpu": "假显卡", "loaded": st["kind"], "attn": "sdpa", "busy": LOCK.locked(), "error": "",
             "vram": {"alloc_gb": 4.2}, "models": {"custom": True, "design": True}, "align": not (RUN / "fake_tts_noalign.flag").exists(),
-            "speakers": None, "stats": {"n": st["n"], "align_n": st["align_n"]}, "last_align": st["last_align"]}
+            "speakers": None, "stats": {"n": st["n"], "align_n": st["align_n"]}, "last_align": st["last_align"],
+            "asr": not (RUN / "fake_tts_noasr.flag").exists(), "last_asr": st.get("last_asr"), "last_gen": st.get("last_gen")}
 
 
 TOK = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]|[A-Za-z0-9']+")
@@ -128,6 +129,19 @@ def align(body: dict = Body(...)):
                 acc += len(t)
         st["last_align"] = {"sec": round(len(pcm) / 2 / sr, 2), "runs": len(rs), "phrases": len(phrases), "items": len(out)}
         return {"items": out, "sec": 0.05}
+
+
+@app.post("/asr")
+def asr(body: dict = Body(...)):
+    """假的听写（v3.0）：dev/.run/fake_asr.txt 里写了什么就听成什么；没有这个文件就给一句固定的。"""
+    if (RUN / "fake_tts_noasr.flag").exists():
+        raise HTTPException(404, "听写模型还没下")
+    sr = int(body.get("sr") or 16000)
+    pcm = base64.b64decode(body.get("pcm") or "")
+    f = RUN / "fake_asr.txt"
+    st["asr_n"] = st.get("asr_n", 0) + 1
+    st["last_asr"] = {"sec": round(len(pcm) / 2 / sr, 2), "sr": sr, "language": body.get("language")}
+    return {"text": f.read_text("utf-8").strip() if f.exists() else "你好，这是听写出来的字", "language": "Chinese", "sec": 0.05}
 
 
 @app.post("/generate")
