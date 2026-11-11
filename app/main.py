@@ -15,12 +15,12 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import (agent, agentstate, autostart, checks, db, deepseek, docs, events, exam, feed, files, growth, hw, hwctl, imagegen, memory, monitor,
-               nightly, osd, paths, reminders, reports, router, safety, settings, setup, tts, tts_install, websearch, workspace)
+from . import (agent, agentkit, agentstate, autostart, bgm, ccode, checks, db, deepseek, docs, events, exam, feed, files, growth, hw, hwctl, imagegen, memory,
+               monitor, nightly, osd, paths, reminders, reports, router, safety, settings, setup, tts, tts_install, voice, websearch, workspace)
 from .models import M
 from .qq import BOT
 
-VERSION = "2.2.0"
+VERSION = "3.0.0"
 PORT = 8765
 _bg = []
 
@@ -40,6 +40,10 @@ def _on_settings(ch):
         M.kevp.stop()
     if "ttsPort" in ch or "ttsPython" in ch:
         tts.T.stop("配音设置改了")
+    if any(k in ch for k in ("bgmUrl", "bgmDir")):
+        bgm.B.stop("配乐设置改了")
+    if any(k in ch for k in ("voiceUrl", "voiceDir", "voiceModel", "voicePython")):
+        voice.V.stop("语音设置改了")
     if "memDir" in ch or "useGit" in ch:
         memory.init()
     if ch.get("quiet") is False:      # 关掉免打扰：把攒着的消息一起发
@@ -77,6 +81,8 @@ async def housekeeping():
             data = await hw.sample()
             M.tick(data)
             tts.T.tick()                          # 配音服务：让路时关掉、闲置久了关掉
+            bgm.B.tick()                          # 配乐服务（ACE-Step）、语音服务（Breeze TTS 2）：一样的规矩
+            voice.V.tick()
             if n % 15 == 0 and M._health:
                 await router.embed_missing()
             if n % 150 == 5 and M._health:
@@ -170,6 +176,8 @@ app.include_router(tts.api)                       # 配音页的接口（app/tts
 app.include_router(tts_install.api)               # 设置 › 本地模型 的「安装配音」（app/tts_install.py）
 app.include_router(imagegen.api)                  # 「生图」页的接口（app/imagegen.py，v1.8.15）
 app.include_router(autostart.api)                 # 设置 › 自动化 的「开机自启」（app/autostart.py）
+app.include_router(bgm.api)                       # 「配乐」的接口（app/bgm.py，v3.0）
+app.include_router(voice.api)                     # 语音对话的接口（app/voice.py，v3.0）
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}", "127.0.0.1", "localhost"}
 
 
@@ -600,6 +608,40 @@ def ws_open(body: dict = Body(default={})):
         os.startfile(str(p))          # 打开资源管理器（不是黑窗口）
         return {"msg": "打开了：" + paths.show(p)}
     return {"msg": "在：" + paths.show(p)}
+
+
+# ---------------- Agent 的本事（v3.0，app/agentkit.py）：喊停、插话、开关 ----------------
+@app.post("/api/events/{eid}/stop")
+def event_stop(eid: int):
+    """停下一件正在做的事：这一步做完就停，正在跑的命令也停。做好的文件留着，说「继续」能接着做。"""
+    if not agentkit.request_stop(eid) and not ccode.request_stop(eid):
+        raise HTTPException(409, "这件事已经不在做了")
+    feed.add(f"你点了停下：事件 #{eid}", "warn", job="Agent")
+    return {"ok": True}
+
+
+@app.post("/api/events/{eid}/say")
+def event_say(eid: int, body: dict = Body(...)):
+    """中途插一句话：下一步之前告诉它（改方向、补要求）。"""
+    if not agentkit.push(eid, body.get("text")):
+        raise HTTPException(409, "这件事已经做完了：直接发新的一条吧")
+    return {"ok": True}
+
+
+@app.get("/api/agent/caps")
+def agent_caps():
+    return {"caps": agentkit.caps(), "skills": agentkit.skills(), "toolbox": agentkit.toolbox_list(), "cc": ccode.status()}
+
+
+@app.put("/api/agent/caps")
+def agent_caps_set(body: dict = Body(...)):
+    """打开 / 关上一项本事（下载、配音、云端配音、生图、配乐、Claude Code 引擎）。给 agent 加权限：只有界面上你点的才算，记进动作日志。"""
+    try:
+        for k, v in body.items():
+            agentkit.set_cap(k, bool(v))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    return agent_caps()
 
 
 @app.get("/api/chat/{token}")

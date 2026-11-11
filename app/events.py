@@ -31,6 +31,7 @@ def to_ui(e: dict) -> dict:
         "s": {k: int(sc.get(k, 0)) for k in ("local", "neu", "ds", "cl")}, "why": e["why"] or "", "result": e["result"] or "",
         "reply": e["reply"] or "", "steps": db.jl(e.get("steps"), []) or [], "fix": e["fix"], "teacher": e["teacher"],
         "status": e["status"], "cost": round(e["cost"] or 0, 4), "latency": e["latency"],
+        "plan": db.jl(e.get("plan"), []) or [], "engine": (db.jl(e.get("engine"), None) or {}).get("name"),
         "votes": {"mode": votes.get("mode"), "embed": _vote_brief(votes.get("embed")), "kev": _vote_brief(votes.get("kev")),
                   "weights": votes.get("weights")},
     }

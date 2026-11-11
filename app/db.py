@@ -61,6 +61,10 @@ def conn() -> sqlite3.Connection:
         _conn.row_factory = sqlite3.Row
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.executescript(SCHEMA)
+        have = {r[1] for r in _conn.execute("PRAGMA table_info(events)").fetchall()}
+        for col in ("plan", "engine"):                  # v3.0：这件事的计划（update_plan）、用的执行引擎（Claude Code 的会话）
+            if col not in have:
+                _conn.execute(f"ALTER TABLE events ADD COLUMN {col} TEXT")
     return _conn
 
 

@@ -3,6 +3,7 @@
   python scripts/install_tts.py            环境 + 模型
   python scripts/install_tts.py --env      只装环境
   python scripts/install_tts.py --models   只下模型
+  python scripts/install_tts.py --asr      只下听写模型（v3.0，语音对话用：Qwen/Qwen3-ASR-0.6B，Apache 2.0，约 1.9 GB；代码就是已经装好的 qwen-asr）
 
 为什么单独一个环境：官方的 qwen-tts 要 Transformers 4.57.3，本地模型环境（ai-env）用的是 5.x，装在一起会互相打架。
 PyTorch 和 ai-env 用同一个版本（2.8.0 cu128）：tools\\wheels 里已经有安装包就直接用，不用再下 3GB。
@@ -47,6 +48,8 @@ TORCHAUDIO = [
 MODELS = [("预设音色 CustomVoice", "Qwen/" + paths.TTS_MODELS["custom"]),
           ("描述音色 VoiceDesign", "Qwen/" + paths.TTS_MODELS["design"]),
           ("时间轴对齐模型 ForcedAligner", "Qwen/" + paths.ALIGN_MODEL)]
+ASR_MODEL = "Qwen3-ASR-0.6B"
+NO_TOKENIZER = {paths.ALIGN_MODEL, ASR_MODEL}       # 这两个没有声音编解码器
 TOKENIZER = "Qwen/Qwen3-TTS-Tokenizer-12Hz"     # 正常已经在模型的 speech_tokenizer 文件夹里；缺了才单独下
 SOURCE = os.environ.get("AGENT_MODEL_SOURCE", "modelscope")
 
@@ -117,7 +120,7 @@ def install_env():
 
 
 def done(dest: Path) -> bool:
-    tok = dest.name == paths.ALIGN_MODEL or (dest / "speech_tokenizer" / "config.json").exists()     # 对齐模型没有声音编解码器
+    tok = dest.name in NO_TOKENIZER or (dest / "speech_tokenizer" / "config.json").exists()     # 对齐模型、听写模型没有声音编解码器
     return ((dest / "config.json").exists() and tok and any(dest.glob("*.safetensors")) and not any(dest.rglob("*.incomplete")))
 
 
@@ -144,10 +147,10 @@ def install_models():
         if done(dest):
             say(f"{name} 已经下好了，跳过", "✓")
             continue
-        size = "约 1.8 GB" if dest.name == paths.ALIGN_MODEL else "大约 4~5 GB"
+        size = "约 1.8 GB" if dest.name in NO_TOKENIZER else "大约 4~5 GB"
         say(f"下载 {name}（{size}）：从{'hf-mirror' if SOURCE == 'hf' else '魔搭'} {repo}，放到 {paths.show(dest)}")
         download(repo, dest)
-        if dest.name != paths.ALIGN_MODEL and not (dest / "speech_tokenizer" / "config.json").exists():
+        if dest.name not in NO_TOKENIZER and not (dest / "speech_tokenizer" / "config.json").exists():
             say("模型里没带声音编解码器（speech_tokenizer），单独下一份")
             download(TOKENIZER, dest / "speech_tokenizer")
         say(f"{name} 下好了" if done(dest) else f"{name} 好像没下全，再运行一次接着下", "✓" if done(dest) else "!")
@@ -157,6 +160,11 @@ def install_models():
 def main():
     args = sys.argv[1:]
     code = 0
+    if "--asr" in args:                            # 只下听写模型（配音环境要先装好）
+        MODELS[:] = [("听写模型 Qwen3-ASR", "Qwen/" + ASR_MODEL)]
+        code = install_models()
+        print("\n听写模型下好了。" if not code else "\n听写模型没下全，再点一次接着下。")
+        return code
     if "--models" not in args:
         code = install_env()
         if code:

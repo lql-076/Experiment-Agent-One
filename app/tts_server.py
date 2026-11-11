@@ -12,7 +12,8 @@
   POST /generate  {kind: custom|design, text, speaker, instruct, language, seed} → 一段 WAV（16 位单声道），头尾的静音切掉
   POST /align     {pcm: base64 的 16 位单声道, sr, text, language} → {items: [{t 字或词, s 开始秒, e 结束秒}]}（v1.8.14）
                   时间轴对齐：Qwen3-ForcedAligner-0.6B（qwen-asr 包里的），拿音频和原文对出每个字的开始、结束。一次最多 180 秒
-  POST /unload    卸掉模型（配音模型和对齐模型都卸）
+  POST /asr       {pcm: base64 的 16 位单声道, sr, language} → {text}（v3.0，语音对话的听写：Qwen3-ASR-0.6B，也在 qwen-asr 包里；一次最多 120 秒）
+  POST /unload    卸掉模型（配音模型、对齐模型、听写模型都卸）
 """
 import argparse
 import base64
@@ -62,12 +63,13 @@ from fastapi.responses import Response  # noqa: E402
 
 NAMES = {"custom": "Qwen3-TTS-12Hz-1.7B-CustomVoice", "design": "Qwen3-TTS-12Hz-1.7B-VoiceDesign"}   # 和 app/paths.py 的 TTS_MODELS 一致
 ALIGN = "Qwen3-ForcedAligner-0.6B"                  # 和 app/paths.py 的 ALIGN_MODEL 一致
+ASR = "Qwen3-ASR-0.6B"                              # 听写（v3.0，语音对话）：和 app/voice.py 的 ASR_MODEL 一致
 ALIGN_MAX = 180.0                                   # 对齐器一次最多吃多长的音频（qwen-asr 里写的 180 秒）
 CUDA = torch.cuda.is_available()
 GPU = torch.cuda.get_device_name(0) if CUDA else ""
 LOCK = threading.Lock()          # 一次只生成一句
 app = FastAPI(title="agent-tts")
-st = {"kind": None, "model": None, "attn": "", "error": "", "load_s": 0.0, "n": 0, "gen_s": 0.0, "audio_s": 0.0, "aligner": None, "align_n": 0}
+st = {"kind": None, "model": None, "attn": "", "error": "", "load_s": 0.0, "n": 0, "gen_s": 0.0, "audio_s": 0.0, "aligner": None, "align_n": 0, "asr": None, "asr_n": 0}
 
 
 def attn_order():
@@ -172,11 +174,66 @@ def load_aligner():
     return st["aligner"]
 
 
+def load_asr():
+    """听写模型（0.6B，bf16 大约 2 GB 显存）：用到才装，装上就留着；显存不够先卸掉配音模型再装一次。"""
+    if st["asr"] is not None:
+        return st["asr"]
+    if not CUDA:
+        raise HTTPException(503, "没检测到可用的显卡（CUDA）。按约定只用显卡，不在 CPU 上跑。")
+    d = Path(A.models) / ASR
+    if not (d / "config.json").exists():
+        raise HTTPException(404, f"听写模型还没下：{d}（设置 › 语音 点「下载听写模型」）")
+    from qwen_asr import Qwen3ASRModel
+    t0 = time.time()
+    for k in range(2):
+        try:
+            st["asr"] = Qwen3ASRModel.from_pretrained(str(d), dtype=torch.bfloat16, device_map="cuda:0", max_new_tokens=512)
+            break
+        except torch.cuda.OutOfMemoryError:
+            gc.collect()
+            torch.cuda.empty_cache()
+            if k or st["model"] is None:
+                raise HTTPException(507, "显存不够装听写模型：先关掉占显存的程序再试") from None
+            unload()
+    print(f"装好了听写模型 {ASR}（用时 {time.time() - t0:.1f} 秒，显存 {vram()}）", flush=True)
+    return st["asr"]
+
+
+@app.post("/asr")
+def asr(body: dict = Body(...)):
+    """听写：一段录音 → 文字（语音对话用）。"""
+    try:
+        sr = int(body.get("sr") or 16000)
+        w = np.frombuffer(base64.b64decode(body.get("pcm") or ""), dtype="<i2").astype(np.float32) / 32768
+    except Exception:
+        raise HTTPException(400, "音频格式不对（要 base64 的 16 位单声道）") from None
+    if not len(w):
+        raise HTTPException(400, "没有音频")
+    if len(w) / sr > 120:
+        raise HTTPException(400, "一次最多听写 120 秒")
+    with LOCK:
+        m = load_asr()
+        t0 = time.time()
+        try:
+            res = m.transcribe(audio=(w, sr), language=body.get("language") or None)
+        except torch.cuda.OutOfMemoryError:
+            gc.collect()
+            torch.cuda.empty_cache()
+            raise HTTPException(507, "显存不够：先关掉占显存的程序再试") from None
+        dt = time.time() - t0
+        st["asr_n"] += 1
+    r0 = res[0] if isinstance(res, (list, tuple)) and res else res
+    text = (getattr(r0, "text", None) or (r0.get("text") if isinstance(r0, dict) else "") or "").strip()
+    print(f"听写 {len(w) / sr:.1f} 秒录音 → {len(text)} 字，用时 {dt:.1f} 秒", flush=True)
+    return {"text": text, "language": getattr(r0, "language", None), "sec": round(dt, 2)}
+
+
 @app.get("/health")
 def health():
     return {"ok": True, "cuda": CUDA, "gpu": GPU, "loaded": st["kind"], "attn": st["attn"], "busy": LOCK.locked(), "error": st["error"],
             "vram": vram(), "models": {k: (Path(A.models) / v / "config.json").exists() for k, v in NAMES.items()},
             "align": (Path(A.models) / ALIGN / "config.json").exists(), "aligner": st["aligner"] is not None,
+            "asr": (Path(A.models) / ASR / "config.json").exists(), "asr_loaded": st["asr"] is not None,
             "speakers": (st["model"].get_supported_speakers() if st["kind"] == "custom" else None),
             "stats": {"n": st["n"], "gen_s": round(st["gen_s"], 1), "audio_s": round(st["audio_s"], 1)}}
 
@@ -254,8 +311,8 @@ def align(body: dict = Body(...)):
 def unload_ep():
     with LOCK:
         unload()
-        if st["aligner"] is not None:
-            st["aligner"] = None
+        if st["aligner"] is not None or st["asr"] is not None:
+            st["aligner"] = st["asr"] = None
             gc.collect()
             if CUDA:
                 torch.cuda.empty_cache()

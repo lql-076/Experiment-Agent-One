@@ -18,7 +18,7 @@ from datetime import datetime
 
 import httpx
 
-from . import db, deepseek, files, privacy, settings, workspace
+from . import agentkit, db, deepseek, files, privacy, settings, workspace
 
 PRICE_USD = 0.75 / 1000          # 每次成功请求
 WEEK = "一二三四五六日"
@@ -157,22 +157,62 @@ def system_hint() -> str:
             "回答用中文、简短直接；用到了网上的信息，在最后列出来源（标题 + 链接，最多 3 条）。")
 
 
+def _trim(msgs, keep=14, budget=160_000):
+    """做了很多步以后，前面那些工具的长输出（命令的输出、读的文件、看过的图）缩短：只留最近 keep 条完整的，免得越做越贵、越做越慢。"""
+    idx = [i for i, m in enumerate(msgs) if m.get("role") == "tool" or isinstance(m.get("content"), list)]
+    size = sum(len(m["content"]) if isinstance(m.get("content"), str) else 3000 * len(m["content"]) for m in msgs if m.get("content"))
+    if size <= budget or len(idx) <= keep:
+        return msgs
+    old = set(idx[:-keep])
+    out = []
+    for i, m in enumerate(msgs):
+        if i in old and i > 1:
+            c = m.get("content")
+            if isinstance(c, list):
+                txt = "".join(x.get("text", "") for x in c if x.get("type") == "text")
+                m = dict(m, content=txt + "（图片看过了，这里省掉）")
+            elif isinstance(c, str) and len(c) > 500:
+                m = dict(m, content=c[:300] + f"\n……（中间省掉了 {len(c) - 450} 字，要看重新读 / 重新运行）……\n" + c[-150:])
+        out.append(m)
+    return out
+
+
 async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text, steps, progress=None, web=True, local_files=False, ws=False):
-    """让 DeepSeek 带着工具回答：联网搜索（web）、读他允许的文件夹（local_files，app/files.py）、在自己的工作文件夹里写写改改跑程序（ws，app/workspace.py，v2.1）。
-    返回 {"text","cny","searched","fetched","read","ws","sources"}；steps 里追加每一步。progress(文字)：处理到哪一步了（对话页实时显示）。"""
+    """让 DeepSeek 带着工具回答：联网搜索（web）、读他允许的文件夹（local_files，app/files.py）、在自己的工作文件夹里写写改改跑程序（ws，app/workspace.py，v2.1）、
+    列计划 / 看画面 / 下载 / 配音 / 生图 / 配乐（app/agentkit.py，v3.0，跟着 ws 一起给）。
+    返回 {"text","cny","searched","fetched","read","ws","sources","stopped"}；steps 里追加每一步。progress(文字)：处理到哪一步了（对话页实时显示）。
+    v3.0：每一步之前看一眼这件事的开关（agentkit.CTRL）——他点了停下就停、中途插的话带给 DeepSeek；一件事花的钱到了预算就停下汇报。"""
     say = progress or (lambda _m: None)
     s = settings.S
     rounds = web_max = max(1, int(s.get("searchRounds", 4)))   # 联网搜索最多几轮（带着工作区工具时总步数多，但搜索照旧按这个数）
     if local_files:
         rounds = max(rounds, 8)                         # 翻文件要多几轮：搜 → 读 → 再读
     if ws:
-        rounds = max(rounds, int(s.get("wsRounds") or 40))   # 做东西（写网页、跑脚本、合成视频）一件事要很多步
+        rounds = max(rounds, int(s.get("agSteps") or 120))   # 做东西（写网页、跑脚本、合成视频）一件事要很多步（v3.0：40 → 120）
+        await asyncio.to_thread(agentkit.sync_toolbox)
+    budget = float(s.get("agBudget") or 0) if ws else 0.0
+    ctl = agentkit.CTRL.get(event_id) or {"stop": "", "inbox": []}
     msgs = list(messages)
     msgs[0] = {"role": "system", "content": msgs[0]["content"] + ("\n\n" + system_hint() if web else "") + ("\n\n" + files.hint() if local_files else "") +
-               ("\n\n" + workspace.hint() if ws else "")}
+               ("\n\n" + workspace.hint() + "\n\n" + agentkit.hint(user_text) if ws else "")}
     total, searched, fetched, nread, nws, sources, n_res, imgs = 0.0, 0, 0, 0, 0, [], 1, 0
-    web_rnds, web_cap_said, dsml_retry = 0, False, 0
+    web_rnds, web_cap_said, dsml_retry, over = 0, False, 0, False
+
+    def done(text, **kw):
+        return dict({"text": text, "cny": total, "searched": searched, "fetched": fetched, "read": nread, "ws": nws, "sources": sources}, **kw)
     for rnd in range(rounds + 1):
+        if ctl.get("stop"):                              # 他点了停下：这一步做完就到这
+            steps.append(["停下", ctl["stop"]])
+            return done(f"按你说的停下了，做了 {nws} 步。做好的都在工作文件夹里；要接着做就说「继续」。" if nws else "按你说的停下了。", stopped=True)
+        while ctl.get("inbox"):                          # 他中途插了话
+            more = ctl["inbox"].pop(0)
+            steps.append(["你插了一句", more[:60]])
+            msgs.append({"role": "user", "content": f"（他中途补了一句，照这个调整，接着做：）{more}"})
+        if budget and total >= budget and not over and rnd < rounds:
+            over = True
+            steps.append(["到预算了", f"这件事花了 ¥{total:.2f}，到了你设的上限 ¥{budget:.2f}"])
+            msgs.append({"role": "user", "content": f"（程序提示：这件事已经花了 ¥{total:.2f}，到了他设的上限。这一轮不能再调用工具：把做到哪、下一步做什么写清楚汇报给他；他说「继续」再接着做。）"})
+        msgs = _trim(msgs)
         if ws and nws and rnd == rounds - 3:             # 快到上限：先记下做到哪（v2.2）
             msgs.append({"role": "user", "content": "（程序提示：只剩 3 步了。先把做到哪、下一步做什么写进这件事文件夹里的 进度.md，做不完就停下来汇报。）"})
         if ws and nws and rnd == rounds:
@@ -181,7 +221,8 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
         if web and web_rnds >= web_max and not web_cap_said and rounds > web_max:
             steps.append(["联网搜索", f"查了 {web_max} 轮，到上限了，不再搜"])
             web_cap_said = True
-        tools = (TOOLS if give_web else []) + (files.TOOLS if (local_files or ws) and rnd < rounds else []) + (workspace.tools() if ws and rnd < rounds else [])
+        tools = [] if over else ((TOOLS if give_web else []) + (files.TOOLS if (local_files or ws) and rnd < rounds else []) +
+                                 (workspace.tools() + agentkit.tools() if ws and rnd < rounds else []))
         say("DeepSeek 正在想……" if rnd == 0 else f"DeepSeek 正在接着做（第 {rnd + 1} 步，最多 {rounds} 步）……" if nws else "DeepSeek 正在看查到的内容……")
         out = await deepseek.chat(msgs, thinking=thinking, event_id=event_id, purpose=purpose, tools=tools or None,
                                   max_tokens=8000 if ws else 1600, timeout=300 if ws else 90)
@@ -222,7 +263,7 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
                               f"做了 {rounds} 步，到上限了，先停在这" if nws else f"查了 {rounds} 轮，到上限了，用已有的结果回答"])
             if sources and not re.search(r"https?://", text):
                 text += "\n\n来源：\n" + "\n".join(f"{i + 1}. {x['title'][:40]} {x['url']}" for i, x in enumerate(sources[:3]))
-            return {"text": text, "cny": total, "searched": searched, "fetched": fetched, "read": nread, "ws": nws, "sources": sources}
+            return done(text)
         msgs.append(out["message"])
         if any((c.get("function") or {}).get("name") in ("web_search", "web_fetch") for c in calls) and give_web:
             web_rnds += 1
@@ -266,6 +307,15 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
                     content, step = await asyncio.to_thread(workspace.run_tool, name, args, say)
                     steps.append(step)
                     nws += 1
+                elif name in agentkit.NAMES and ws:
+                    content, step, got, cny = await agentkit.run_tool(name, args, event_id, say)
+                    steps.append(step)
+                    total += cny
+                    nws += 1
+                    for x in got:
+                        if imgs < 24:
+                            pics.append(x)
+                            imgs += 1
                 elif name in files.NAMES and (local_files or ws):
                     say(f"正在{'读文件' if name == 'read_file' else '翻文件夹'}……")
                     content, step, pic, used = await asyncio.to_thread(files.run_tool, name, args)
@@ -282,7 +332,7 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
                 content = f"没做成：{e}"
                 steps.append(["工作区", f"没做成：{str(e)[:50]}"])
             except files.Denied as e:
-                if name in workspace.NAMES:
+                if name in workspace.NAMES or name in agentkit.NAMES:
                     content = f"没做成：{e}"
                     steps.append(["工作区", f"没做成：{str(e)[:50]}"])
                 else:
@@ -290,7 +340,7 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
                     steps.append(["读文件", f"没读成：{str(e)[:50]}"])
             except OSError as e:
                 content = f"没做成（{type(e).__name__}）：{str(e)[:160]}"
-                steps.append(["工作区" if name in workspace.NAMES else "读文件", f"出错：{str(e)[:50]}"])
+                steps.append(["工作区" if name in workspace.NAMES or name in agentkit.NAMES else "读文件", f"出错：{str(e)[:50]}"])
             except SearchBlocked as e:
                 content = f"没有发出去：{e}。不要把个人信息放进搜索词。"
                 steps.append(["联网搜索", "搜索词涉及隐私，拦下了"])
@@ -307,9 +357,8 @@ async def answer_with_tools(messages, *, thinking, event_id, purpose, user_text,
             msgs.append({"role": "user", "content": [{"type": "text", "text": "（read_file 读到的图片：" + "、".join(x["name"] for x in pics) + "）"}] +
                          [{"type": "image_url", "image_url": {"url": x["uri"]}} for x in pics]})
     if nws:
-        return {"text": f"这件事步骤太多，做了 {rounds} 步先停在这了：做好的都在工作文件夹里（{workspace.folder()}）。跟我说「接着做」我再继续。",
-                "cny": total, "searched": searched, "fetched": fetched, "read": nread, "ws": nws, "sources": sources}
-    return {"text": "查了很多轮还没得出结论，换个问法再问我一次吧。", "cny": total, "searched": searched, "fetched": fetched, "read": nread, "ws": nws, "sources": sources}
+        return done(f"这件事步骤太多，做了 {rounds} 步先停在这了：做好的都在工作文件夹里（{workspace.folder()}）。跟我说「接着做」我再继续。")
+    return done("查了很多轮还没得出结论，换个问法再问我一次吧。")
 
 
 FRESH = re.compile(r"最新|新闻|热搜|今天.*(发生|新闻|比赛|消息)|价格|多少钱|报价|汇率|股价|天气|比分|赛程|发布了|出了没|更新了|"

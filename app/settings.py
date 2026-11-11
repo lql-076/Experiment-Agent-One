@@ -55,7 +55,20 @@ DEFAULTS = {
     # wsDir 留空 = Agent 文件夹里的「工作区」；wsRun 能不能运行程序。这两个有自己的接口（设置 › 记忆与文件），不走通用的改设置
     "wsDir": "", "wsRun": True,
     "wsTimeout": 900,                 # 一条命令最多跑多少秒（做视频渲染会久一点）
-    "wsRounds": 40,                   # 带着工作区工具时，DeepSeek 一件事最多做多少步
+    "wsRounds": 40,                   # （旧）v3.0 起看 agSteps
+    # Agent 的本事（v3.0，app/agentkit.py）：一件事最多做多少步、最多花多少钱（0 = 不限）；
+    # 下载、配音、云端配音、生图、配乐给不给它用——这几个开关是给 agent 加权限，有自己的接口（设置 › Agent 能力），不走通用的改设置
+    "agSteps": 120, "agBudget": 5.0, "agImageMax": 8,
+    "agDownload": True, "agVoice": True, "agVoiceCloud": False, "agImage": False, "agMusic": True,
+    # Claude Code 执行引擎（v3.0，app/ccode.py）：把整件事交给他电脑上装的 Claude Code 去做（默认关，他在设置里开）。
+    # ccCmd 留空 = 自己找 claude；ccModel 留空 = 用他 Claude Code 自己配的；ccMinutes 一件事最多跑多少分钟
+    "ccOn": False, "ccAuto": True, "ccCmd": "", "ccModel": "", "ccMinutes": 60, "ccBash": "python,pip,ffmpeg,ffprobe,node,npm,npx,git",
+    # 配乐（v3.0，app/bgm.py）：本地 ACE-Step 1.5 的接口地址；bgmDir 填了它的文件夹就由 Agent 自己启动、闲置关掉、打游戏让路
+    "bgmUrl": "http://127.0.0.1:8001", "bgmDir": "", "bgmIdle": 10, "bgmOut": "", "bgmSteps": 8, "bgmFormat": "wav",
+    # 语音对话（v3.0，app/voice.py）：说话的声音用 Breeze TTS 2（只限自己用、非商用；它念的不进要挣钱的视频），听写用本地 Qwen3-ASR
+    "voiceOn": False, "voiceUrl": "http://127.0.0.1:8093", "voiceDir": "", "voiceModel": "", "voicePython": "", "voiceIdle": 10,
+    "voiceDesc": "二十岁出头的年轻女声，声音清亮温柔，语速自然，像朋友聊天", "voiceCfg": 4.0, "voiceSeed": 20261111,
+    "voiceRefText": "", "voiceMax": 400, "voiceAuto": True, "voiceHands": False,
     # 分流旋钮
     "take": 60, "fresh": 40, "clLine": 50, "daily": 3, "quiet": False,
     "privLocal": True, "privWords": "", "voteEmbed": 50, "voteAuto": True,
@@ -72,7 +85,7 @@ DEFAULTS = {
 }
 SECRET_KEYS = ("dsKey", "qqSecret", "blKey", "imgKey")      # blKey：百炼 API Key（云端配音）；imgKey：API易 Key（生图，v1.8.15）
 LOCKED = {"gpuOnly": True, "privLocal": True}   # 这两条界面上改不了
-PERM = {"wsDir", "wsRun"}                         # 给 agent 的权限：有自己的接口（记进动作日志），通用的改设置改不了
+PERM = {"wsDir", "wsRun", "agDownload", "agVoice", "agVoiceCloud", "agImage", "agMusic", "ccOn"}                         # 给 agent 的权限：有自己的接口（记进动作日志），通用的改设置改不了
 
 _lock = threading.Lock()
 _FILE = paths.DATA / "settings.json"

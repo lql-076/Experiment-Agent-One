@@ -163,12 +163,12 @@ def _line(line):
     return s
 
 
-def _blocking(hf):
+def _blocking(hf, extra=()):
     env = os.environ.copy()
     env.update({"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", "PIP_DISABLE_PIP_VERSION_CHECK": "1", "AGENT_FEED": "1"})
     if hf:
         env["AGENT_MODEL_SOURCE"] = "hf"
-    cmd = command()
+    cmd = list(command()) + list(extra)
     _log(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} {' '.join(map(str, cmd))}")
     p = subprocess.Popen([str(c) for c in cmd], cwd=str(paths.ROOT), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          stdin=subprocess.DEVNULL, creationflags=NOWIN)
@@ -198,9 +198,9 @@ def _blocking(hf):
     return code
 
 
-async def _run(hf):
+async def _run(hf, asr=False):
     try:
-        code = await asyncio.to_thread(_blocking, hf)
+        code = await asyncio.to_thread(_blocking, hf, ("--asr",) if asr else ())
     except Exception as e:
         code = -1
         ST["line"] = str(e)[:160]
@@ -212,13 +212,13 @@ async def _run(hf):
         feed.add("安装配音停了。再点「安装配音」会接着装、接着下", "warn", job=JOBN)
     elif code == 0:
         ST["st"] = "ok"
-        feed.add(f"配音装好了（用时 {feed.dur(ST['t1'] - ST['t0'])}）。左边点「配音」就能用", "ok", job=JOBN)
+        feed.add(f"听写模型下好了（用时 {feed.dur(ST['t1'] - ST['t0'])}）。" if asr else f"配音装好了（用时 {feed.dur(ST['t1'] - ST['t0'])}）。左边点「配音」就能用", "ok", job=JOBN)
     else:
         ST["st"] = "fail"
         feed.add(f"安装配音没完成（退出码 {code}）。再点一次会接着装；原始输出在 {paths.show(LOG)}", "err", job=JOBN)
 
 
-def start(hf=False):
+def start(hf=False, asr=False):
     if ST["st"] == "run":
         raise HTTPException(409, "已经在装了")
     if setup.status()["running"]:
@@ -226,9 +226,10 @@ def start(hf=False):
     ST.update(st="run", phase="", pct=None, done=None, total=None, speed=None, eta=None, line="准备中", t0=time.time(), t1=0.0,
               code=None, hf=bool(hf), stop=False, steps=[])
     _p.update(hist=[], key="", pt0=0.0)
-    feed.add("开始安装配音：配音环境 tts-env、PyTorch、Qwen3-TTS，再从" + ("hf-mirror" if hf else "魔搭") + "下两个模型（一共约 14 GB，装过的跳过）",
+    feed.add("开始下听写模型（Qwen3-ASR-0.6B，约 1.9 GB，语音对话用）" if asr else
+             "开始安装配音：配音环境 tts-env、PyTorch、Qwen3-TTS，再从" + ("hf-mirror" if hf else "魔搭") + "下两个模型（一共约 14 GB，装过的跳过）",
              "head", job=JOBN)
-    asyncio.get_event_loop().create_task(_run(hf))
+    asyncio.get_event_loop().create_task(_run(hf, asr))
     return public()
 
 
@@ -260,7 +261,7 @@ api = APIRouter()
 
 @api.post("/api/tts/install")
 async def tts_install(body: dict = Body(default={})):
-    return start(hf=bool(body.get("hf")))
+    return start(hf=bool(body.get("hf")), asr=bool(body.get("asr")))
 
 
 @api.post("/api/tts/install/stop")

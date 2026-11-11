@@ -783,6 +783,9 @@ class TTS:
                     "audio_s": 0.0, "eta": None, "whole": whole, "chunks": 1, "chunk_t0": 0.0, "chunk_est": 0.0, "chunk_chars": 0,
                     "engine": "cloud" if cloud else "local", "est": est, "cny": 0.0, "bill": 0, "align": ""}
         self._task = asyncio.get_event_loop().create_task(self._run(self.job, text, segs))
+        if not same:                              # 记下这次用的音色（v3.0：Agent 自己配音时用同一个）
+            db.kv_set("tts_last_req", {k: req.get(k) for k in ("mode", "speaker", "desc", "name", "tone", "lang", "seed", "voice", "rate", "pitch", "volume", "whole")
+                                       if req.get(k) not in (None, "")} | {"engine": "cloud" if cloud else "local"})
         if cloud:
             feed.add(f"开始配音（百炼云端 {v['model']}）：{len(segs)} 句、{chars} 字，音色 {v['label']}，预估 {yuan(est['cny'])}", "head", job="配音")
         else:

@@ -13,7 +13,7 @@ import time
 from collections import defaultdict, deque
 from pathlib import Path
 
-from . import db, deepseek, events, files, growth, memory, notify, paths, privacy, reminders, router, safety, settings, websearch, workspace
+from . import agentkit, ccode, db, deepseek, events, files, growth, memory, notify, paths, privacy, reminders, router, safety, settings, websearch, workspace
 from .models import M
 from .qq import BOT
 
@@ -31,9 +31,9 @@ def _continuing(user, text) -> bool:
     return bool(w and time.time() - w["ts"] < 7200 and len(text) <= 40 and CONT_RE.search(text.strip()))
 
 
-def _remember_ws(user, steps, reply):
+def _remember_ws(user, steps, reply, cc=None):
     done = [f"- {x[0]} {x[1]}" for x in steps if x and x[0] in WS_STEPS][-15:]
-    LAST_WS[user] = {"ts": time.time(), "note": "【接着上一件事：你上次在工作文件夹里做到这里（最后几步）：\n" + "\n".join(done) +
+    LAST_WS[user] = {"ts": time.time(), "cc": bool(cc), "session": (cc or {}).get("session"), "note": "【接着上一件事：你上次在工作文件夹里做到这里（最后几步）：\n" + "\n".join(done) +
                      f"\n你上次最后说的：{reply[:300]}\n这件事的文件夹里有 进度.md 的话先读它，从没做完的地方接着做，不要从头来。】"}
 SRC_LABEL = {"qq": "QQ 私聊", "ui": "界面输入", "cron": "定时任务"}
 # 问能不能给 agent 加功能（「能不能加个导出的功能」「你能不能支持读 PDF」）：本地小脑以前会答成"系统限制，没法加"
@@ -138,12 +138,13 @@ def _quick(job, *a, **k):
     return eid
 
 
-async def handle(text: str, src="qq", user="me", job=None, force=None, allow_private=False, redo_of=None, images=None, received=None):
+async def handle(text: str, src="qq", user="me", job=None, force=None, allow_private=False, redo_of=None, images=None, received=None, engine=None):
     """job：界面上异步发消息时传进来，记下事件编号，界面拿它查处理到哪一步了。
     force：你指定交给谁（local / neu / ds / cl），跳过提醒、记住这些快捷处理，直接按你说的走（决策脑的分数照样算给你看）。
     隐私的事指定给云端要 allow_private（你确认过），不然抛 router.NeedConfirm。
     images：这条消息带的图片（已经存进 data\\chat 的，files.save_upload 的结果或路径）。
-    received：对话里发来的文件（v2.2，已经存进 工作区\\收到的\\，workspace.received 的结果）。"""
+    received：对话里发来的文件（v2.2，已经存进 工作区\\收到的\\，workspace.received 的结果）。
+    engine：你指定用哪个执行引擎（v3.0：cc = 交给本地的 Claude Code 去做；不指定就看设置）。"""
     text = (text or "").strip()
     t0 = time.time()
     is_priv_kw = privacy.check(text)[0]
@@ -225,6 +226,14 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
                                "result": f"决策脑打完分，交给 {to_name}……"})
     if job is not None:
         job["eid"] = eid
+    agentkit.open_ctl(eid, user)                  # v3.0：这件事的开关（喊停、插话、计划）
+    try:
+        return await _handle2(text, src, user, t0, eid, dec, steps, images, received, fz, confirmed, ments, engine)
+    finally:
+        agentkit.close_ctl(eid)
+
+
+async def _handle2(text, src, user, t0, eid, dec, steps, images, received, fz, confirmed, ments, engine):
     for im in images:
         files.note(eid, "img", im["path"], size=im.get("size"))
     if images:
@@ -288,6 +297,9 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
         route, is_local = "ds", False
         why_extra = "（要查你电脑上的资料，本地小脑不会翻文件，交给 DeepSeek 带着读文件的工具）"
     cont = _continuing(user, text) and not dec["private"] and not fz
+    if engine == "cc" and not dec["private"] and route != "ds":
+        route, is_local = "ds", False
+        why_extra = "（你指定交给 Claude Code 去做）"
     if cont and (is_local or route == "cl"):
         route, is_local = "ds", False
         why_extra = "（接着上一件工作区的事做，交给 DeepSeek 带着同样的工具）"
@@ -352,10 +364,28 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
             prog("交给 DeepSeek，正在看图……" if uris else "交给 DeepSeek，正在想……")
             purpose = "neu" if dec["neu"] else "chat"
             web = None
+            last = LAST_WS.get(user) or {}
+            use_cc = ccode.usable() and not dec["private"] and (engine == "cc" or (settings.S.get("ccAuto", True) and engine is None and (
+                workspace.wants(text) or bool(received) or (cont and last.get("cc")))))
+            if use_cc:
+                # v3.0：整件事交给他本地的 Claude Code（在工作区里干活，每一步进事件）；出不来就退回 DeepSeek 自己带工具做
+                sess = last.get("session") if cont and last.get("cc") else None
+                steps.append(["执行引擎", "Claude Code" + ("（接着上次的会话）" if sess else "")])
+                prog("交给 Claude Code，正在开工……")
+                try:
+                    cc = await ccode.run(eid, text, steps, prog, session=sess, extra=extra)
+                    web = {"text": cc["text"] or "Claude Code 做完了，但没说话。", "cny": 0.0, "searched": 0, "fetched": 0, "read": 0, "ws": max(1, cc["tools"]),
+                           "sources": [], "cc": cc}
+                    out = {"text": web["text"], "cny": 0.0}
+                except RuntimeError as e:
+                    steps.append(["执行引擎", f"Claude Code 没成，改回 DeepSeek 自己做：{str(e)[:60]}"])
+                    use_cc = False
             use_web = bool(settings.S.get("searchOn", True))
             use_files = bool(files.dirs(True))
             use_ws = workspace.on()                       # Agent 自己的工作文件夹（v2.1）：写、改、删、挪、运行程序
-            if (use_web or use_files or use_ws) and not dec["private"]:
+            if use_cc:
+                pass
+            elif (use_web or use_files or use_ws) and not dec["private"]:
                 web = await websearch.answer_with_tools(msgs, thinking=thinking, event_id=eid, purpose=purpose, user_text=text, steps=steps,
                                                         progress=prog, web=use_web, local_files=use_files, ws=use_ws)
                 out = {"text": web["text"], "cny": web["cny"]}
@@ -368,13 +398,16 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
             cost_all = out["cny"] + (websearch.PRICE_USD * float(settings.S["usdCny"]) * (web["searched"] + web["fetched"]) if web else 0)
             reply, cost = out["text"], cost_all
             if web and web.get("ws"):
-                _remember_ws(user, steps, reply)
+                _remember_ws(user, steps, reply, web.get("cc"))
                 made = await asyncio.to_thread(workspace.note_made, eid, t0)      # v2.3：这件事做出来的文件，回复下面给卡片
                 if made["n"]:
                     first = (made["media"] or made["folders"] or made["others"])[0]["name"]
                     steps.append(["做好的文件", f"{first}" + (f" 等 {made['n']} 个" if made["n"] > 1 else "")])
-            steps.append(["交给 DeepSeek", f"{'思考' if thinking else '快速'}模式" + (f" · 联网 {web['searched']} 搜 {web['fetched']} 读" if searched else "") +
-                          (f" · 工作区 {web['ws']} 步" if web and web.get("ws") else "") + f" · ¥{cost_all:.4f}"])
+            if web and web.get("cc"):
+                steps.append(["交给 Claude Code", f"{web['cc']['turns']} 轮 · {web['cc']['tools']} 次工具（花的钱看 DeepSeek 账单）"])
+            else:
+                steps.append(["交给 DeepSeek", f"{'思考' if thinking else '快速'}模式" + (f" · 联网 {web['searched']} 搜 {web['fetched']} 读" if searched else "") +
+                              (f" · 工作区 {web['ws']} 步" if web and web.get("ws") else "") + f" · ¥{cost_all:.4f}"])
             used_claude = any(s.get("claude") for s in snips)
             if not (uris or used or (web and (web.get("read") or web.get("ws")))):        # 带图片、读了文件、动了工作区的不存样本：光有这句话学不到东西
                 _save_sample(text, reply, "neu" if dec["neu"] else "ds", eid, dec["private"], used_claude, searched)

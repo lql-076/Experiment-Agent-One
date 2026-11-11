@@ -42,6 +42,11 @@ MAX_OUT = 6000                                  # 运行的输出最多给模型
 SKIP = {TMP, "node_modules", "__pycache__", ".git", ".venv"}
 NOWIN = 0x08000000 if paths.IS_WIN else 0
 _run_lock = threading.Lock()
+_cancel = threading.Event()                     # 他点了「停下」：正在跑的那条命令也停（v3.0）
+
+
+def cancel_run():
+    _cancel.set()
 # Agent 文件夹里这些是它自己的东西，工作区不能放进去
 INTERNAL = {"app", "ui", "data", "memory", "models", "training", "tools", "kev", "scripts", "dev", "docs", "dist", ".git", ".venv",
             "ai-env", "tts-env", "ws-env", "配音输出", "生图输出", "工作区备份"}
@@ -520,11 +525,16 @@ def run(command, timeout=None, say=None):
                 _log(_decode_lines(chunk))
         th = threading.Thread(target=reader, daemon=True)
         th.start()
-        timed_out, last_say = False, 0.0
+        timed_out, last_say, cancelled = False, 0.0, False
+        _cancel.clear()
         while p.poll() is None:
             el = time.time() - t0
             if el > lim:
                 timed_out = True
+                _kill(p)
+                break
+            if _cancel.is_set():
+                cancelled = True
                 _kill(p)
                 break
             if el - last_say >= 3:
@@ -548,9 +558,9 @@ def run(command, timeout=None, say=None):
     changed += [("没了", k, 0) for k in before if k not in after and not k.startswith(TMP)]
     _link_ffmpeg()
     code = p.returncode
-    _log(f"===== 用时 {sec:.1f} 秒 · " + ("超时被停了" if timed_out else f"退出码 {code}") + "\n")
+    _log(f"===== 用时 {sec:.1f} 秒 · " + ("超时被停了" if timed_out else "被停下了" if cancelled else f"退出码 {code}") + "\n")
     safety.log("workspace.run", {"cmd": cmd[:300], "code": code, "sec": round(sec, 1), "timeout": timed_out, "changed": len(changed)}, "auto")
-    return {"cmd": cmd, "code": code, "sec": sec, "out": out, "timed_out": timed_out, "lim": lim, "changed": changed}
+    return {"cmd": cmd, "code": code, "sec": sec, "out": out, "timed_out": timed_out, "lim": lim, "changed": changed, "cancelled": cancelled}
 
 
 # ---------------- 备份半年清一次 ----------------
@@ -981,7 +991,7 @@ def run_tool(name, args, say=None):
         return f"复制好了：{r['src']} → {r['dst']}（{_size(r['size'])}）。", ["复制", f"→ {r['dst']} · {_size(r['size'])}"]
     if name == "run_command":
         r = run(args.get("command"), args.get("timeout"), say)
-        st = "超时被停了（" + str(r["lim"]) + " 秒）" if r["timed_out"] else ("成功" if r["code"] == 0 else f"退出码 {r['code']}")
+        st = "超时被停了（" + str(r["lim"]) + " 秒）" if r["timed_out"] else "被他停下了" if r.get("cancelled") else ("成功" if r["code"] == 0 else f"退出码 {r['code']}")
         ch = r["changed"]
         chs = "、".join(f"{a} {b}" + (f"（{_size(c)}）" if a != "没了" else "") for a, b, c in ch[:20]) + (f" 等 {len(ch)} 个" if len(ch) > 20 else "")
         out = r["out"]
