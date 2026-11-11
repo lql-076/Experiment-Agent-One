@@ -254,7 +254,42 @@ async def view():
                      f"记忆 {n_mem} 段 · 说明书 {n_doc} 段已建索引" + ("" if n_mem + n_doc else "（嵌入模型在线后自动建）"), m={"txt": f"{n_mem} · {n_doc}"}))
     kpi["mem"] = {"st": mst, "v": str(n_mem), "unit": "段", "sub": f"说明书 {n_doc} 段已建索引"}
 
-    groups = [{"name": "大脑", "items": brain}, {"name": "云端", "items": cloud}, {"name": "通道", "items": chan}, {"name": "后台", "items": back}]
+    # ---------- 手脚（v3.0）：干活的本事 ----------
+    from . import agentkit, bgm, ccode, voice, workspace
+    AG = {"label": "去设置", "sec": "agent"}
+    hands = []
+    wsn = workspace.status() if workspace.on() else {}
+    hands.append(_row("ws", "工作文件夹", "ok" if workspace.on() else "off",
+                      (f"{wsn.get('files', 0)} 个文件 · " + ("能跑程序" if S.get("wsRun", True) else "只读写、不跑程序") + f" · 技能 {len(agentkit.skills())} 份") if workspace.on() else "没开", None if workspace.on() else AG))
+    cc = ccode.status()
+    if not S.get("ccOn"):
+        hands.append(_row("cc", "Claude Code 引擎", "off", "没开：工作区的活由 DeepSeek 自己带工具做" + ("（已经找到 claude 了，打开就能用）" if cc["found"] else ""), AG))
+    elif not cc["found"]:
+        hands.append(_row("cc", "Claude Code 引擎", "bad", "开了，但没找到 claude 命令：填一下它在哪", AG))
+    else:
+        run_n = len(ccode.RUNNING)
+        hands.append(_row("cc", "Claude Code 引擎", "ok", (f"正在做 {run_n} 件事 · " if run_n else "") + f"{cc.get('version') or '找到了'} · 工作区的活交给它"))
+    vv = voice.V
+    eng = vv.engine()
+    ears = "听得见" if vv.asr_ok() else "听写还没装"
+    if not S.get("voiceOn"):
+        hands.append(_row("voice", "语音", "off", "没开", {"label": "去打开", "sec": "voice"}))
+    elif eng == "none":
+        hands.append(_row("voice", "语音", "bad", f"{ears} · 还没有能出声的（配 Breeze TTS 2，或者先装本地配音）", {"label": "去设置", "sec": "voice"}))
+    else:
+        hands.append(_row("voice", "语音", "ok" if vv.asr_ok() else "warn", f"{ears} · 出声：" + ("Breeze TTS 2" + (" · 开着" if vv.proc.alive() else "") if eng == "breeze" else "本地配音顶着（Breeze 还没配）"),
+                          None if vv.asr_ok() else {"label": "去装", "sec": "voice"}))
+    bb = bgm.B
+    if bb.job and bb.job.get("st") == "run":
+        hands.append(_row("bgm", "配乐（ACE-Step）", "ok", "正在出一首：" + str(bb.job.get("prompt") or "")[:20]))
+    elif bb.proc.alive():
+        hands.append(_row("bgm", "配乐（ACE-Step）", "ok", "开着 · 闲着会自己关"))
+    elif bb.configured():
+        hands.append(_row("bgm", "配乐（ACE-Step）", "idle", "配好了 · 用到才启动"))
+    else:
+        hands.append(_row("bgm", "配乐（ACE-Step）", "off", "还没配：填 ACE-Step 的文件夹或者地址", {"label": "去设置", "sec": "bgm"}))
+
+    groups = [{"name": "大脑", "items": brain}, {"name": "云端", "items": cloud}, {"name": "手脚", "items": hands}, {"name": "通道", "items": chan}, {"name": "后台", "items": back}]
     cnt = {"ok": 0, "idle": 0, "warn": 0, "bad": 0, "off": 0, "start": 0, "stuck": 0}
     for g in groups:
         for it in g["items"]:
