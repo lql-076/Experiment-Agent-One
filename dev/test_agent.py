@@ -399,6 +399,8 @@ ev = ask("今天有什么安排", voice=True)
 sysm = (last_chat().get("messages") or [{}])[0].get("content", "")
 check(ev.get("src") == "语音" and "念出来" in sysm, "语音说的话：事件标「语音」，告诉模型回复要适合念")
 
+for u in ("/api/tts/off", "/api/bgm/off", "/api/voice/off"):       # 用完关掉：别占着显存（真机）和端口（测试）
+    c.post(u)
 shutil.rmtree(T, ignore_errors=True)
 print("不过的：", bad or "没有")
 sys.exit(1 if bad else 0)

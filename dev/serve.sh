@@ -49,6 +49,8 @@ case "$1" in
     ;;
   stop)
     stop1 backend; stop1 mocks
+    # 测试后端开的假配音服务有时会留下来（后端被停的时候它正开着）：占着端口，下一轮测试就不准了。只停本项目 dev 里这一个脚本。
+    pkill -f "$DEV/fake_tts.py" 2>/dev/null
     echo "停了"
     ;;
   status)

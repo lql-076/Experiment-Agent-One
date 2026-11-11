@@ -442,6 +442,47 @@ c.put("/api/secrets", json={"k": "imgKey", "v": KEY})
 x1 = next(x for x in j["board"]["items"] if x["id"] == "1")
 check(x1["st"] == "err" and "Key 不对" in x1["err"] and "sk-wrong" not in json.dumps(j, ensure_ascii=False), "Key 不对：说清楚去哪重填，不把 Key 显示出来")
 
+# ---------- v3.0：每条自己的参考图、差分、放进工作区 ----------
+model("gpt-image-2.5-sunburst-vip")
+c.put("/api/ws", json={"dir": "", "run": True})
+REF = "data:image/png;base64," + base64.b64encode(fpng(64, 64, False, 5)).decode()
+r = c.post("/api/img/diff", json={"name": "白页 Q版", "base": REF, "look": "短", "variants": ["闭嘴"]})
+r2 = c.post("/api/img/diff", json={"name": "白页_Q版", "look": "银白色短发、蓝眼睛、白色连帽衫、Q 版二头身、平涂", "variants": ["闭嘴"]})
+check(r.status_code == 400 and "外观写全" in r.json()["detail"] and r2.status_code == 400 and "定稿图" in r2.json()["detail"], "差分：外观没写全、没放定稿图都不排（只说「同一个角色」会画走样）")
+j = c.post("/api/img/diff", json={"name": "白页 Q版", "base": REF, "look": "银白色短发、蓝眼睛、白色连帽衫、Q 版二头身、平涂", "ratio": "1:1", "transparent": True,
+                                 "variants": ["闭嘴", "张嘴", {"name": "歪头", "desc": "头向左歪 15 度"}, "闭嘴"]}).json()
+its = j["board"]["items"]
+check(j["board"]["diff"] and [x["file"] for x in its] == ["白页Q版_闭嘴.png", "白页Q版_张嘴.png", "白页Q版_歪头.png"] and all(x["refs"] == 1 and x["transparent"] for x in its) and
+      "银白色短发" in its[0]["prompt"] and "嘴巴自然闭合" in its[0]["prompt"] and "头向左歪 15 度" in its[2]["prompt"] and "差一点就会抖" in its[1]["prompt"] and "闭嘴" in j["diff_preset"],
+      "差分：排成一份清单，文件名 角色_差分.png，每条带定稿图当参考，提示词里把外观写全、只改一处")
+check(c.get("/api/img/item/d1/ref/0").content[:4] == b"\x89PNG" and c.get("/api/img/item/d1/ref/3").status_code == 404, "这一条的参考图界面上能看")
+n0 = len(flog(500))
+c.post("/api/img/run", json={})
+j = wait(60)
+lg = flog(500)[n0:]
+check(all(x["st"] == "ok" for x in j["board"]["items"]) and len(lg) == 3 and all(x["path"] == "edits" and x["refs"] == 1 for x in lg) and (OUT / j["board"]["dir"].replace("\\", "/").split("/")[-1] / "白页Q版_张嘴.png").exists(),
+      "差分全部生成：每张都走带参考图的接口（edits），按文件名存好")
+r = c.post("/api/img/tows", json={})
+W2 = ROOT / "工作区" / "素材" / "图片" / "白页Q版_差分"
+check(r.status_code == 200 and r.json()["n"] == 3 and (W2 / "白页Q版_闭嘴.png").exists() and (W2 / "白页Q版_歪头.png").read_bytes()[:4] == b"\x89PNG", f"出好的整批放进工作区（{r.json().get('msg')}）")
+r = c.post("/api/img/tows", json={"id": "d2"})
+h1 = hist(1)[0]
+r2 = c.post("/api/img/tows", json={"hid": h1["id"]})
+check(r.status_code == 200 and r.json()["n"] == 1 and r2.status_code == 200 and r2.json()["n"] == 1 and r2.json()["rel"].replace("\\", "/") == "素材/图片",
+      "一张一张也能放：清单里的、历史里的")
+c.post("/api/img/load", json={"md": A, "name": "测试.md"})
+it1 = c.get("/api/img").json()["board"]["items"][0]
+r = c.patch(f"/api/img/item/{it1['id']}", json={"refs": [REF, REF]})
+n0 = len(flog(500))
+c.post("/api/img/run", json={"ids": [it1["id"]]})
+j = wait(60)
+lg = flog(500)[n0:]
+r3 = c.patch(f"/api/img/item/{it1['id']}", json={"refs": []})
+check(r.status_code == 200 and r.json()["item"]["refs"] and lg and lg[-1]["path"] == "edits" and lg[-1]["refs"] == 2 and r3.json()["item"]["refs"] == [] and
+      c.patch(f"/api/img/item/{it1['id']}", json={"refs": [REF] * 30}).status_code == 400,
+      "批量里某一条单独挂参考图：这一条走带参考图的接口；能去掉；超过模型上限不收")
+c.post("/api/img/clear")
+
 # ---------- 3. Key 不外泄 ----------
 ex = c.get("/api/export").text
 check(KEY not in ex and "imgKey" not in ex, "导出设置里没有 API易 Key")

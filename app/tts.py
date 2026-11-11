@@ -1239,6 +1239,25 @@ def tts_save():
     return {"dir": paths.show(d), "name": d.name, "msg": f"存好了：{paths.show(d)}"}
 
 
+@api.post("/api/tts/tows")
+def tts_tows():
+    """把刚生成的这一段（音频、字幕、时间轴、文案）放进 工作区\\素材\\配音\\<名字>\\。界面上点按钮才走到这里。"""
+    from . import workspace
+    m = T.draft()
+    if not m:
+        raise HTTPException(404, "还没有生成过")
+    base = m["name"]
+    meta = dict(m, audio=f"{base}.wav", subtitles=f"{base}_字幕.srt", script=f"{base}_文案.txt")
+    meta.pop("ver", None)
+    tl = DRAFT / "draft_时间轴.json"
+    tl.write_text(json.dumps(meta, ensure_ascii=False, indent=2), "utf-8")
+    try:
+        return workspace.take_in([(DRAFT / "draft.wav", f"{base}.wav"), (DRAFT / "draft.srt", f"{base}_字幕.srt"), (DRAFT / "draft.txt", f"{base}_文案.txt"),
+                                  (tl, f"{base}_时间轴.json")], "配音/" + base)
+    except workspace.Denied as e:
+        raise HTTPException(400, str(e)) from None
+
+
 @api.post("/api/tts/open")
 def tts_open(body: dict = Body(default={})):
     saved = db.kv_get("tts_saved") or {}

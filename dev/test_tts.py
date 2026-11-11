@@ -343,6 +343,12 @@ check("照这个速度，1 分钟音频要" in j["job"]["msg"], "生成完的那
 check(d["voice"]["speaker"] == "Serena" and d["voice"]["tone"] == "轻松一点" and d["license"] == "Apache-2.0" and d["model"].endswith("CustomVoice"),
       "时间轴里记着音色、语气、模型名、许可证")
 sv = c.post("/api/tts/save").json()
+c.put("/api/ws", json={"dir": "", "run": True})
+tw = c.post("/api/tts/tows")
+twd = ROOT / "工作区" / "素材" / "配音" / sv["name"].rsplit("_", 1)[0] if not (ROOT / "工作区" / "素材" / "配音" / sv["name"]).exists() else ROOT / "工作区" / "素材" / "配音" / sv["name"]
+tw_files = sorted(p_.name for p_ in (ROOT / "工作区" / "素材" / "配音").rglob("*") if p_.is_file())
+check(tw.status_code == 200 and tw.json()["n"] == 4 and any(n.endswith("_时间轴.json") for n in tw_files) and any(n.endswith(".wav") for n in tw_files) and any(n.endswith("_字幕.srt") for n in tw_files),
+      f"配音「放进工作区」：音频、字幕、时间轴、文案复制进 素材\\配音\\（{tw.json().get('msg') if tw.status_code == 200 else tw.text[:80]}）")
 dd = pathlib.Path(sv["dir"].replace("\\", "/"))
 base = dd.name
 files = sorted(p.name for p in dd.iterdir())

@@ -67,6 +67,21 @@ MAX_REF_BYTES = 10 << 20
 JOBN = "生图"
 
 
+# 差分常用的几种：名字 → 「只改这一处」怎么写
+DIFF_PRESET = {
+    "闭嘴": "嘴巴自然闭合（平静的表情）",
+    "半张嘴": "嘴巴微微张开一点（说话说到一半）",
+    "张嘴": "嘴巴张开（正在说话，能看到口腔）",
+    "眨眼": "双眼闭上（眨眼的一瞬间），嘴巴自然闭合",
+    "开心": "开心地笑，眼睛弯成月牙，嘴巴张开笑",
+    "惊讶": "惊讶：眼睛睁大，嘴巴张成小圆形",
+    "生气": "生气：眉毛倒竖，鼓着脸，嘴巴抿紧",
+    "无语": "无语：半睁着眼（死鱼眼），嘴巴抿成一条线",
+    "难过": "难过：眉毛下垂，眼角含泪，嘴角向下",
+    "得意": "得意：一边嘴角上扬，眼睛眯起来",
+}
+
+
 class ImgError(RuntimeError):
     def __init__(self, msg, status=0, fatal=False):
         super().__init__(msg)
@@ -733,9 +748,90 @@ class Gen:
             it["ratio"] = body["ratio"]
         if "transparent" in body:
             it["transparent"] = bool(body["transparent"])
+        if "refs" in body:                                       # 这一条自己的参考图（data URI 的列表；空列表 = 去掉）
+            it["refs"] = [str(p) for p in self._keep_refs(body["refs"] or [])]
         it["edited"] = it["prompt"] != it.get("src")
         self._save()
         return it
+
+    def _keep_refs(self, uris):
+        """参考图存一份到 data\\img\\refs（历史里能看到用了几张），返回 [Path]。"""
+        cd = card()
+        if len(uris) > max(1, cd["refs"]):
+            raise HTTPException(400, f"{cd['name']} 最多 {cd['refs']} 张参考图")
+        out = []
+        if uris:
+            REFS.mkdir(parents=True, exist_ok=True)
+            stamp = int(time.time() * 1000)
+            for i, u in enumerate(uris):
+                b = read_uri(u)
+                p = REFS / f"{stamp}_{i + 1}.{png_info(b)['fmt']}"
+                p.write_bytes(b)
+                out.append(p)
+        return out
+
+    def ref_file(self, iid, k):
+        refs = self.item(iid).get("refs") or []
+        p = Path(refs[int(k)]) if 0 <= int(k) < len(refs) else None
+        if not p or not p.exists():
+            raise HTTPException(404, "这张参考图找不到了")
+        return p
+
+    def diff(self, body):
+        """差分：一张定稿图 + 几个「只改哪里」→ 一份清单，每条都带着定稿图当参考。提示词里把角色外观写全（只说"同一个角色"模型会画走样）。"""
+        if self.busy():
+            raise HTTPException(409, "正在出图，等这批出完或者先点「停下」")
+        name = re.sub(r'[\\/:*?"<>|\r\n\t\s]+', "", str(body.get("name") or ""))[:24]
+        look = str(body.get("look") or "").strip()
+        if not name:
+            raise HTTPException(400, "给这个角色起个名字（文件名用，比如 白页_Q版）")
+        if not body.get("base"):
+            raise HTTPException(400, "先放一张定稿图")
+        if len(look) < 8:
+            raise HTTPException(400, "把角色的外观写全一点（发型、发色、眼睛、衣服、配饰、画风）：只说「同一个角色」会画走样")
+        vs = []
+        for v in body.get("variants") or []:
+            v = {"name": v, "desc": ""} if isinstance(v, str) else (v if isinstance(v, dict) else {})
+            vn = re.sub(r'[\\/:*?"<>|\r\n\t\s]+', "", str(v.get("name") or ""))[:16]
+            if vn and vn not in [x["name"] for x in vs]:
+                vs.append({"name": vn, "desc": str(v.get("desc") or DIFF_PRESET.get(vn) or vn).strip()[:300]})
+        if not vs:
+            raise HTTPException(400, "至少选一个差分（闭嘴、张嘴、眨眼……）")
+        if len(vs) > 12:
+            raise HTTPException(400, "一次最多 12 个差分")
+        ratio = body.get("ratio") if body.get("ratio") in RATIOS else "1:1"
+        trans = bool(body.get("transparent", True))
+        base = self._keep_refs([body["base"]])[0]
+        items = []
+        for i, v in enumerate(vs):
+            pr = (f"参考图是角色「{name}」的定稿图。画同一个角色，外观必须和参考图完全一致：{look}。\n"
+                  f"画风、线条粗细、配色、构图、角色的大小和在画面里的位置、姿势、服装和配饰，都和参考图一模一样。\n"
+                  f"只改这一处：{v['desc']}。\n除了这一处，其他地方不要有任何变化（这张要和别的差分图叠在一起切换，位置差一点就会抖）。")
+            items.append({"id": f"d{i + 1}", "file": f"{name}_{v['name']}.png", "use": "差分 · " + v["name"], "ratio": ratio, "transparent": trans, "prompt": pr, "src": pr,
+                          "refs": [str(base)], "st": "idle", "err": "", "warn": "", "w": 0, "h": 0, "alpha": None, "sec": None, "usd": None, "ver": 0, "edited": False})
+        d = self.out_root() / f"{datetime.now():%Y-%m-%d}_{name}_差分"
+        self.job = None
+        self.board = {"id": int(time.time() * 1000), "title": f"{name} · 差分", "direction": "", "md": "", "md_name": "", "warn": "", "dir": str(d), "diff": True,
+                      "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "items": items}
+        self._scan()
+        self._save()
+        feed.add(f"排好了一组差分「{name}」：{len(items)} 张，每张都带定稿图当参考", "info", job=JOBN)
+        return self.board
+
+    def tows(self, body):
+        """把出好的图放进 工作区\\素材\\图片\\<这批的名字>\\（界面上点按钮才走到这里）。"""
+        from . import workspace
+        try:
+            if body.get("hid"):
+                return workspace.take_in([self.hpath(body["hid"])], "图片")
+            if not self.board:
+                raise HTTPException(400, "没有清单")
+            items = [self.item(body["id"])] if body.get("id") else self.board["items"]
+            d = self.folder()
+            srcs = [d / it.get("saved", it["file"]) for it in items if it.get("st") == "ok"]
+            return workspace.take_in(srcs, "图片/" + re.sub(r'[\\/:*?"<>|\r\n\t]+', "", self.board.get("title") or "清单").replace(" · ", "_").strip()[:30])
+        except workspace.Denied as e:
+            raise HTTPException(400, str(e)) from None
 
     # ---------- 开始一批 ----------
     def _ready(self):
@@ -778,7 +874,8 @@ class Gen:
             it["prev"] = it["st"]
             it.update(st="queue", err="", warn="")
             tasks.append({"kind": "batch", "item": it, "label": it["file"], "prompt": it["prompt"], "ratio": it["ratio"], "transparent": it["transparent"],
-                          "dir": d, "name": it["file"], "refs": [], "use": it.get("use", ""), "title": self.board.get("title", "")})
+                          "dir": d, "name": it["file"], "refs": [Path(p) for p in it.get("refs") or [] if Path(p).exists()], "use": it.get("use", ""),
+                          "title": self.board.get("title", "")})
         self._save()
         return self._new_job("batch", tasks)
 
@@ -792,19 +889,7 @@ class Gen:
             raise HTTPException(400, "提示词太长了（最多 8000 字）")
         ratio = body.get("ratio") if body.get("ratio") in RATIOS else "1:1"
         n = max(1, min(4, int(body.get("n") or 1)))
-        cd = card()
-        refs_in = body.get("refs") or []
-        if len(refs_in) > max(1, cd["refs"]):
-            raise HTTPException(400, f"{cd['name']} 最多 {cd['refs']} 张参考图")
-        refs = [read_uri(u) for u in refs_in]
-        rp = []
-        if refs:
-            REFS.mkdir(parents=True, exist_ok=True)
-            stamp = int(time.time() * 1000)
-            for i, b in enumerate(refs):
-                p = REFS / f"{stamp}_{i + 1}.{png_info(b)['fmt']}"
-                p.write_bytes(b)
-                rp.append(p)
+        rp = self._keep_refs(body.get("refs") or [])
         day = self.out_root() / SINGLE / datetime.now().strftime("%Y-%m-%d")
         head = re.sub(r'[\\/:*?"<>|\r\n\t\s，。、；：！？,.;:!?]+', "", prompt)[:12] or "单张"
         stamp = datetime.now().strftime("%H%M%S")
@@ -1055,8 +1140,10 @@ class Gen:
             board = {k: b.get(k) for k in ("id", "title", "direction", "md_name", "warn", "created")}
             board["dir"] = paths.show(Path(b["dir"])) if b.get("dir") else ""
             board["exists"] = bool(b.get("dir") and Path(b["dir"]).exists())
+            board["diff"] = bool(b.get("diff"))
             board["items"] = [dict({k: it.get(k) for k in ("id", "file", "use", "ratio", "transparent", "prompt", "st", "err", "warn", "w", "h", "alpha",
                                                           "sec", "usd", "ver", "edited", "old", "hid")},
+                                   refs=len(it.get("refs") or []),
                                    run_s=round(now - it["t0"]) if it.get("st") == "run" and it.get("t0") else None) for it in b["items"]]
         cd = card()
         return {"board": board, "job": self.public(), "ratios": RATIOS, "tiers": TIERS, "quality": QUALITY,
@@ -1067,7 +1154,7 @@ class Gen:
                 "cfg": {"model": cd["id"], "quality": self.s.get("imgQuality") or "high", "tier": self.s.get("imgRes") or "2k", "notext": bool(self.s.get("imgNoText", True)),
                         "withdir": bool(self.s.get("imgWithDir")), "key": bool(hint), "hint": hint, "base": self.s.get("imgBase")},
                 "usdCny": float(self.s.get("usdCny") or 7.2), "month": (db.kv_get("img_usage") or {}).get(m) or {"n": 0, "usd": 0.0},
-                "out": paths.show(self.out_root()), "recent": self.history(limit=12)}
+                "out": paths.show(self.out_root()), "recent": self.history(limit=12), "diff_preset": DIFF_PRESET}
 
 
 G = Gen()
@@ -1098,6 +1185,24 @@ def img_load(body: dict = Body(...)):
 @api.patch("/api/img/item/{iid}")
 def img_edit(iid: str, body: dict = Body(...)):
     return {"item": G.edit(iid, body)}
+
+
+@api.post("/api/img/diff")
+def img_diff(body: dict = Body(...)):
+    """差分：定稿图 + 外观描述 + 要哪几种 → 排成一份清单（每条带定稿图当参考），再点「全部生成」。"""
+    G.diff(body)
+    return G.status()
+
+
+@api.get("/api/img/item/{iid}/ref/{k}")
+def img_ref(iid: str, k: int):
+    return FileResponse(G.ref_file(iid, k), headers={"Cache-Control": "no-store"})
+
+
+@api.post("/api/img/tows")
+def img_tows(body: dict = Body(default={})):
+    """把出好的图放进 工作区\\素材\\图片\\：{id} 清单里的一张、{hid} 历史里的一张、都不给就是清单里出好的全部。"""
+    return G.tows(body)
 
 
 @api.post("/api/img/run")
