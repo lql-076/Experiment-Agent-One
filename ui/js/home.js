@@ -1,18 +1,21 @@
 'use strict';
-/* ================= 主页（v2.0）=================
-   作者 11-05：别人自己做的 Agent 一眼就看清「现在在干什么、到了哪一步、后台在跑什么」，原来的密密麻麻看着乱。
-   所以主页只回答这几件事，字大、留白多，一屏放下：
-   - 现在：大字写正在干什么（正在联网搜索……），下面一条进度：收到 → 分流 → 联网搜索 → 读网页 → 回答，每步用了几秒。
+/* ================= 主页「指挥舱」（v3.0 重做）=================
+   一眼看清「现在在干什么、计划做到第几步、后台在跑什么」，字大、留白多，一屏放下：
+   - 现在：左边大字写正在干什么；它列了计划（update_plan / Claude Code 的待办清单）就把清单放出来，一步一行，做完的打勾、正在做的亮着；
+     下面一条进度：收到 → 分流 → 写文件 → 运行 → 回答，每步用了几秒。正在做的时候右下角有「停下」，想改方向直接在最下面的指令条里说（插话）。
+     右边是核心（js/core.js）：闲着青色慢慢转，干活变琥珀色、外面一圈是计划（一段一步），每做一步冒一个字；说话、听写时跟着声音跳。点一下核心 = 开始说话。
      平时跟着最新一条；在「刚做完」里点一条就停在那条，顶上「回到最新」。两票投给谁、每一步的时间、判错了、换它重做，收在「细节」里。
-   - 后台在跑：生图、配音、安装、一键补齐，每项一根进度条（和常驻屏同一份数据：后端 reports.tasks）；下面「等着的」：下一个提醒。
-   - 刚做完：对话的事件 + 做完的活（生图一批、配音一段），写做了什么、交给谁、多久、花多少。
+   - 后台在跑：生图、配音、配乐、安装、一键补齐，每项一根进度条（和常驻屏同一份数据：后端 reports.tasks）；下面「等着的」：下一个提醒。
+   - 刚做完：对话的事件 + 做完的活（生图一批、配音一段、配乐一首），写做了什么、交给谁、多久、花多少。
    - Agent 状态：只写几项正常，出问题的（启动中、卡住了、出错）才单独列出来，卡住的带「重启」。点「全部」看每一项。
-   - 对话收在最下面一条：点开（Ctrl 空格）是对话抽屉，用完 Esc 收起。 */
+   - 最下面是指令条（js/chat.js）：一直在，直接打字；Ctrl 空格展开对话记录，Esc 收起。 */
 var NOW = { sel: null, detail: false, all: false, fast: null, fastBusy: false, sig: {}, tick: null };
 var STEP_GROUP = { '语义路由': '分流', 'Kev': '分流', '决策脑打分': '分流', '按本事分': '分流', '你指定了去向': '分流', '你确认了发出本机': '分流', '记进想要的功能': '分流',
-  '交给 DeepSeek': '', '不进训练集': '', '记为样本': '', '回复': '回答', '本地处理': '回答', '写提示词': '回答' };
+  '交给 DeepSeek': '', '不进训练集': '', '记为样本': '', '回复': '回答', '本地处理': '回答', '写提示词': '回答', '计划': '', '做好的文件': '', '你插了一句': '' };
 var STEP_DOING = { '收到': '收下了', '分流': '正在决定交给谁', '联网搜索': '正在联网搜索', '读网页': '正在读网页', '读文件': '正在读文件', '查了说明书': '正在查说明书',
-  '用了记忆': '正在翻记忆', '收到图片': '正在看图', '回答': '正在写回答', '排队': '排队中' };
+  '用了记忆': '正在翻记忆', '收到图片': '正在看图', '回答': '正在写回答', '排队': '排队中', '写文件': '正在写文件', '改文件': '正在改文件', '运行': '正在跑程序', '计划': '正在排计划',
+  '看画面': '正在看画面', '看信息': '正在看文件信息', '看技能': '正在翻技能', '下载': '正在下载', '配音': '正在配音', '配乐': '正在出配乐', '生图': '正在出图', '交给 Claude Code': '交给 Claude Code 了',
+  '看目录': '正在看文件夹', '找文件': '正在找文件', '搜内容': '正在搜内容', '收到文件': '正在看收到的文件' };
 var DEMO_TASKS = [{ k: 'img', name: '生图 · 批量 · 第一期素材', phase: '第 5/8 张 · img05_紫苏_崩溃.png', pct: 56, eta: 150 },
   { k: 'tts', name: '生成配音 · 紫苏', phase: '第 3/5 句', pct: 48, eta: 40 }];
 var DEMO_DONE = [{ ts: Date.now() / 1000 - 1500, name: '配音 · 白叶 · 36 句（2:41）', who: '百炼云端', sec: 52, cost: '¥0.31', tool: 'tts' },
@@ -58,23 +61,42 @@ function nowWhy(e) {
   var why = cap ? cap[1].replace(/[（(].*$/, '').replace(/[，,；;]?\s*(→|交给|改交).*$/, '').trim() || confWord(e) : e.private ? (e.to === 'local' ? '涉及隐私，只在本地' : '涉及隐私，你确认了发出本机') : confWord(e);
   return '交给 ' + routeName(e) + ' · ' + why;
 }
+/* 计划清单（v3.0）：最多放 rows 行，正在做的那步保证看得见；前后放不下的写「前面 n 步做完了」「后面还有 n 步」 */
+function planHTML(e, rows) {
+  var pl = e.plan || []; if (!pl.length) return '';
+  rows = rows || 4;
+  var cur = -1; pl.forEach(function (p, i) { if (cur < 0 && p.st === 'doing') cur = i; });
+  if (cur < 0) pl.forEach(function (p, i) { if (cur < 0 && p.st !== 'done') cur = i; });
+  if (cur < 0) cur = pl.length - 1;
+  var a = Math.max(0, Math.min(cur - 1, pl.length - rows)), b = Math.min(pl.length, a + rows), h = '';
+  if (a > 0) { a++; h += '<li class="pl-more"><i></i><span>前面 ' + a + ' 步做完了</span></li>'; }
+  if (b < pl.length) b--;
+  for (var i = a; i < b; i++) h += '<li class="pl-' + (pl[i].st || 'todo') + '"><i></i><span>' + esc(pl[i].text) + '</span></li>';
+  if (b < pl.length) h += '<li class="pl-more"><i></i><span>后面还有 ' + (pl.length - b) + ' 步</span></li>';
+  return '<ul class="hm-plan" aria-label="计划">' + h + '</ul>';
+}
+function planCount(e) { var pl = e.plan || [], d = pl.filter(function (p) { return p.st === 'done'; }).length; return pl.length ? d + '/' + pl.length : ''; }
+function engChip(e) { return e.engine === 'cc' ? '<span class="hm-chip eng">Claude Code</span>' : ''; }
 function nowHTML() {
   var e = nowView(), pinned = NOW.sel != null, live = nowLive();
-  if (!e) return '<div class="hm-chiprow"><span class="label">现在</span><span class="hm-chip">闲着</span></div><div class="hm-title">闲着</div>' +
-    '<div class="hm-sub">有事就在下面「对话」里说（Ctrl 空格），或者在 QQ 上发。</div>';
+  if (!e) return '<div class="hm-chiprow"><span class="label">现在</span><span class="hm-chip">闲着</span></div><div class="hm-mid"><div class="hm-title">闲着</div>' +
+    '<div class="hm-sub">有事直接在下面打字，或者点一下右边的核心说话；QQ 上发也行。</div></div>';
   var running = e.status === 'running', nodes = nowNodes(e), act = nodes.filter(function (n) { return n.st === 'act'; })[0];
   var age = e.ts ? Date.now() / 1000 - e.ts : 0;
   var chip = running ? '<span class="hm-chip on"><i class="dot breathe"></i>处理中 · ' + secTxt(age) + '</span>' : pinned ? '<span class="hm-chip">停在这条</span>' : '<span class="hm-chip">闲着</span>';
   var back = pinned ? '<button class="btn mini' + (live && live.id !== e.id ? ' hot' : '') + '" data-now-follow="1">' + (live && live.id !== e.id ? '有新的一条在处理 · 回到最新' : '回到最新') + '</button>' : '';
   var title = running ? (STEP_DOING[act ? act.k : ''] || ('正在' + (act ? act.k : '处理'))) + (act && act.n > 1 ? '（第 ' + act.n + ' 次）' : '') : e.text;
-  var sub = running ? '「' + esc(e.text) + '」' : esc('做完了 · 用了 ' + secTxt(e.latency) + (e.cost ? ' · ¥' + (+e.cost).toFixed(4) : e.to === 'local' ? ' · 免费' : '') + (e.status === 'queued' ? ' · 排队中' : ''));
+  var lastStep = (e.steps || [])[(e.steps || []).length - 1], pc = planCount(e), hasPlan = !!pc;
+  if (running && hasPlan) { var doing = (e.plan || []).filter(function (p) { return p.st === 'doing'; })[0]; if (doing) title = doing.text; }
+  var sub = running ? (hasPlan && lastStep ? esc(lastStep[0] + ' · ' + String(lastStep[1] || '').slice(0, 60)) : '「' + esc(e.text) + '」') : esc('做完了 · 用了 ' + secTxt(e.latency) + (e.cost ? ' · ¥' + (+e.cost).toFixed(4) : e.to === 'local' ? ' · 免费' : '') + (e.status === 'queued' ? ' · 排队中' : ''));
   var steps = '<ol class="hm-steps" aria-label="做到第几步">' + nodes.map(function (n, i) {
     return '<li class="st-' + n.st + '"><i class="hm-dot' + (n.st === 'act' ? ' ping' : '') + '"></i>' + (i < nodes.length - 1 ? '<span class="hm-link' + (n.st === 'act' ? ' flow' : '') + '"></span>' : '') +
       '<b>' + esc(n.k) + (n.n > 1 ? ' ×' + n.n : '') + '</b><em class="num">' + (n.st === 'wait' ? '—' : secTxt(n.dur)) + '</em></li>'; }).join('') + '</ol>';
-  return '<div class="hm-chiprow"><span class="label">现在</span>' + chip + back + '<span class="sp"></span><button class="btn mini ghost" data-now-detail="1" aria-expanded="' + NOW.detail + '">细节 ' + (NOW.detail ? '▴' : '▾') + '</button></div>' +
-    '<div class="hm-mid"><div class="hm-title' + (running ? ' caret' : '') + '">' + esc(title) + '</div><div class="hm-sub">' + sub + '</div></div>' + steps +
+  return '<div class="hm-chiprow"><span class="label">现在</span>' + chip + engChip(e) + (pc ? '<span class="hm-chip num">计划 ' + pc + '</span>' : '') + back + '<span class="sp"></span><button class="btn mini ghost" data-now-detail="1" aria-expanded="' + NOW.detail + '">细节 ' + (NOW.detail ? '▴' : '▾') + '</button></div>' +
+    '<div class="hm-mid' + (hasPlan ? ' has-plan' : '') + (running ? '' : ' fin') + '"><div class="hm-title' + (running ? ' caret' : '') + '">' + esc(title) + '</div><div class="hm-sub">' + sub + '</div>' + planHTML(e, 4) + '</div>' + steps +
     '<div class="hm-why"><span>' + esc(running && (!act || act.k === '收到' || act.k === '分流') ? '正在决定交给谁…' : nowWhy(e)) + '</span><span class="sp"></span>' +
-      (running ? '' : nowOutBtn(e) + '<button class="btn mini" data-chat-open="1">看回答</button>') + '</div>' +
+      (running ? (useLive() && e.id ? '<button class="btn mini danger" data-ev-stop="' + e.id + '" title="停下这件事：正在跑的命令也停；做好的文件留着，说「继续」能接着做">停下</button>' : '')
+        : nowOutBtn(e) + '<button class="btn mini" data-chat-open="1">看回答</button>') + '</div>' +
     (NOW.detail ? '<div class="hm-pop" role="dialog" aria-label="这条是怎么分的"><button class="hm-x" data-now-detail="1" aria-label="关掉细节">' + ICONS.cross + '</button>' + eventSideHTML(e) + '</div>' : '');
 }
 /* 这件事做出了文件（v2.3）：「现在」那块直接给一个「打开」按钮（第一个视频 / 音频 / 图片），别的在「看回答」里 */
@@ -143,16 +165,15 @@ function agAllHTML(a) {
         return '<div class="ha-row st-' + it.st + '" title="' + esc(it.name + '：' + it.detail) + '"><i class="hm-sd"></i><b>' + esc(agShort(it)) + '</b><span>' + esc(it.detail) + '</span></div>'; }).join('') + '</div>';
     }).join('') + '</div></div>';
 }
-function stripHTML() {
-  var l = homeEvs().filter(function (e) { return e.reply && e.status !== 'running'; }), last = l[l.length - 1];
-  return '<button class="hm-strip" data-chat-open="1" aria-label="展开对话"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H11l-4.5 3.5V16.5a2 2 0 0 1-2-2z"/></svg>' +
-    '<b>对话</b><span class="hs-last">' + (last ? esc('Agent：' + String(last.reply).replace(/[#*`>\n]+/g, ' ').slice(0, 120)) : '还没聊过') + '</span><span class="hs-in">问点什么<kbd>Ctrl 空格</kbd></span></button>';
-}
 function renderHome(quiet) {
   var v = $('#view-home'); if (!v) return;
   if (!$('#hmNow')) {
-    v.innerHTML = '<div class="hm' + (quiet ? ' quiet' : '') + '"><section class="hm-card hm-now" id="hmNow" aria-label="现在在干什么"></section><section class="hm-card" id="hmJobs" aria-label="后台在跑"></section>' +
-      '<section class="hm-card" id="hmDone" aria-label="刚做完"></section><section class="hm-card" id="hmSt" aria-label="Agent 状态"></section><div class="hm-sbar" id="hmStrip"></div></div>';
+    v.innerHTML = '<div class="hm' + (quiet ? ' quiet' : '') + '"><section class="hm-card hm-now" id="hmNow" aria-label="现在在干什么"><div id="nwBody"></div>' +
+      '<div class="nw-core" id="nwCore"><canvas id="coreCv" aria-hidden="true"></canvas><button class="core-hit" id="coreHit" aria-label="点一下开始说话；没开语音就是打开对话"></button>' +
+      '<div class="core-cap"><b id="coreWord">STANDBY</b><span id="coreSub">待命</span></div></div></section><section class="hm-card" id="hmJobs" aria-label="后台在跑"></section>' +
+      '<section class="hm-card" id="hmDone" aria-label="刚做完"></section><section class="hm-card" id="hmSt" aria-label="Agent 状态"></section><div class="hm-sbar" id="hmStrip" aria-hidden="true"></div></div>';
+    NOW.sig = {};
+    if (typeof coreMount === 'function') coreMount($('#coreCv'));
   }
   homeFill();
 }
@@ -160,15 +181,17 @@ function setHTML(id, html) { if (NOW.sig[id] === html) return; NOW.sig[id] = htm
 function homeFill() {
   if (!$('#hmNow')) return;
   var e = nowView();
-  setHTML('hmNow', nowHTML()); setHTML('hmJobs', jobsHTML()); setHTML('hmDone', doneHTML()); setHTML('hmSt', statusHTML()); setHTML('hmStrip', stripHTML());
+  setHTML('nwBody', nowHTML()); setHTML('hmJobs', jobsHTML()); setHTML('hmDone', doneHTML()); setHTML('hmSt', statusHTML());
   $('#hmNow').classList.toggle('live', !!(e && e.status === 'running'));
+  if (typeof coreSync === 'function') coreSync();
+  if (typeof chatBarSync === 'function') chatBarSync();
   nowFast();
 }
 /* 正在处理的那条：每 0.6 秒问一次后端到哪一步了（平时 5 秒才拉一次状态，太慢）；进度条上的秒数每 0.2 秒走一下 */
 function nowFast() {
   var live = nowLive();
   clearInterval(NOW.tick); NOW.tick = null;
-  if (live) NOW.tick = setInterval(function () { if (S.view === 'home' && root.dataset.mode === 'normal') setHTML('hmNow', nowHTML()); }, 250);
+  if (live) NOW.tick = setInterval(function () { if (S.view === 'home' && root.dataset.mode === 'normal') setHTML('nwBody', nowHTML()); }, 250);
   if (!live || !useLive() || (CHAT.pending && CHAT.pending.token)) { clearTimeout(NOW.fast); NOW.fast = null; return; }
   if (NOW.fast) return;
   NOW.fast = setTimeout(function () {
@@ -181,6 +204,13 @@ function nowFast() {
     }).catch(function () {});
   }, 600);
 }
+/* 停下一件正在做的事（主页的「停下」、指令条的「停下」都走这里） */
+function evStop(id, btn) {
+  if (!useLive() || !id) return;
+  if (btn) { btn.disabled = true; btn.textContent = '在停…'; }
+  api('POST', '/api/events/' + id + '/stop', {}, 15000).then(function (j) { toast((j && j.msg) || '让它停了：做到一半的会收个尾，做好的文件留着'); })
+    .catch(function (e) { if (btn) { btn.disabled = false; btn.textContent = '停下'; } toast(/409/.test(e.message) || /不在做/.test(e.message) ? '这件事已经做完了' : '没停成：' + e.message); });
+}
 function homeFollow() { NOW.sel = null; NOW.detail = false; homeFill(); }
 $('#view-home').addEventListener('click', function (ev) {
   var t = ev.target.closest('button, a'); if (!t) return;
@@ -188,8 +218,10 @@ $('#view-home').addEventListener('click', function (ev) {
   if (t.dataset.nowFollow) { homeFollow(); return; }
   if (t.dataset.nowPick != null) { var id = +t.dataset.nowPick, l = homeEvs(); NOW.sel = (l.length && l[l.length - 1].id === id && !nowLive()) ? null : id; CHAT.sel = id; homeFill(); return; }
   if (t.dataset.chatOpen) { var ve = nowView(); chatOpen(ve && ve.id); return; }
+  if (t.id === 'coreHit') { if (typeof voiceToggle === 'function' && voiceReady()) voiceToggle(); else { chatOpen(); } return; }
+  if (t.dataset.evStop) { evStop(+t.dataset.evStop, t); return; }
   if (t.dataset.agAll) { NOW.all = !NOW.all; NOW.detail = false; homeFill(); return; }
-  if (t.dataset.job != null) { var k = t.dataset.job; if (k === 'img') openView('img'); else if (k === 'tts') openView('tts'); else if (k === 'tts_install') openSec('models'); else if (k === 'setup') openSec('prep'); return; }
+  if (t.dataset.job != null) { var k = t.dataset.job; if (k === 'img') openView('img'); else if (k === 'tts') openView('tts'); else if (k === 'bgm') openView('bgm'); else if (k === 'tts_install') openSec('models'); else if (k === 'setup') openSec('prep'); return; }
   if (t.dataset.openTool) { openView(t.dataset.openTool); return; }
   if (t.dataset.restart) {
     t.disabled = true; t.textContent = '重启中…';

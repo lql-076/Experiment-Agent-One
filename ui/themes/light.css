@@ -1,29 +1,31 @@
 /* @id light
-   @name 极简 · 浅色
-   @desc 米白的底、深灰的字、一点橙色。和深色是同一套样子，白天亮的地方用。
+   @name 指挥舱 · 日间
+   @desc 冷白的底、深蓝灰的字、青蓝的线。和夜航是同一套样子，白天亮的地方用（不发光、没有扫描线）。
    @order 2
    @fx reveal press
 */
 [data-theme="light"]{
   color-scheme:light;
   --ring-segs:60;--ring-fill:.62;--ring-cap:butt;--ring-ticks:60;--ring-tick-w:1.2;--ring-tick-sw:4;--ring-arc-w:4;--ring-sec-r:4;--date-style:cn;--res-labels:zh;
-  --bg:#f6f6f4;--bg2:#ffffff;--bg3:#efefec;--bg4:#e4e4e0;
-  --line:#e4e4e1;--line2:#d0d0cc;
-  --text:#18181b;--text2:#4b4b53;--text3:#67676f;
-  --accent:#e64a0f;--accent2:#c2410c;--grad:linear-gradient(90deg,#e64a0f,#f97316);
-  --ring1:#e64a0f;--ring2:#f59e6b;
-  --c-local:#059669;--c-neu:#b45309;--c-ds:#1d4ed8;--c-cl:#7e22ce;
-  --h1:#1d4ed8;--h2:#059669;--h3:#b45309;--h4:#c2410c;--h5:#7e22ce;--ok:#047857;--bad:#b91c1c;--run:#1d4ed8;--warn:#a16207;
-  --card:#ffffff;--cardb:#e4e4e1;--shadow:0 2.5rem 7.5rem rgba(0,0,0,.16),0 0 0 1px rgba(0,0,0,.09);--scrim:rgba(20,20,20,.25);
-  --rail:#f6f6f4;--railw:5.25rem;--r:1.125rem;--rs:.625rem;
+  --bg:#e8eef3;--bg2:#f6f9fb;--bg3:#dce5ec;--bg4:#cbd7e0;
+  --line:#cdd9e2;--line2:#aebfcc;
+  --text:#0a1620;--text2:#35495a;--text3:#526a7c;
+  --accent:#007f9f;--accent2:#005f78;--grad:linear-gradient(90deg,#007f9f,#2f62c9);
+  --ring1:#007f9f;--ring2:#2f62c9;
+  --c-local:#00794f;--c-neu:#b05a00;--c-ds:#2456c4;--c-cl:#7a33c4;
+  --h1:#2456c4;--h2:#00794f;--h3:#b05a00;--h4:#c2410c;--h5:#b0238f;--ok:#00794f;--bad:#c2203a;--run:#2456c4;--warn:#9a5b00;
+  --hot:#c26400;
+  --card:#f6f9fb;--cardb:#cdd9e2;--shadow:0 2rem 6rem rgba(10,30,50,.2),0 0 0 1px rgba(0,127,159,.3);--scrim:rgba(20,35,50,.28);
+  --rail:#e8eef3;--railw:5.25rem;--r:.25rem;--rs:.1875rem;
   --fc:var(--mono);--fcw:400;--fn:var(--mono);
   --ease:cubic-bezier(.2,.8,.2,1);--spring:cubic-bezier(.2,.9,.25,1);--dur:.2s;--lt:none;--ls:.02em;
+  --glow:0;
 }
 /* 生图的「渲染舱」是照深色底设计的（点阵球、发光的线）：浅色时这一页照样用深色 */
 html[data-theme="light"] #view-img,html[data-theme="light"] .fg-box{color-scheme:dark;
-  --bg:#0a0a0b;--bg2:#111113;--bg3:#18181b;--bg4:#222226;--line:#1f1f23;--line2:#2e2e34;--text:#ededef;--text2:#a8a8b0;--text3:#8b8b94;
-  --accent:#ff5a1f;--accent2:#ff8a5c;--c-local:#34d399;--c-neu:#facc15;--c-ds:#60a5fa;--c-cl:#c084fc;--h5:#c084fc;--ok:#34d399;--bad:#f87171;background:#0a0a0b;color:#ededef}
+  --bg:#04070c;--bg2:#09111a;--bg3:#0f1b27;--bg4:#172736;--line:#13222f;--line2:#22394b;--text:#e6f3fb;--text2:#a3bccd;--text3:#7393a8;
+  --accent:#3fe0ff;--accent2:#8fecff;--c-local:#3dffa8;--c-neu:#ffb02e;--c-ds:#6fa8ff;--c-cl:#c79bff;--h5:#ff5fd2;--ok:#3dffa8;--bad:#ff5470;background:#04070c;color:#e6f3fb}
 html[data-theme="light"] .fx-in{animation:mnIn .42s var(--ease) var(--fxd,0ms) both}
 html[data-theme="light"] .fx-pbox i{background:color-mix(in srgb,var(--text) 10%,transparent)}
-.tprev[data-theme="light"]{background:#f6f6f4;color:#18181b}
-.tprev[data-theme="light"] .tp-bar{background:#e64a0f}
+.tprev[data-theme="light"]{background:#e8eef3;color:#0a1620}
+.tprev[data-theme="light"] .tp-bar{background:#007f9f}

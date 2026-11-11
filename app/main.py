@@ -632,8 +632,9 @@ def event_say(eid: int, body: dict = Body(...)):
 
 
 @app.get("/api/agent/caps")
-def agent_caps():
-    return {"caps": agentkit.caps(), "skills": agentkit.skills(), "toolbox": agentkit.toolbox_list(), "cc": ccode.status()}
+def agent_caps(deep: int = 0):
+    """deep=1：顺便跑一下 claude --version（设置页用；指令条每隔一会儿问的不跑）。"""
+    return {"caps": agentkit.caps(), "skills": agentkit.skills(), "toolbox": agentkit.toolbox_list(), "cc": ccode.status(bool(deep))}
 
 
 @app.put("/api/agent/caps")
@@ -644,7 +645,7 @@ def agent_caps_set(body: dict = Body(...)):
             agentkit.set_cap(k, v)
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
-    return agent_caps()
+    return agent_caps(1)
 
 
 @app.get("/api/chat/{token}")

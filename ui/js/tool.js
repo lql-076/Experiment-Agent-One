@@ -4,8 +4,8 @@
    都是左边的按钮，点了弹出一个独立窗口。工具窗口打开的是同一个界面，地址带 ?tool=img 这种：只显示那一个工具，自己的标题栏
    （拖动、置顶、收起、关掉），桌面窗口那边见 app/window.py 的 open_tool。不在桌面窗口里（用浏览器打开）时，用 window.open 开新窗口。
    Ctrl K：命令面板，打开工具、跳到设置的哪一块、切深浅色。 */
-var TOOL_KEYS = ['img', 'tts', 'events', 'monitor', 'brains', 'reports', 'settings', 'docs'];
-var TOOL_NAME = { img: '生图', tts: '配音', events: '事件', monitor: '后台', brains: '大脑', reports: '报告', settings: '设置', docs: '说明' };
+var TOOL_KEYS = ['img', 'tts', 'bgm', 'events', 'monitor', 'brains', 'reports', 'settings', 'docs'];
+var TOOL_NAME = { img: '生图', tts: '配音', bgm: '配乐', events: '事件', monitor: '后台', brains: '大脑', reports: '报告', settings: '设置', docs: '说明' };
 var TOOL = TOOL_KEYS.indexOf(root.dataset.tool) >= 0 ? root.dataset.tool : '';
 if (root.dataset.tool && !TOOL) delete root.dataset.tool;
 var TOOL_ARG = (function () { try { var a = new URLSearchParams(location.search).get('arg'); return a ? JSON.parse(a) : null; } catch (e) { return null; } })();
@@ -72,7 +72,7 @@ $$('.nav[data-tool]').forEach(function (b) { b.addEventListener('click', functio
 /* 正在干活的工具，按钮上一个小点（生图、配音在跑） */
 function syncToolBusy(tasks) {
   var busy = {};
-  (tasks || []).forEach(function (t) { if (t.k === 'img') busy.img = 1; if (t.k === 'tts' || t.k === 'tts_install') busy.tts = 1; });
+  (tasks || []).forEach(function (t) { if (t.k === 'img') busy.img = 1; if (t.k === 'tts' || t.k === 'tts_install') busy.tts = 1; if (t.k === 'bgm') busy.bgm = 1; });
   $$('.nav[data-tool]').forEach(function (b) { b.classList.toggle('on-busy', !!busy[b.dataset.tool]); });
 }
 

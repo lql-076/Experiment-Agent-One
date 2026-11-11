@@ -109,6 +109,7 @@ function goView(v) {
   if (S.view === 'monitor') stopMonitor();
   if (S.view === 'tts') ttsLeave();
   if (S.view === 'img') imgLeave();
+  if (S.view === 'bgm') bgmLeave();
   var usingVT = moving();
   var t = vt(function () {
     S.view = v;
@@ -122,6 +123,7 @@ function goView(v) {
     if (v === 'docs') renderDocs();
     if (v === 'tts') { if (TTS.st) renderTTS(); ttsEnter(); }
     if (v === 'img') { if (IMG.st) renderImg(); imgEnter(); }
+    if (v === 'bgm') { BGM.sig = ''; renderBgm(); bgmEnter(); }
     placeInd(usingVT);
   });
   if (!t) replay($('#view-' + v));

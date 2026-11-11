@@ -80,6 +80,9 @@ function sectionBody(sec) {
   if (sec.custom === 'models') h += '<div id="ttsInst">' + ttsInstHTML() + '</div>';
   if (sec.custom === 'auto') h += '<div id="autoSt">' + autoStHTML() + '</div>';
   if (sec.custom === 'memory') { h += '<div id="wsBox">' + wsHTML() + '</div><div id="rdirs">' + rdirsHTML() + '</div>'; if (useLive() && !RDIRS.ts) fetchRdirs(); if (useLive() && !WS.ts) fetchWs(); }
+  if (sec.custom === 'agent') { h += '<div id="capsBox">' + capsHTML() + '</div>'; if (useLive()) capsFetch(); }
+  if (sec.custom === 'voice') { h += '<div id="voiceBox">' + voiceBoxHTML() + '</div>'; if (useLive()) voiceBoxFetch(); }
+  if (sec.custom === 'bgm') { h += '<div id="bgmBox">' + bgmBoxHTML() + '</div>'; if (useLive()) bgmBoxFetch(); }
   if (sec.custom === 'growth') h += '<div class="btnrow" style="margin-bottom:1.5rem"><button class="btn" id="nightNow"' + (useLive() ? '' : ' disabled') + '>现在跑一次每日差事</button></div>';
   return h + '<div class="fields">' + sec.fields.map(fieldHTML).join('') + '</div>';
 }
@@ -244,6 +247,8 @@ function setVal(k, val) {
   if (k === 'strongName' || k === 'strongOn') { syncRouteNames(); renderChat(); renderEvents(); renderHome(true); }
   if (k === 'autoScale') requestAnimationFrame(function () { placeInd(true); });
   if (k === 'uiShell') toast('下次启动 Agent 时生效');
+  if (k.indexOf('voice') === 0 && useLive()) setTimeout(voiceBoxFetch, 900);
+  if (k.indexOf('bgm') === 0 && useLive()) setTimeout(bgmBoxFetch, 900);
   if (k === 'demo') { cardSig = ''; renderAll(); runChecks(false); if (!val) { fetchReport(); fetchBrains(); poll(); } }
 }
 function fetchReminders() {
@@ -317,6 +322,67 @@ function rdirsDo(method, body, path) {
     RDIRS.list = j.dirs; RDIRS.ts = Date.now(); var b = $('#rdirs'); if (b) b.innerHTML = rdirsHTML(); return j;
   });
 }
+/* ---------- Agent 能力（v3.0）：给它哪些本事。这些是权限，走自己的接口（/api/agent/caps），每次开关都记进动作日志 ---------- */
+var CAPS = { st: null };
+var CAPS_DEMO = { caps: { download: true, voice: true, voice_cloud: false, image: false, image_key: true, music: true, music_ready: false, voice_env: true, cc: false },
+  cc: { on: false, found: true, path: 'C:\\Users\\你\\AppData\\Roaming\\npm\\claude.cmd', version: '2.1.x (Claude Code)', bash: 'python,pip,ffmpeg,ffprobe,node,npm,npx,git' },
+  skills: [{ name: '做视频', use: '用网页动画 + 配音 + 配乐做一条视频（片头、讲解、口播都行）', mine: false }],
+  toolbox: [{ name: '录网页.py', use: '把一个网页动画录成视频（一帧一帧截图再合成，不掉帧）' }, { name: '合成.py', use: '把画面、配音、配乐、字幕合成一个视频' }, { name: '口型.py', use: '让一张角色图跟着配音张嘴、眨眼' }] };
+var CAP_ROWS = [['download', '从网上下载文件到工作区', '只下公网上的（http / https），本机和局域网的地址不碰；单个最大 500MB'],
+  ['voice', '自己配音（本地）', '用「配音」页上次用的那套音色，出音频 + 每句的时间 + 字幕，直接放进工作区。不花钱'],
+  ['voice_cloud', '配音可以用云端（百炼）', '要花钱，文案会发给百炼。关着就只用本地的'],
+  ['music', '自己出配乐（ACE-Step）', '本地出纯音乐，不花钱。要先在 设置 › 配乐 里配好'],
+  ['image', '自己生图（API易）', '要花钱：每张按「生图」页选的模型算，一件事最多出几张在上面设。提示词和参考图会发给 API易']];
+function capsHTML() {
+  var c = useLive() ? CAPS.st : CAPS_DEMO;
+  if (!c) return '<div class="field"><div class="cap">正在读取…</div></div>';
+  var cc = c.cc || {}, k = c.caps || {}, dis = useLive() ? '' : ' disabled';
+  var ccLine = !cc.found ? '<em class="bad">没找到 claude 命令</em>：装了 Claude Code 的话，把 claude 在哪填在下面' : '<em class="ok">找到了</em> ' + esc(cc.version || '') + ' · ' + esc(cc.path || '');
+  return '<div class="capbox"><div class="cap-h"><b>Claude Code 引擎</b><span class="sp"></span><button class="switch" role="switch" data-cap="cc" aria-checked="' + !!k.cc + '" aria-label="打开 Claude Code 引擎"' + dis + '></button></div>' +
+      '<div class="help">开了以后，工作文件夹里的活（写程序、做视频、整理文件）交给你本机的 Claude Code 来动手：它的每一步、它列的待办清单都显示在主页「现在」里，能停下、能说「继续」接着同一个会话做。' +
+      '用的是你自己已经登录好的 Claude Code（走它自己的额度），Agent 不读、不改它的任何设置，只是在工作文件夹里把它叫起来。它在那里只能读写文件和跑下面名单里的命令；没跑起来就退回 DeepSeek 自己做。</div>' +
+      '<div class="cap-st">' + ccLine + '</div>' +
+      '<div class="secret"><input class="inp" id="ccCmd" spellcheck="false" placeholder="claude 在哪（留空 = 自动找）" value="' + esc(cc.cmd || '') + '"><button class="btn" data-cap-set="cc_cmd"' + dis + '>保存</button></div>' +
+      '<div class="secret"><input class="inp" id="ccBash" spellcheck="false" placeholder="它能跑哪些命令，逗号隔开" value="' + esc(cc.bash || '') + '"><button class="btn" data-cap-set="cc_bash"' + dis + '>保存</button></div>' +
+      '<div class="help">能跑的命令只认名字（python、ffmpeg 这种），别的一律不让跑。' + (cc.log ? '它的原始输出记在 ' + esc(cc.log) : '') + '</div></div>' +
+    '<div class="fields capsw">' + CAP_ROWS.map(function (r) {
+      var warn = r[0] === 'image' && !k.image_key ? '（还没填 API易 的 Key）' : r[0] === 'music' && !k.music_ready ? '（ACE-Step 还没配好）' : r[0] === 'voice' && !k.voice_env ? '（本地配音还没装）' : '';
+      return '<div class="field row"><div><label>' + r[1] + (warn ? '<em class="warn">' + warn + '</em>' : '') + '</label><div class="help">' + r[2] + '</div></div><button class="switch" role="switch" data-cap="' + r[0] + '" aria-checked="' + !!k[r[0]] + '" aria-label="' + r[1] + '"' + dis + '></button></div>'; }).join('') + '</div>' +
+    '<div class="capbox"><div class="cap-h"><b>技能</b><span class="cap">' + (c.skills || []).length + ' 份 · 做某类事的成套做法，它用到时自己翻</span><span class="sp"></span><button class="btn mini" data-ws-open="ws"' + dis + '>打开工作区</button></div>' +
+      (c.skills || []).map(function (x) { return '<div class="cap-row"><b>' + esc(x.name) + '</b><span>' + esc(x.use || '') + '</span><em>' + (x.mine ? '你写的' : '自带') + '</em></div>'; }).join('') +
+      '<div class="help">想教它一套新做法：在 工作区\\技能\\ 里放一个 .md 文件（第一行标题，下面写「用在：一句话」「触发：正则」再写步骤），它马上就认。</div>' +
+      '<div class="cap-h" style="margin-top:1rem"><b>工具箱</b><span class="cap">' + (c.toolbox || []).length + ' 个脚本 · 每次干活前同步进 工作区\\工具箱\\</span></div>' +
+      (c.toolbox || []).map(function (x) { return '<div class="cap-row"><b>' + esc(x.name) + '</b><span>' + esc(x.use || '') + '</span></div>'; }).join('') + '</div>';
+}
+function capsFetch() { api('GET', '/api/agent/caps?deep=1').then(function (j) { CAPS.st = j; var b = $('#capsBox'); if (b) b.innerHTML = capsHTML(); }).catch(function () {}); }
+function capsPut(body, msg) { return api('PUT', '/api/agent/caps', body).then(function (j) { CAPS.st = j; var b = $('#capsBox'); if (b) b.innerHTML = capsHTML(); if (msg) toast(msg, 5000); }).catch(function (e) { toast(e.message, 6000); capsFetch(); }); }
+/* ---------- 语音（v3.0） ---------- */
+var VBOX = { st: null, inst: null };
+var VBOX_DEMO = { on: false, engine: 'local', asr: false, asr_why: '听写模型还没下（约 1.9 GB）', tts_env: true, ref: false, up: false, alive: false, can_start: false, url: 'http://127.0.0.1:8093' };
+function voiceBoxHTML() {
+  var v = useLive() ? VBOX.st : VBOX_DEMO, dis = useLive() ? '' : ' disabled';
+  if (!v) return '<div class="field"><div class="cap">正在读取…</div></div>';
+  var mouth = v.engine === 'breeze' ? '<em class="ok">Breeze TTS 2</em>' + (v.up ? ' · 连得上' : v.can_start ? ' · 用到才启动' : ' · <em class="warn">现在连不上（' + esc(v.url) + '）</em>')
+    : v.engine === 'local' ? '<em class="ok">本地配音顶着</em>（Breeze 还没配好：' + (v.up ? '' : '地址连不上，') + '配好了自动换成它）' : '<em class="bad">还没有能出声的</em>：配 Breeze，或者先在 设置 › 本地模型 里把本地配音装上';
+  return '<div class="capbox"><div class="cap-row"><b>听（你说的话变成字）</b><span>' + (v.asr ? '<em class="ok">装好了</em> 本地 Qwen3-ASR，跑在配音服务里（用到才启动，约多占 2GB 显存）' : '<em class="warn">还没装</em> ' + esc(v.asr_why || '')) + '</span>' +
+      (v.asr ? '' : '<button class="btn mini primary" data-voice-asr="1"' + dis + (v.tts_env ? '' : ' disabled title="先在 设置 › 本地模型 里装好本地配音"') + '>安装听写（约 1.9 GB）</button>') + '</div>' +
+    '<div class="cap-row"><b>说（它的回答念出来）</b><span>' + mouth + '</span><button class="btn mini" data-voice-test="1"' + dis + '>说一句试试</button>' + (v.alive ? '<button class="btn mini ghost" data-voice-off="1">关掉 Breeze</button>' : '') + '</div>' +
+    '<div class="cap-row"><b>声音照谁的</b><span>' + (v.ref ? '<em class="ok">有参考音频</em>：照它的声音念（记得把音频里说的话填在下面「参考音频里念的字」）' : '没放参考音频：按下面那句「声音是什么样的」造一个') + '</span>' +
+      '<label class="btn mini" for="voiceRefFile"' + (useLive() ? '' : ' aria-disabled="true"') + '>' + (v.ref ? '换一段' : '放一段参考音频') + '</label><input type="file" id="voiceRefFile" accept=".wav,audio/wav" hidden' + dis + '>' + (v.ref ? '<button class="btn mini ghost" data-voice-unref="1">去掉</button>' : '') + '</div>' +
+    '<div class="help">参考音频：3~30 秒、16 位 WAV、你自己有权用的声音。麦克风只在你点了核心 / 话筒以后才开，收住就关；录音不存盘。快捷键：Alt + V 开始说，Esc 打断。</div></div>';
+}
+function voiceBoxFetch() { api('GET', '/api/voice').then(function (j) { VBOX.st = j; var b = $('#voiceBox'); if (b) b.innerHTML = voiceBoxHTML(); }).catch(function () {}); }
+/* ---------- 配乐（v3.0） ---------- */
+var BBOX = { st: null };
+function bgmBoxHTML() {
+  var v = useLive() ? BBOX.st : { up: false, alive: false, configured: false, can_start: false, url: 'http://127.0.0.1:8001', out: 'F:\\Agent\\配乐输出' };
+  if (!v) return '<div class="field"><div class="cap">正在读取…</div></div>';
+  var line = v.alive ? '<em class="ok">开着</em>（Agent 开的，闲着会自己关）' : v.up ? '<em class="ok">连得上</em>（你自己开着的）' : v.can_start ? '<em class="ok">配好了</em>：用到才启动' + (v.python ? ' · ' + esc(v.python) : '')
+    : v.dir && !v.dir_ok ? '<em class="bad">这个文件夹不存在</em>：' + esc(v.dir) : '<em class="warn">还没配</em>：' + esc(v.url) + ' 连不上，也没填 ACE-Step 的文件夹';
+  return '<div class="capbox"><div class="cap-row"><b>ACE-Step 1.5</b><span>' + line + '</span><button class="btn mini primary" data-open-tool="bgm">打开配乐窗口</button>' + (v.alive ? '<button class="btn mini ghost" data-bgm-off="1">现在关掉</button>' : '') + '</div>' +
+    '<div class="help">没装过：到 ACE-Step 1.5 的 GitHub 发布页下 Windows 整合包解压（自带 Python 环境和 start_api_server.bat），把解压出来的文件夹填在下面就行。出的音乐放在：' + esc(v.out || '') + '</div></div>';
+}
+function bgmBoxFetch() { api('GET', '/api/bgm').then(function (j) { BBOX.st = j; var b = $('#bgmBox'); if (b) b.innerHTML = bgmBoxHTML(); }).catch(function () {}); }
 var sv = $('#view-settings');
 sv.addEventListener('click', function (ev) {
   var wb = ev.target.closest('[data-ws-open],[data-ws-run],[data-ws-dir]');
@@ -335,6 +401,20 @@ sv.addEventListener('click', function (ev) {
       rdirsDo('POST', { path: v, cloud: true }).then(function () { toast('允许了：只读，不改不删'); }).catch(function (e) { toast(e.message, 5000); });
     } else if (rd.dataset.rdDel) rdirsDo('DELETE', null, rd.dataset.rdDel).then(function () { toast('不让读了'); }).catch(function (e) { toast(e.message); });
     else rdirsDo('PATCH', { path: rd.dataset.rdCloud, cloud: rd.getAttribute('aria-checked') !== 'true' }).catch(function (e) { toast(e.message); });
+    return;
+  }
+  var cp = ev.target.closest('[data-cap],[data-cap-set],[data-voice-asr],[data-voice-test],[data-voice-off],[data-voice-unref],[data-bgm-off],[data-open-tool]');
+  if (cp && !cp.disabled) {
+    if (cp.dataset.openTool) { openView(cp.dataset.openTool); return; }
+    if (!useLive()) { toast('演示模式不能改'); return; }
+    var d = cp.dataset, b = {};
+    if (d.cap) { var on = cp.getAttribute('aria-checked') !== 'true'; b[d.cap] = on; capsPut(b, d.cap === 'cc' ? (on ? 'Claude Code 引擎打开了：工作区的活会交给它' : 'Claude Code 引擎关了') : d.cap === 'image' && on ? '生图打开了：它出图会花钱，一件事最多出几张在上面设' : ''); }
+    else if (d.capSet) { b[d.capSet] = ($(d.capSet === 'cc_cmd' ? '#ccCmd' : '#ccBash').value || '').trim(); capsPut(b, '保存了'); }
+    else if (d.voiceAsr) { cp.disabled = true; cp.textContent = '在下…'; api('POST', '/api/tts/install', { asr: true }).then(function () { toast('开始下听写模型了（约 1.9 GB），进度在主页「后台在跑」里', 6000); }).catch(function (e) { cp.disabled = false; toast(e.message, 6000); }); }
+    else if (d.voiceTest) { cp.disabled = true; voiceSay('你好，我在。现在听到的就是我说话的声音。').then(function (ok) { cp.disabled = false; if (ok) setTimeout(voiceBoxFetch, 500); }); }
+    else if (d.voiceOff) api('POST', '/api/voice/off', {}).then(function () { toast('Breeze 关掉了，显存还回去了'); voiceBoxFetch(); }).catch(function (e) { toast(e.message); });
+    else if (d.voiceUnref) api('DELETE', '/api/voice/ref').then(function (j) { VBOX.st = j; $('#voiceBox').innerHTML = voiceBoxHTML(); toast('去掉了：回到按描述造声音'); }).catch(function (e) { toast(e.message); });
+    else if (d.bgmOff) api('POST', '/api/bgm/off', {}).then(function () { toast('ACE-Step 关掉了'); bgmBoxFetch(); }).catch(function (e) { toast(e.message); });
     return;
   }
   var t = ev.target.closest('button'); if (!t || t.disabled) return;
@@ -502,4 +582,12 @@ sv.addEventListener('change', function (ev) {
     };
     r.readAsText(t.files[0]);
   }
+});
+
+sv.addEventListener('change', function (ev) {                 // 语音：换参考音频
+  if (ev.target.id !== 'voiceRefFile' || !ev.target.files[0]) return;
+  var f = ev.target.files[0]; ev.target.value = '';
+  f.arrayBuffer().then(function (ab) { return fetchT('/api/voice/ref', { method: 'POST', headers: { 'X-Agent': '1', 'Content-Type': 'audio/wav' }, body: ab }, 30000); })
+    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || '没传上去'); return j; }); })
+    .then(function (j) { VBOX.st = j; $('#voiceBox').innerHTML = voiceBoxHTML(); toast('换好了：记得把这段音频里说的话填在「参考音频里念的字」', 6000); }).catch(function (e) { toast(e.message, 6000); });
 });

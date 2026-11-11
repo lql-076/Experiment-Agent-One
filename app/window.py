@@ -30,7 +30,7 @@ STATE = paths.DATA / "window.json"
 MUTEX = "Local\\AgentMainWindow"
 ICON = paths.UI / "icon.ico"
 # 工具窗口的默认大小：都按 1600×975 的设计尺寸等比缩放（界面里 autoScale），这个大小下字是 0.9 倍；屏幕大就按屏幕的七成八放大
-TOOLS = {k: (v, 1440, 880) for k, v in {"img": "生图", "tts": "配音", "events": "事件", "monitor": "后台", "brains": "大脑", "reports": "报告",
+TOOLS = {k: (v, 1440, 880) for k, v in {"img": "生图", "tts": "配音", "bgm": "配乐", "events": "事件", "monitor": "后台", "brains": "大脑", "reports": "报告",
                                          "settings": "设置", "docs": "说明"}.items()}
 WINS = {}          # 开着的工具窗口：key → webview.Window
 MAIN = {}          # 主窗口（工具窗口里点「去对话」时拿到前面）

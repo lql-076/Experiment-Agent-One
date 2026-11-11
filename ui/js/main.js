@@ -11,7 +11,7 @@ function poll() {
     if (S.set.demo) { syncStatus(); return; }
     var sig = st.events.map(function (e) { return e.id + e.status + (e.fix || ''); }).join(',');
     if (sig !== D.sig.ev) { D.sig.ev = sig; D.events = st.events; if (S.view === 'events') refreshEventList(); }
-    chatRefresh();
+    chatRefresh(); if (typeof voiceLoad === 'function') voiceLoad();
     var hs = JSON.stringify([st.today, st.next && st.next.id, st.next && st.next.ts, st.asks_pending, st.prep.ready, st.cost_month, st.balance, st.setup, sig.slice(0, 60), st.agent && st.agent.head, st.agent && (st.agent.groups || []).map(function (g) { return g.items.map(function (i) { return i.st + (i.m ? i.m.txt : ''); }).join(); }).join('|')]);
     if (hs !== D.sig.home) { D.sig.home = hs; D.homeDirty = true; }
     if (S.view === 'home') homeFill();             // 主页每一块自己比较，没变就不重画

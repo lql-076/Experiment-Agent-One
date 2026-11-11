@@ -177,6 +177,37 @@ var SECTIONS = [
     { k: 'qqUser', l: '只回复这个用户（openid）', ph: '不用手填：给机器人发一句话后，在 整备 › 绑定你的 QQ 点「是我」', h: '其他人发来的消息一律不处理' },
     { note: '单聊主动消息官方允许，每人每天上限 1000 条；但你在 QQ 里可以关掉"允许主动发送"，这时提醒会改成电脑弹窗 + 界面卡片。你 55 分钟内说过话的话，提醒会用被动回复，最稳。' }
   ] },
+  { id: 'agent', name: 'Agent 能力', custom: 'agent', desc: '它在工作文件夹里能动用哪些本事。不花钱、不出本机的默认开着；要花钱的（生图、云端配音）和 Claude Code 引擎默认关着，你点了才开，每次开关都记进动作日志。', fields: [
+    { k: 'agSteps', l: '一件事最多做多少步', t: 'number', u: '步', d: 120, h: '写一个文件、跑一次命令、看一次画面都算一步。做视频这种长活一般几十步' },
+    { k: 'agBudget', l: '一件事最多花多少钱', t: 'number', u: '元', d: 5, h: '只算这件事里 DeepSeek 和生图的钱。到了就不再往下做，让它汇报做到哪了；0 = 不限' },
+    { k: 'agImageMax', l: '一件事最多出几张图', t: 'number', u: '张', d: 8 },
+    { k: 'ccAuto', l: '工作区的活自动交给 Claude Code', t: 'toggle', d: true, h: '开了 Claude Code 引擎以后才有用。关掉就只在你指定「动手干活用 Claude Code」时才交给它' },
+    { k: 'ccMinutes', l: 'Claude Code 一件事最多做多久', t: 'number', u: '分钟', d: 60 },
+    { k: 'ccModel', l: 'Claude Code 用哪个模型', ph: '留空 = 用你在 Claude Code 里设好的', h: '一般不用填。这里只是启动它时带一个 --model，不改你本机 Claude Code 的任何设置' },
+    { k: 'qqSendImg', l: '做好的图片也发回 QQ', t: 'toggle', d: true, h: '在 QQ 上让它做的事，做出来的图片跟着回复一起发（一件事最多 3 张）；视频和别的文件只在回复里写路径' }
+  ] },
+  { id: 'voice', name: '语音', custom: 'voice', desc: '和它说话：点主页中间的核心（或者指令条上的话筒）开始说，说完停一下自动发；它回的话念出来。听写用本地的 Qwen3-ASR，说话的声音用 Breeze TTS 2（权重只许自己用、非商用：它念的不要放进要挣钱的视频）。都在本机，不联网。', fields: [
+    { k: 'voiceOn', l: '打开语音', t: 'toggle', d: false },
+    { k: 'voiceAuto', l: '说着问的，回答念出来', t: 'toggle', d: true },
+    { k: 'voiceHands', l: '连着聊', t: 'toggle', d: false, h: '它念完自动接着听，不用再点。想停就点一下核心，或者按 Esc' },
+    { k: 'voiceAll', l: '打字问的也念出来', t: 'toggle', d: false },
+    { k: 'voiceEngine', l: '用什么出声', t: 'select', d: 'auto', o: [['auto', '自动（Breeze 配好了用它，没配好先用本地配音顶着）'], ['breeze', '只用 Breeze TTS 2'], ['local', '只用本地配音（Qwen3-TTS 预设音色）']] },
+    { k: 'voiceDesc', l: '声音是什么样的（Breeze）', t: 'textarea', d: '二十岁出头的年轻女声，声音清亮温柔，语速自然，像朋友聊天', h: '没放参考音频时，Breeze 按这句描述造一个声音。放了参考音频就照参考音频来' },
+    { k: 'voiceRefText', l: '参考音频里念的字', ph: '放了参考音频才用填：把那段音频里说的话原样写在这里' },
+    { k: 'voiceSpeaker', l: '本地配音顶着的时候用哪个音色', t: 'select', d: 'Vivian', o: [['Vivian', 'Vivian（女声，明亮）'], ['Serena', 'Serena（女声，温柔）'], ['Uncle_Fu', 'Uncle_Fu（男声，低沉）'], ['Dylan', 'Dylan（男声，北京话）'], ['Eric', 'Eric（男声，四川话）'], ['Ryan', 'Ryan（男声，英文）']] },
+    { k: 'voiceMax', l: '一次最多念多少字', t: 'number', u: '字', d: 400, h: '回答太长只念前面，剩下的在屏幕上看。代码、链接、表格不念' },
+    { k: 'voiceUrl', l: 'Breeze 服务的地址', d: 'http://127.0.0.1:8093', h: 'Breeze TTS 2 官方只支持 Linux：在 WSL2 里把它的接口跑起来（python -m breeze_infer.api 模型文件夹 --port 8093），Windows 这边照这个地址连' },
+    { k: 'voiceCmd', l: '启动 Breeze 的命令（可选）', ph: '比如：wsl -d Ubuntu -- bash -lc "cd ~/Breeze-TTS && python -m breeze_infer.api ~/models/breeze2 --host 0.0.0.0 --port 8093"', h: '填了它，Agent 用到时自己把 Breeze 开起来、闲着自己关、打游戏让路。不填就是你自己开着' },
+    { k: 'voiceIdle', l: 'Breeze 闲多久关掉', t: 'number', u: '分钟', d: 10, h: '只关 Agent 自己开的。Breeze 大约占 7.7GB 显存' }
+  ] },
+  { id: 'bgm', name: '配乐', custom: 'bgm', desc: '本地的 ACE-Step 1.5 出纯音乐，不花钱、不出本机。左边「配乐」窗口里手动出，Agent 做视频时也会自己用。', fields: [
+    { k: 'bgmDir', l: 'ACE-Step 的文件夹', ph: '比如 F:\\ACE-Step-1.5（里面有 start_api_server.bat 或者 acestep 文件夹）', h: '填了它，Agent 用到时自己把 ACE-Step 的接口开起来、闲着自己关、打游戏让路。不填就照下面的地址连（你自己开着）' },
+    { k: 'bgmUrl', l: 'ACE-Step 接口的地址', d: 'http://127.0.0.1:8001', h: 'ACE-Step 自带的接口默认就是 8001 端口' },
+    { k: 'bgmIdle', l: '闲多久关掉', t: 'number', u: '分钟', d: 10 },
+    { k: 'bgmSteps', l: '出一首走多少步', t: 'number', u: '步', d: 8, h: 'Turbo 模型 8 步就够；步数多一点细节好一点、慢一点' },
+    { k: 'bgmFormat', l: '存成什么格式', t: 'select', d: 'wav', o: [['wav', 'WAV（不压缩，做视频用这个）'], ['mp3', 'MP3（小）'], ['flac', 'FLAC']] },
+    { k: 'bgmOut', l: '出的音乐放哪', ph: '留空 = Agent 文件夹里的「配乐输出」' }
+  ] },
   { id: 'memory', name: '记忆与文件', custom: 'memory', desc: '记忆、技能、提示词都是中文 Markdown，你随时能打开看、改。agent 有一个自己的工作文件夹，在里面写、改、删、运行程序都不用问你；别的文件夹要你在下面允许了才能读（只读）。', fields: [
     { k: 'memDir', l: 'agent 自己的文件夹', place: 'memory', h: '想放进 Obsidian 库就填库里的一个子文件夹，比如 D:\\Obsidian\\我的库\\agent' },
     { k: 'useGit', l: '用 git 记录每次改动（可一键撤销）', t: 'toggle', d: true },

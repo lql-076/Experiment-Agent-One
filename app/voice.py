@@ -338,7 +338,7 @@ class Voice:
                 "dir": str(d) if d else "", "dir_ok": bool(d and d.is_dir()), "python": paths.show(self.python()) if self.python() else "",
                 "model": self.model(), "can_start": bool(self.cmd()), "ref": REF.exists(), "ref_text": self.s.get("voiceRefText") or "",
                 "desc": self.s.get("voiceDesc") or "", "asr": self.asr_ok(), "asr_why": self.asr_why(), "tts_env": tts.T.env_ok(),
-                "yielding": M.yielding, "yield_reason": M.yield_reason, "auto": bool(self.s.get("voiceAuto", True)), "hands": bool(self.s.get("voiceHands", False)),
+                "yielding": M.yielding, "yield_reason": M.yield_reason, "auto": bool(self.s.get("voiceAuto", True)), "hands": bool(self.s.get("voiceHands", False)), "all": bool(self.s.get("voiceAll", False)),
                 "max": int(self.s.get("voiceMax") or 400), "sr": SR}
 
 

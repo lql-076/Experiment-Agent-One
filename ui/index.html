@@ -10,6 +10,7 @@
 try{var _t=new URLSearchParams(location.search).get('tool');if(_t&&/^[a-z]{2,12}$/.test(_t))document.documentElement.dataset.tool=_t;}catch(e){}</script>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/core.css">
+<link rel="stylesheet" href="css/v3.css">
 <script src="themes/themes.js"></script>
 </head>
 <body>
@@ -24,6 +25,7 @@ try{var _t=new URLSearchParams(location.search).get('tool');if(_t&&/^[a-z]{2,12}
     <span class="rail-cap" aria-hidden="true">工具</span>
     <button class="nav tool" data-tool="img" aria-label="打开生图（新窗口）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="9.8" r="1.7"/><path d="M4 17l4.8-4.3 3.4 2.9 3.1-2.6 4.7 4"/></svg>生图<span class="busy" aria-hidden="true"></span></button>
     <button class="nav tool" data-tool="tts" aria-label="打开配音（新窗口）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/></svg>配音<span class="busy" aria-hidden="true"></span></button>
+    <button class="nav tool" data-tool="bgm" aria-label="打开配乐（新窗口）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>配乐<span class="busy" aria-hidden="true"></span></button>
     <button class="nav tool" data-tool="events" aria-label="打开事件（新窗口）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>事件<span class="busy" aria-hidden="true"></span></button>
     <button class="nav tool" data-tool="monitor" aria-label="打开后台（新窗口）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12.5h4l2.5-6 4.5 12 2.5-6H21"/></svg>后台<span class="busy" aria-hidden="true"></span></button>
     <button class="nav tool" data-tool="brains" aria-label="打开大脑（新窗口）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="7" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="M8.3 9.2l2.4 5.6M15.7 9.2l-2.4 5.6M9.5 7h5"/></svg>大脑<span class="busy" aria-hidden="true"></span></button>
@@ -39,7 +41,7 @@ try{var _t=new URLSearchParams(location.search).get('tool');if(_t&&/^[a-z]{2,12}
   </nav>
 
   <header class="topbar">
-    <div class="brand"><span class="tb-tool" id="tbTool"></span><b>AGENT</b><span class="num" id="tbVer">v2.0</span><span class="dot" id="statusDot" title=""></span><span class="sr" id="statusText">演示数据 · 后端未接入</span></div>
+    <div class="brand"><span class="tb-tool" id="tbTool"></span><b>AGENT</b><span class="num" id="tbVer">v3.0</span><span class="dot" id="statusDot" title=""></span><span class="sr" id="statusText">演示数据 · 后端未接入</span></div>
     <button class="pal-btn" id="btnPal" aria-label="打开命令面板（Ctrl K）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg><span>搜索、跳转、打开工具</span><kbd>Ctrl K</kbd></button>
     <div class="metrics">
       <span>CPU<b class="num"><span data-hw="cpu.load">0</span>%</b></span>
@@ -59,6 +61,7 @@ try{var _t=new URLSearchParams(location.search).get('tool');if(_t&&/^[a-z]{2,12}
     <section class="view active" id="view-home" aria-label="主页"></section>
     <section class="view" id="view-img" aria-label="生图"></section>
     <section class="view" id="view-tts" aria-label="配音"></section>
+    <section class="view" id="view-bgm" aria-label="配乐"></section>
     <section class="view" id="view-events" aria-label="事件"></section>
     <section class="view" id="view-monitor" aria-label="后台"></section>
     <section class="view" id="view-brains" aria-label="大脑"></section>
@@ -66,7 +69,7 @@ try{var _t=new URLSearchParams(location.search).get('tool');if(_t&&/^[a-z]{2,12}
     <section class="view" id="view-settings" aria-label="设置"></section>
     <section class="view" id="view-docs" aria-label="说明"></section>
   </main>
-  <section class="drawer" id="view-chat" aria-label="对话" hidden></section>
+  <section class="drawer" id="view-chat" aria-label="对话"></section>
 </div>
 
 <div id="pal" hidden><div class="pal-bg" data-pal-close="1"></div><div class="pal-box" role="dialog" aria-label="命令面板"><div class="pal-in"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg><input id="palIn" placeholder="要做什么？（打开工具、设置里的哪一块、切深浅色……）" autocomplete="off" spellcheck="false" aria-label="命令"></div><div class="pal-list" id="palList" role="listbox"></div></div></div>
@@ -115,6 +118,9 @@ try{var _t=new URLSearchParams(location.search).get('tool');if(_t&&/^[a-z]{2,12}
 <script src="js/docs.js"></script>
 <script src="js/tts.js"></script>
 <script src="js/img.js"></script>
+<script src="js/bgm.js"></script>
+<script src="js/core.js"></script>
+<script src="js/voice.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/fx.js"></script>
 <script src="js/main.js"></script>

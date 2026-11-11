@@ -1,30 +1,30 @@
 /* @id dark
-   @name 极简 · 深色
-   @desc 近黑的底、一点橙色。没有光斑、没有发光，字大、留白多：一眼看清现在在干什么、后台在跑什么。
+   @name 指挥舱 · 夜航
+   @desc 近黑的深蓝底、青色的线、干活时变琥珀色。切角面板、中间一颗会动的核心：一眼看清现在在干什么、做到计划的第几步。
    @order 1
    @fx reveal press
-   v2.0 起只有深色、浅色这两套（作者 11-05：原来的三套花里胡哨，换成极简、高效）。
+   v3.0 整套界面重做（作者 11-11：整个排版、UI、交互全部重做）。档次照生图的「渲染舱」，但主页照样字大、留白多、一屏放下。
    想再加一套：复制这个文件、改名（只用英文小写），把文件里所有 "dark" 换成新名字，改 @name、@desc 和颜色，刷新界面就出现。
 */
 [data-theme="dark"]{
   color-scheme:dark;
   --ring-segs:60;--ring-fill:.62;--ring-cap:butt;--ring-ticks:60;--ring-tick-w:1.2;--ring-tick-sw:4;--ring-arc-w:4;--ring-sec-r:4;--date-style:cn;--res-labels:zh;
-  --bg:#0a0a0b;--bg2:#111113;--bg3:#18181b;--bg4:#222226;
-  --line:#1f1f23;--line2:#2e2e34;
-  --text:#ededef;--text2:#a8a8b0;--text3:#8b8b94;
-  --accent:#ff5a1f;--accent2:#ff8a5c;--grad:linear-gradient(90deg,#ff5a1f,#ff7a3d);
-  --ring1:#ff5a1f;--ring2:#ffb08a;
-  --c-local:#34d399;--c-neu:#facc15;--c-ds:#60a5fa;--c-cl:#c084fc;
-  --h1:#60a5fa;--h2:#34d399;--h3:#facc15;--h4:#fb923c;--h5:#c084fc;--ok:#34d399;--bad:#f87171;--run:#60a5fa;--warn:#facc15;
-  --card:#111113;--cardb:#1f1f23;--shadow:0 2.5rem 7.5rem rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.09);--scrim:rgba(0,0,0,.55);
-  --rail:#0a0a0b;--railw:5.25rem;--r:1.125rem;--rs:.625rem;
+  --bg:#04070c;--bg2:#09111a;--bg3:#0f1b27;--bg4:#172736;
+  --line:#13222f;--line2:#22394b;
+  --text:#e6f3fb;--text2:#a3bccd;--text3:#7393a8;
+  --accent:#3fe0ff;--accent2:#8fecff;--grad:linear-gradient(90deg,#3fe0ff,#6fa8ff);
+  --ring1:#3fe0ff;--ring2:#6fa8ff;
+  --c-local:#3dffa8;--c-neu:#ffb02e;--c-ds:#6fa8ff;--c-cl:#c79bff;
+  --h1:#6fa8ff;--h2:#3dffa8;--h3:#ffb02e;--h4:#ff8a4c;--h5:#ff5fd2;--ok:#3dffa8;--bad:#ff5470;--run:#6fa8ff;--warn:#ffb02e;
+  --hot:#ffb02e;
+  --card:#09111a;--cardb:#13222f;--shadow:0 2rem 6rem rgba(0,0,0,.75),0 0 0 1px rgba(63,224,255,.22);--scrim:rgba(1,4,8,.62);
+  --rail:#04070c;--railw:5.25rem;--r:.25rem;--rs:.1875rem;
   --fc:var(--mono);--fcw:400;--fn:var(--mono);
   --ease:cubic-bezier(.2,.8,.2,1);--spring:cubic-bezier(.2,.9,.25,1);--dur:.2s;--lt:none;--ls:.02em;
+  --glow:1;
 }
-/* 滚动触发：轻轻往上浮出来 */
 html[data-theme="dark"] .fx-in{animation:mnIn .42s var(--ease) var(--fxd,0ms) both}
-/* 点击：一圈很淡的波纹 */
-html[data-theme="dark"] .fx-pbox i{background:color-mix(in srgb,var(--text) 14%,transparent)}
+html[data-theme="dark"] .fx-pbox i{background:color-mix(in srgb,var(--accent) 22%,transparent)}
 /* 设置 › 外观 里的小预览 */
-.tprev[data-theme="dark"]{background:#0a0a0b;color:#ededef}
-.tprev[data-theme="dark"] .tp-bar{background:#ff5a1f}
+.tprev[data-theme="dark"]{background:#04070c;color:#e6f3fb}
+.tprev[data-theme="dark"] .tp-bar{background:#3fe0ff}

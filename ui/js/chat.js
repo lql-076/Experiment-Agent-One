@@ -4,7 +4,8 @@
    点它，主页上面「现在」那块停在这条、打开「细节」（分数、为什么、每一步、来源、判错了、换它重做）。
    输入框右边「交给：自动」能指定这一条交给谁。发消息是异步的：先拿 token，每半秒问一次处理到哪了，主页「现在」跟着走。
    下面的 Agent 状态仪表盘（agentHTML 这些）v2.0 起主页不用了，主页的「Agent 状态」见 home.js；eventSideHTML 是主页「细节」的内容。 */
-var CHAT = { sel: null, tab: 'status', pending: null, more: null, dashMin: false, stick: true, sig: '', atts: [], force: 'auto', open: false };
+var CHAT = { sel: null, tab: 'status', pending: null, more: null, dashMin: false, stick: true, sig: '', atts: [], force: 'auto', engine: 'auto', open: false, tall: false, caps: null, capsTs: 0, barSig: '' };
+var MIC_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/></svg>';
 var CLIP_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-7.8 7.8a5 5 0 0 1-7.1-7.1l8.3-8.3a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.6 1.6 0 0 1-2.3-2.3l7.4-7.4"/></svg>';
 var ST_TXT = { ok: '正常', idle: '闲着', warn: '要注意', bad: '缺了', off: '没开' };
 
@@ -30,6 +31,8 @@ function chipHTML(e) {
   if (ni) bits.push('看了 ' + ni + ' 张图');
   if (nf) bits.push('读了 ' + nf + ' 个文件');
   if (no) bits.push('做好 ' + no + ' 个文件');
+  if (e.engine === 'cc') bits.push('Claude Code 做的');
+  if ((e.plan || []).length) bits.push('计划 ' + planCount(e));
   if (e.cost) bits.push('¥' + (+e.cost).toFixed(4));
   if (e.latency) bits.push((+e.latency).toFixed(1) + ' 秒');
   return '<button class="why-chip" data-ev="' + e.id + '" style="--c:' + ROUTES[e.to].color + '" aria-pressed="' + (CHAT.sel === e.id && CHAT.tab === 'event') + '">' +
@@ -86,46 +89,85 @@ function fixHint(r, e) {
   if (/搜索次数.*用完/.test(r)) return '<div class="fix-hint"><button class="btn mini" data-go-sec="cloud">调高每天的搜索次数</button></div>';
   return '';
 }
+function pendPlanHTML(ev) {
+  var pl = (ev && ev.plan) || []; if (!pl.length) return '';
+  return '<ul class="p-plan">' + pl.map(function (x) { return '<li class="pl-' + (x.st || 'todo') + '">' + esc(x.text) + '</li>'; }).join('') + '</ul>';
+}
 function pendingHTML() {
   var p = CHAT.pending; if (!p) return '';
-  return '<div class="msg me"><div class="bubble">' + esc(p.text) + (p.imgs && p.imgs.length ? '<div class="m-imgs">' + p.imgs.map(function (u) { return '<span class="m-img"><img src="' + u + '" alt=""></span>'; }).join('') + '</div>' : '') + '</div><div class="meta">' + esc(p.t) + '</div></div>' +
-    '<div class="msg ai pending"><span class="ai-dot" aria-hidden="true"></span><div class="ai-col"><div class="bubble typing"><i></i><i></i><i></i><span id="pendStep">' + esc(p.step) + '</span></div></div></div>';
+  return '<div class="msg me"><div class="bubble">' + esc(p.text) + (p.imgs && p.imgs.length ? '<div class="m-imgs">' + p.imgs.map(function (u) { return '<span class="m-img"><img src="' + u + '" alt=""></span>'; }).join('') + '</div>' : '') + '</div><div class="meta">' + esc(p.t) + (p.voice ? ' · 说的' : '') + '</div></div>' +
+    (p.says || []).map(function (x) { return '<div class="msg me"><div class="bubble">' + esc(x) + '</div><div class="meta">中途插的一句</div></div>'; }).join('') +
+    '<div class="msg ai pending"><span class="ai-dot" aria-hidden="true"></span><div class="ai-col"><div class="bubble typing"><i></i><i></i><i></i><span id="pendStep">' + esc(p.step) + '</span><span id="pendPlan" style="flex-basis:100%">' + pendPlanHTML(p.ev) + '</span></div></div></div>';
 }
 var FORCE_NAME = { auto: '自动', local: '本地小脑', ds: 'DeepSeek', cl: '更强的模型' };
+var ENGINE_NAME = { auto: '自动', cc: 'Claude Code', ds: 'DeepSeek 自己做' };
+function ccOn() { return !!(CHAT.caps && CHAT.caps.caps && CHAT.caps.caps.cc && CHAT.caps.cc && CHAT.caps.cc.found); }
+function forceLabel() { return '交给：' + (CHAT.force === 'cl' ? ROUTES.cl.name : FORCE_NAME[CHAT.force]) + (CHAT.engine !== 'auto' && ccOn() ? ' · ' + ENGINE_NAME[CHAT.engine] : ''); }
 function routeChips() {
   return '<div class="c-route" id="cRoute" role="group" aria-label="这一条交给谁"' + (CHAT.routeOpen ? '' : ' hidden') + '><span class="cap">这一条交给</span>' +
     ['auto', 'local', 'ds', 'cl'].filter(function (k) { return k !== 'cl' || strongOn(); }).map(function (k) {
-      return '<button type="button" class="chip" data-force="' + k + '" aria-pressed="' + (CHAT.force === k) + '">' + esc(k === 'cl' ? ROUTES.cl.name : FORCE_NAME[k]) + '</button>'; }).join('') + '</div>';
+      return '<button type="button" class="chip" data-force="' + k + '" aria-pressed="' + (CHAT.force === k) + '">' + esc(k === 'cl' ? ROUTES.cl.name : FORCE_NAME[k]) + '</button>'; }).join('') +
+    (ccOn() ? '<span class="cap" title="工作区里的活（写程序、做视频……）谁来动手">动手干活用</span>' + ['auto', 'cc', 'ds'].map(function (k) {
+      return '<button type="button" class="chip" data-engine="' + k + '" aria-pressed="' + (CHAT.engine === k) + '">' + ENGINE_NAME[k] + '</button>'; }).join('') : '') + '</div>';
+}
+function capsLoad(force) {                               // Agent 的本事（开没开 Claude Code、语音……）：指令条要用
+  if (!useLive() || (!force && Date.now() - CHAT.capsTs < 30000)) return;
+  CHAT.capsTs = Date.now();
+  api('GET', '/api/agent/caps', null, 6000).then(function (j) {
+    var was = ccOn(); CHAT.caps = j;
+    if (was !== ccOn()) { var r = $('#cRoute'); if (r) r.outerHTML = routeChips(); var f = $('#cForce'); if (f) f.textContent = forceLabel(); }
+  }).catch(function () {});
 }
 function renderChat() {
-  var v = $('#view-chat'); if (!v) return;
-  var live = useLive();
-  v.innerHTML = '<div class="dr-head"><b>对话</b><span class="cap">处理到哪一步，在上面「现在」那块看</span><span class="sp"></span><button class="btn mini" id="chatClose" aria-label="收起对话">收起 <kbd>Esc</kbd></button></div>' +
-    '<div class="chat-main"><div class="chat-log" id="chatLog"></div>' + routeChips() +
+  var v = $('#view-chat'); if (!v || TOOL) return;
+  var live = useLive(), old = $('#cIn'), keep = old ? old.value : '', hadFocus = old && document.activeElement === old;
+  v.innerHTML = '<div class="cpanel" id="cPanel"><div class="dr-head"><b>对话</b><span class="cap">处理到哪一步，在上面「现在」那块看</span><span class="sp"></span>' +
+      '<button class="btn mini ghost" id="chatTall" aria-pressed="' + !!CHAT.tall + '" title="把对话拉到整个窗口那么高 / 缩回一半">' + (CHAT.tall ? '缩回一半' : '拉高') + '</button>' +
+      '<button class="btn mini" id="chatClose" aria-label="收起对话">收起 <kbd>Esc</kbd></button></div>' +
+    '<div class="chat-main"><div class="chat-log" id="chatLog"></div><div class="c-drop" id="cDrop">松开：把文件带上（放进工作区）</div></div></div>' +
+    '<div class="cbar" id="cBar"><div class="c-hint" id="cHint"></div>' + routeChips() +
     '<form class="composer" id="composer"><div class="c-atts" id="cAtts"></div>' +
-    '<button class="btn c-clip" type="button" id="cClip" title="带文件：点这里选，也可以 Ctrl+V 粘贴、拖进来（任何文件都收，放进工作区；图片也给 DeepSeek 看）" aria-label="带文件"' + (live ? '' : ' disabled') + '>' + CLIP_ICON + '</button>' +
-    '<textarea id="cIn" rows="1" title="Enter 发送，Shift + Enter 换行；能 Ctrl+V 粘贴图片" placeholder="' + (live ? '和它说点什么……' : '演示模式：启动.bat 打开后能聊') + '"' + (live ? '' : ' disabled') + '></textarea>' +
-    '<button class="btn c-force" type="button" id="cForce" aria-expanded="' + !!CHAT.routeOpen + '" title="指定这一条交给谁（默认决策脑自己分）">交给：' + esc(CHAT.force === 'cl' ? ROUTES.cl.name : FORCE_NAME[CHAT.force]) + '</button>' +
+    '<button class="btn c-clip" type="button" id="cClip" title="带文件：点这里选，也可以 Ctrl+V 粘贴、拖进来（任何文件、文件夹都收，放进工作区；图片也给 DeepSeek 看）" aria-label="带文件"' + (live ? '' : ' disabled') + '>' + CLIP_ICON + '</button>' +
+    '<textarea id="cIn" rows="1" title="Enter 发送，Shift + Enter 换行；能 Ctrl+V 粘贴图片" placeholder="' + (live ? '要它做什么？直接说……' : '演示模式：启动.bat 打开后能聊') + '"' + (live ? '' : ' disabled') + '></textarea>' +
+    '<div class="c-wave" id="cWave" aria-live="polite"><canvas id="cWaveCv" aria-hidden="true"></canvas><span id="cWaveTx">在听……</span></div>' +
+    '<button class="btn c-force' + (CHAT.force !== 'auto' || CHAT.engine !== 'auto' ? ' set' : '') + '" type="button" id="cForce" aria-expanded="' + !!CHAT.routeOpen + '" title="指定这一条交给谁（默认决策脑自己分）">' + esc(forceLabel()) + '</button>' +
+    '<button class="btn c-mic" type="button" id="cMic" aria-pressed="false" title="说话：点一下开始，说完停一下自动发出去；它回的话会念出来（设置 › 语音）" aria-label="说话"' + (live ? '' : ' disabled') + '>' + MIC_ICON + '</button>' +
+    '<button class="btn c-open" type="button" id="cOpen" aria-expanded="' + !!CHAT.open + '" title="展开 / 收起对话记录">对话<kbd>Ctrl 空格</kbd></button>' +
+    '<button class="btn danger c-stop" type="button" id="cStop" hidden title="停下正在做的这件事：正在跑的命令也停；做好的文件留着，说「继续」能接着做">停下</button>' +
     '<button class="btn primary" type="submit" id="cSend"' + (live ? '' : ' disabled') + '>发送</button>' +
-    '<input type="file" id="cFile" multiple hidden></form><div class="c-drop" id="cDrop">松开：把文件带上（放进工作区）</div></div>';
-  CHAT.sig = ''; CHAT.logSig = ''; fillChatLog(true); chatAttsDraw();
+    '<input type="file" id="cFile" multiple hidden></form></div>';
+  v.classList.toggle('open', !!CHAT.open); v.classList.toggle('tall', !!CHAT.tall);
+  if (keep) { $('#cIn').value = keep; autoGrow($('#cIn')); } if (hadFocus) $('#cIn').focus();
+  CHAT.sig = ''; CHAT.logSig = ''; CHAT.barSig = ''; fillChatLog(true); chatAttsDraw(); chatBarSync(); capsLoad();
+  if (typeof voiceBarSync === 'function') voiceBarSync();
 }
-/* 抽屉：展开、收起 */
+/* 对话记录：展开、收起（指令条一直在） */
 function chatOpen(id) {
   var v = $('#view-chat'); if (!v || TOOL) return;
   if (!$('#chatLog')) renderChat();
-  v.hidden = false; CHAT.open = true;
-  requestAnimationFrame(function () { v.classList.add('open'); });
+  CHAT.open = true; v.classList.add('open'); var o = $('#cOpen'); if (o) o.setAttribute('aria-expanded', 'true');
   fillChatLog(true);
   if (id) setTimeout(function () { var m = $('.msg.ai[data-id="' + id + '"]'); if (m) m.scrollIntoView({ block: 'nearest' }); }, 60);
   setTimeout(function () { var i = $('#cIn'); if (i && !i.disabled) i.focus(); }, 80);
 }
 function chatClose() {
   var v = $('#view-chat'); if (!v || !CHAT.open) return;
-  CHAT.open = false; v.classList.remove('open');
-  setTimeout(function () { if (!CHAT.open) v.hidden = true; }, 260);
+  CHAT.open = false; v.classList.remove('open'); var o = $('#cOpen'); if (o) o.setAttribute('aria-expanded', 'false');
 }
 function chatToggle() { if (CHAT.open) chatClose(); else chatOpen(); }
+/* 指令条跟着状态变：有事在做 → 多一个「停下」，发出去的话变成「插话」（下一步之前告诉它） */
+function chatBusyEv() { var p = CHAT.pending; if (p) return p.ev || { id: null, status: 'running' }; return typeof nowLive === 'function' ? nowLive() : null; }
+function chatBarSync() {
+  var bar = $('#cBar'); if (!bar) return;
+  var ev = chatBusyEv(), busy = !!ev, sig = (busy ? 'b' + (ev.id || '') : 'i') + '|' + useLive();
+  if (sig === CHAT.barSig) return; CHAT.barSig = sig;
+  bar.classList.toggle('busy', busy);
+  var st = $('#cStop'), sd = $('#cSend'), inp = $('#cIn'), h = $('#cHint');
+  if (st) st.hidden = !busy || !useLive();
+  if (sd) sd.textContent = busy ? '插话' : '发送';
+  if (inp && useLive()) inp.placeholder = busy ? '它正在做事。想改方向、补一句要求，直接说……' : '要它做什么？直接说……';
+  if (h) h.textContent = busy ? '正在做事：现在发出去的话会在它下一步之前告诉它' : '';
+}
 function fillChatLog(force) {
   var log = $('#chatLog'); if (!log) return;
   var near = force || log.scrollHeight - log.scrollTop - log.clientHeight < 80;
@@ -430,23 +472,37 @@ function findChatEv(id) { return chatList().filter(function (e) { return e.id ==
 function chatSend() {
   var inp = $('#cIn'); if (!inp || !useLive()) return;
   var text = inp.value.trim(), atts = CHAT.atts.slice();
-  if ((!text && !atts.length) || CHAT.pending) return;
+  if (!text && !atts.length) return;
+  var busy = chatBusyEv();
+  if (busy) {                                            // 有事在做：这句话是插话（下一步之前告诉它），不另起一件事
+    if (atts.length) { toast('它正在做事：文件等这件事做完再发（或者先点「停下」）'); return; }
+    if (!busy.id) { toast('刚发出去，稍等一下再插话'); return; }
+    inp.value = ''; autoGrow(inp);
+    api('POST', '/api/events/' + busy.id + '/say', { text: text }, 15000).then(function () {
+      if (CHAT.pending) { (CHAT.pending.says = CHAT.pending.says || []).push(text); fillChatLog(true); }
+      toast('插进去了：它下一步之前会看到');
+    }).catch(function (e) { inp.value = text; autoGrow(inp); toast(e.status === 409 ? '这件事刚做完，再发一次就是新的一条' : '没插进去：' + e.message, 5000); CHAT.barSig = ''; chatBarSync(); });
+    return;
+  }
   if (atts.some(function (a) { return a.img && !a.url; })) { toast('图片还在读，等一下'); return; }
   if (atts.some(function (a) { return a.err; })) { toast('有文件没传上去，先去掉它（点 ×）'); return; }
   if (atts.some(function (a) { return !a.rel || a.done === false; })) { toast('文件还在传，等一下'); return; }
   inp.value = ''; autoGrow(inp); CHAT.atts = []; chatAttsDraw();
   chatAsk(text, atts, function () { inp.value = text; CHAT.atts = atts; chatAttsDraw(); });
 }
-function chatAsk(text, atts, undo) {
+function chatAsk(text, atts, undo, opt) {
   var d = new Date(), imgs = (atts || []).filter(function (a) { return a.img; }).map(function (a) { return a.url; }),
     rels = (atts || []).map(function (a) { return a.rel; }).filter(Boolean);
   CHAT.pending = { text: text || (imgs.length ? '看看这张图。' : '收到这些文件，先放在工作区。'), imgs: imgs, t: pad(d.getHours()) + ':' + pad(d.getMinutes()), step: imgs.length ? '图片发出去了……' : '发出去了……', token: null };
   fillChatLog(true);
   var body = { text: text, async: true, images: imgs, files: rels };
   if (CHAT.force !== 'auto') body.force = CHAT.force;
+  if (CHAT.engine !== 'auto' && ccOn()) body.engine = CHAT.engine;
+  if (opt && opt.voice) { body.voice = true; CHAT.pending.voice = true; }
+  chatBarSync();
   NOW.sel = null; NOW.detail = false;
   api('POST', '/api/chat', body, 60000).then(function (j) { CHAT.pending.token = j.token; setTimeout(chatPoll, 300); })
-    .catch(function (e) { CHAT.pending = null; fillChatLog(true); homeFill(); toast(e.status === 409 ? e.message : '没发出去：' + e.message, 5000); if (undo) undo(); });
+    .catch(function (e) { CHAT.pending = null; fillChatLog(true); homeFill(); chatBarSync(); toast(e.status === 409 ? e.message : '没发出去：' + e.message, 5000); if (undo) undo(); });
 }
 /* 带文件（v2.2）：点回形针选、Ctrl+V 粘贴、拖进对话页。任何文件都收，马上传进 工作区\收到的\日期\（一个最多 2GB，有进度）；
    PNG / JPEG / WEBP / GIF 10MB 以内的图片还会交给 DeepSeek 看（最多 6 张）。发之前上面一排，能去掉 */
@@ -563,12 +619,19 @@ function chatImgBox(id, out) {
 function chatPoll() {
   var p = CHAT.pending; if (!p || !p.token) return;
   api('GET', '/api/chat/' + p.token, null, 8000).then(function (j) {
-    if (j.event && !j.done) { p.step = j.event.result || p.step; p.ev = j.event; var el = $('#pendStep'); if (el) el.textContent = p.step; homeFill(); }
+    if (j.event && !j.done) {
+      p.step = j.event.result || p.step; p.ev = j.event; var el = $('#pendStep'); if (el) el.textContent = p.step;
+      var pp = $('#pendPlan'), ph = pendPlanHTML(j.event); if (pp && pp.innerHTML !== ph) pp.innerHTML = ph;
+      homeFill(); chatBarSync();
+    }
     if (j.done) {
+      var spoke = p.voice;
       CHAT.pending = null;
       if (j.event) { D.events = [j.event].concat((D.events || []).filter(function (e) { return e.id !== j.event.id; })); CHAT.sel = j.event.id; }
       if (j.err) toast(j.confirm ? j.err + '（在主页「细节」里点「换它重做」可以确认后再发）' : '这条没处理完：' + j.err, 6000);
-      fillChatLog(true); homeFill();
+      fillChatLog(true); homeFill(); chatBarSync();
+      if (typeof voiceReply === 'function') voiceReply(j.event, spoke);
+      if (!CHAT.open && j.event && j.event.reply && !(spoke && typeof voiceWillSpeak === 'function' && voiceWillSpeak())) chatOpen(j.event.id);   // 回答好了：对话没开着就自己展开给他看（说话那种是念出来，不弹）
       return;
     }
     setTimeout(chatPoll, 400);
@@ -594,6 +657,7 @@ function chatRedo(t) {
 function autoGrow(t) { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 200) + 'px'; }
 /* 后台每 5 秒拉一次状态：对话和右边跟着更新（不打断正在输入的） */
 function chatRefresh() {
+  chatBarSync(); capsLoad();
   if (!CHAT.open || !$('#chatLog')) return;
   fillChatLog(false);
 }
@@ -612,11 +676,20 @@ function chatClick(ev) {
     chatClose(); homeFill();
   }
   else if (t.id === 'chatClose') chatClose();
+  else if (t.id === 'cOpen') chatToggle();
+  else if (t.id === 'chatTall') { CHAT.tall = !CHAT.tall; $('#view-chat').classList.toggle('tall', CHAT.tall); t.textContent = CHAT.tall ? '缩回一半' : '拉高'; t.setAttribute('aria-pressed', CHAT.tall); }
+  else if (t.id === 'cStop') { var be = chatBusyEv(); if (be && be.id) evStop(be.id, null); else toast('刚发出去，稍等一下再停'); }
+  else if (t.id === 'cMic') { if (typeof voiceToggle === 'function') voiceToggle(); }
+  else if (t.dataset.engine) {
+    CHAT.engine = t.dataset.engine;
+    $$('#cRoute [data-engine]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.engine === CHAT.engine); });
+    var fe = $('#cForce'); if (fe) { fe.textContent = forceLabel(); fe.classList.toggle('set', CHAT.force !== 'auto' || CHAT.engine !== 'auto'); }
+  }
   else if (t.id === 'cForce') { CHAT.routeOpen = !CHAT.routeOpen; var r = $('#cRoute'); if (r) r.hidden = !CHAT.routeOpen; t.setAttribute('aria-expanded', !!CHAT.routeOpen); }
   else if (t.dataset.force) {
     CHAT.force = t.dataset.force; CHAT.routeOpen = false;
     $$('#cRoute [data-force]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.force === CHAT.force); });
-    $('#cRoute').hidden = true; var f = $('#cForce'); if (f) { f.textContent = '交给：' + (CHAT.force === 'cl' ? ROUTES.cl.name : FORCE_NAME[CHAT.force]); f.setAttribute('aria-expanded', 'false'); f.classList.toggle('set', CHAT.force !== 'auto'); }
+    $('#cRoute').hidden = true; var f = $('#cForce'); if (f) { f.textContent = forceLabel(); f.setAttribute('aria-expanded', 'false'); f.classList.toggle('set', CHAT.force !== 'auto' || CHAT.engine !== 'auto'); }
   }
   else if (t.dataset.goSec) openSec(t.dataset.goSec);
   else if (t.dataset.recheck) openSec('prep', 'recheck');

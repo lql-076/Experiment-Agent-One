@@ -73,7 +73,7 @@ def status(deep=False):
     p = find()
     return {"on": bool(settings.S.get("ccOn")), "found": bool(p), "path": paths.show(Path(p)) if p else "", "version": version() if (deep and p) else _ver["v"],
             "auto": bool(settings.S.get("ccAuto", True)), "minutes": int(settings.S.get("ccMinutes") or 60), "bash": settings.S.get("ccBash") or "",
-            "model": settings.S.get("ccModel") or "", "running": list(RUNNING), "log": paths.show(LOG)}
+            "model": settings.S.get("ccModel") or "", "cmd": settings.S.get("ccCmd") or "", "running": list(RUNNING), "log": paths.show(LOG)}
 
 
 def usable():
