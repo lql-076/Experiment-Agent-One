@@ -27,7 +27,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import db, feed, files, paths, safety, settings
+from . import db, feed, files, mediainfo, paths, safety, settings
 
 DEFAULT = paths.ROOT / "工作区"
 BACKUP = paths.ROOT / "工作区备份"
@@ -638,11 +638,13 @@ def status():
     d = folder()
     n, size = _count(d)
     bn, bsize = _count(BACKUP)
+    rn, rsize = _count(d / RECV)
     st = db.kv_get("ws_clean") or {}
     last = float(st.get("ts") or 0)
     sp = list(ENV.glob("**/site-packages"))
     has = lambda name: any((x / name).is_dir() for x in sp)      # noqa: E731
     return {"dir": paths.show(d), "default": d == DEFAULT.resolve(), "exists": d.is_dir(), "files": n, "size": size,
+            "recv": paths.show(d / RECV), "recv_files": rn, "recv_size": rsize,
             "backup": paths.show(BACKUP), "backup_files": bn, "backup_size": bsize, "run": bool(settings.S.get("wsRun", True)),
             "timeout": int(settings.S.get("wsTimeout") or 900), "keep_days": KEEP_DAYS,
             "env": py().exists(), "ffmpeg": (_bin() / ("ffmpeg.exe" if paths.IS_WIN else "ffmpeg")).exists(), "playwright": has("playwright"),
@@ -669,10 +671,38 @@ def safe_name(name) -> str:
     return n
 
 
-def recv_target(name) -> Path:
-    """存到哪：工作区\\收到的\\日期\\原文件名，重名加 (2)、(3)。"""
+def _sub_parts(sub) -> list:
+    """界面传来的子文件夹（拖整个文件夹进来时，文件在那个文件夹里的相对位置）：一段一段洗干净，不许往上走。"""
+    return [safe_name(x) for x in str(sub or "").replace("\\", "/").split("/") if x.strip() and x.strip() not in (".", "..")][:12]
+
+
+def _recv_day() -> Path:
     d = ensure() / RECV / datetime.now().strftime("%Y-%m-%d")
     d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def recv_dir(name) -> Path:
+    """整个文件夹拖进来（v2.3）：先在 收到的\\日期\\ 建一个同名文件夹（重名加 (2)），里面的文件一个个传进来，子文件夹原样保留。"""
+    day = _recv_day()
+    n = safe_name(name)
+    p, k = day / n, 2
+    while p.exists():
+        p, k = day / f"{n} ({k})", k + 1
+    p.mkdir()
+    return p
+
+
+def recv_target(name, into="", sub="") -> Path:
+    """存到哪：工作区\\收到的\\日期\\原文件名，重名加 (2)、(3)。into：recv_dir 建的那个文件夹（相对路径）；sub：它里面的子文件夹。"""
+    d = _recv_day()
+    if into:
+        base = real(into, must_exist=True)
+        root = (folder() / RECV).resolve(strict=False)
+        if not base.is_dir() or base == root or not files._inside(base, root):
+            raise Denied("这个文件夹不在「收到的」里")
+        d = base.joinpath(*_sub_parts(sub))
+        d.mkdir(parents=True, exist_ok=True)
     n = safe_name(name)
     stem, ext = os.path.splitext(n)
     p, k = d / n, 2
@@ -682,34 +712,185 @@ def recv_target(name) -> Path:
 
 
 def received(rels) -> list:
-    """界面传回来的「收到的」文件：只认工作区 收到的\\ 里真有的。"""
+    """界面传回来的「收到的」文件 / 文件夹：只认工作区 收到的\\ 里真有的。"""
     root = (folder() / RECV).resolve(strict=False)
-    out = []
-    for r in list(rels or [])[:50]:
+    out, seen = [], set()
+    for r in list(rels or [])[:200]:
         try:
             rp = real(r, must_exist=True)
         except Denied:
             continue
-        if rp.is_file() and files._inside(rp, root):
+        if rp in seen or not files._inside(rp, root) or rp == root:
+            continue
+        seen.add(rp)
+        if rp.is_file():
             out.append({"path": str(rp), "rel": rel(rp), "name": rp.name, "size": rp.stat().st_size})
+        elif rp.is_dir():
+            n, size = _count(rp)
+            out.append({"path": str(rp), "rel": rel(rp), "name": rp.name, "size": size, "dir": True, "n": n})
     return out
 
 
+def _tree(d: Path, cap=60) -> list:
+    """文件夹里有什么（给模型看的，最多 cap 行）。"""
+    lines, n = [], 0
+    for dp, dns, fns in os.walk(d):
+        dns[:] = sorted(x for x in dns if x not in SKIP)
+        for fn in sorted(fns):
+            n += 1
+            if len(lines) < cap:
+                fp = Path(dp) / fn
+                info = mediainfo.describe(fp)
+                with __import__("contextlib").suppress(OSError):
+                    lines.append(f"  {rel(fp)}（{_size(fp.stat().st_size)}" + (f" · {info}" if info else "") + "）")
+    if n > len(lines):
+        lines.append(f"  ……还有 {n - len(lines)} 个，用 list_dir 看")
+    return lines
+
+
 def recv_note(items) -> str:
-    """给 DeepSeek 的一段话：收到了哪些文件、在工作区哪；小的文字文件把内容也带上。"""
+    """给 DeepSeek 的一段话：收到了哪些文件、在工作区哪；视频、音频、图片带上时长和分辨率（v2.3）；
+    小的文字文件、PDF、Excel 把内容也带上。"""
     if not items:
         return ""
-    lines = [f"- {x['rel']}（{_size(x['size'])}）" for x in items]
+    lines = []
+    for x in items:
+        if x.get("dir"):
+            lines.append(f"- [文件夹] {x['rel']}\\（{x['n']} 个文件，共 {_size(x['size'])}）")
+            lines += _tree(Path(x["path"]))
+        else:
+            info = mediainfo.describe(x["path"])
+            lines.append(f"- {x['rel']}（{_size(x['size'])}" + (f" · {info}" if info else "") + "）")
     parts = ["【他发来的文件，已经放进你的工作文件夹（相对路径）：】\n" + "\n".join(lines) +
              "\n直接用这些路径：read_file 读、copy_path / move_path 挪去用、run_command 里当素材。"]
+    budget = 24000
     for x in items:
-        if files.kind_of(Path(x["path"])) in ("text", "docx") and x["size"] <= 200 << 10:
+        if x.get("dir") or budget <= 0:
+            continue
+        k = files.kind_of(Path(x["path"]))
+        if (k in ("text", "docx") and x["size"] <= 200 << 10) or (k in ("pdf", "xlsx") and x["size"] <= 5 << 20):
             try:
-                r = files.read(x["path"], 0, limit=12000)
+                r = files.read(x["path"], 0, limit=min(12000, budget))
+                budget -= len(r["text"])
                 parts.append(f"【{x['rel']} 的内容：】\n{r['text']}" + ("\n（没放完，后面的用 read_file 接着读）" if r.get("more") else ""))
             except Exception:
                 pass
     return "\n\n".join(parts)
+
+
+# ---------------- 做好的文件（v2.3）：这件事做下来，工作区里新出现、改过的 ----------------
+MEDIA_ORDER = {"video": 0, "audio": 1, "image": 2, "": 3}
+MADE_SKIP = {RECV, "ws-env", "venv"}
+PROGRESS = "进度.md"
+
+
+def made_since(t0, cap=3000) -> list:
+    """t0 之后工作区里新写、改过的文件（不算收到的、临时的、装的包）：[{path, rel, name, size, kind, mtime}]。"""
+    base, out = folder(), []
+    if not base.is_dir():
+        return out
+    for dp, dns, fns in os.walk(base):
+        top = Path(dp) == base
+        dns[:] = [d for d in dns if d not in SKIP and not d.startswith(".") and not (top and d in MADE_SKIP)]
+        for fn in fns:
+            if fn.endswith(".part") or fn.startswith("."):
+                continue
+            fp = Path(dp) / fn
+            try:
+                st = fp.stat()
+            except OSError:
+                continue
+            if st.st_mtime >= t0 - 0.05:
+                out.append({"path": str(fp), "rel": rel(fp), "name": fn, "size": st.st_size, "kind": mediainfo.kind(fp), "mtime": st.st_mtime})
+                if len(out) >= cap:
+                    return out
+    return out
+
+
+def deliverables(t0, show=8) -> dict:
+    """做好的文件里拿给他看的那几个：视频、音频、图片排前面（同一个文件夹里一下子出了十几张图的——多半是一帧一帧的画面——只算一个文件夹）；
+    别的（脚本、网页、进度.md）只给个数和名字。"""
+    made = made_since(t0)
+    by_dir = {}
+    for m in made:
+        if m["kind"] == "image":
+            by_dir.setdefault(str(Path(m["path"]).parent), []).append(m)
+    frames = {d: v for d, v in by_dir.items() if len(v) > 12}
+    media, others, folders = [], [], []
+    for m in made:
+        if m["kind"] == "image" and str(Path(m["path"]).parent) in frames:
+            continue
+        (media if m["kind"] else others).append(m)
+    for d, v in frames.items():
+        folders.append({"path": d, "rel": rel(Path(d)), "name": Path(d).name, "size": sum(x["size"] for x in v), "kind": "dir", "n": len(v)})
+    media.sort(key=lambda m: (MEDIA_ORDER[m["kind"]], -m["mtime"]))
+    for m in media[:show]:
+        m["info"] = mediainfo.describe(m["path"])
+    others = [m for m in others if m["name"] != PROGRESS]
+    return {"media": media[:show], "more": max(0, len(media) - show), "folders": folders[:4], "others": others, "n": len(made)}
+
+
+def note_made(event_id, t0) -> dict:
+    """记进 chat_files（kind：out 视频 / 音频 / 图片，outd 一文件夹的画面，outf 别的文件），聊天记录里显示成「做好的文件」卡片。"""
+    d = deliverables(t0)
+    for m in d["media"]:
+        files.note(event_id, "out", m["path"], m["name"] + (f"｜{m['info']}" if m.get("info") else ""), m["size"])
+    for f in d["folders"]:
+        files.note(event_id, "outd", f["path"], f"{f['name']}｜{f['n']} 张图", f["size"])
+    for m in d["others"][:12]:
+        files.note(event_id, "outf", m["path"], m["name"], m["size"])
+    return d
+
+
+def out_row(fid):
+    """界面要看 / 打开一个做好的文件：只给还在工作区里的。"""
+    r = db.one("SELECT * FROM chat_files WHERE id=?", (int(fid),))
+    if not r or r["kind"] not in ("out", "outd", "outf"):
+        return None
+    p = Path(r["path"])
+    if not files._inside(p.resolve(strict=False), folder()) or not p.exists():
+        return None
+    return p
+
+
+def reveal(p: Path, how="folder") -> str:
+    """打开文件（用系统默认的程序），或者在资源管理器里显示它。"""
+    if not paths.IS_WIN:
+        return ("在：" if how == "folder" else "文件在：") + paths.show(p)
+    if how == "file" and p.is_file():
+        os.startfile(str(p))
+        return "打开了：" + p.name
+    if p.is_dir():
+        os.startfile(str(p))
+    else:
+        subprocess.Popen(["explorer", "/select,", str(p)])       # 资源管理器是窗口程序，不是黑窗口
+    return "在文件夹里显示了：" + paths.show(p)
+
+
+# ---------------- 生图、配音「放进工作区」（v2.3）----------------
+ASSETS = "素材"
+
+
+def take_in(srcs, sub) -> dict:
+    """把 Agent 自己出的图、配音复制进 工作区\\素材\\<sub>\\（重名的旧文件先备份）。srcs：[Path] 或 [(Path, 存成什么名)]。只有界面上点按钮才走到这里。"""
+    d = ensure().joinpath(ASSETS, *_sub_parts(sub))
+    d.mkdir(parents=True, exist_ok=True)
+    n = size = 0
+    for it in srcs:
+        src, name = (it if isinstance(it, tuple) else (it, None))
+        src = Path(src)
+        if not src.is_file():
+            continue
+        dst = d / safe_name(name or src.name)
+        if dst.exists():
+            _backup(dst, "覆盖")
+        shutil.copy2(src, dst)
+        n += 1
+        size += dst.stat().st_size
+    if not n:
+        raise Denied("没有能放进去的文件（还没出，或者被挪走了）")
+    _did("放进工作区", rel(d), n=n, bytes=size)
+    return {"rel": rel(d), "dir": paths.show(d), "n": n, "size": size, "msg": f"放进工作区了：{rel(d)}（{n} 个，{_size(size)}）"}
 
 
 # ---------------- 给 DeepSeek 的工具 ----------------

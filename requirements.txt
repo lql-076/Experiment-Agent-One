@@ -9,3 +9,5 @@ pythonnet>=3.0; sys_platform == "win32"
 HardwareMonitor>=1.2; sys_platform == "win32"
 pywebview>=6.2,<7; sys_platform == "win32"
 pywintrace>=0.2; sys_platform == "win32"
+pypdf>=4
+openpyxl>=3.1

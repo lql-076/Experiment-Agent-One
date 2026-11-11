@@ -19,6 +19,8 @@ TEXT_EXT = {".md", ".markdown", ".txt", ".text", ".json", ".jsonl", ".csv", ".ts
             ".xml", ".html", ".htm", ".css", ".js", ".ts", ".py", ".bat", ".cmd", ".ps1", ".sh", ".srt", ".vtt", ".ass", ".canvas", ".rtf"}
 IMG_EXT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}
 DOC_EXT = {".docx"}
+PDF_EXT, SHEET_EXT = {".pdf"}, {".xlsx", ".xlsm"}       # v2.3：PDF、Excel 也能读出文字
+READABLE = ("text", "docx", "pdf", "xlsx")
 SKIP_DIRS = {".git", ".obsidian", ".trash", "node_modules", "__pycache__", ".venv", "venv", ".idea", ".vscode"}
 SECRET_RE = re.compile(r"^(\.env(\..*)?|secrets?(\..*)?|.*\.(pem|key|pfx|p12|kdbx|ppk)|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|credentials(\..*)?)$", re.I)
 MAX_CHARS = 20000            # 一次最多读多少字（后面的用 offset 接着读）
@@ -194,12 +196,88 @@ def _docx(rp: Path) -> str:
     return re.sub(r"<[^>]+>", "", xml).replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").replace("&quot;", '"')
 
 
+def _pdf(rp: Path) -> str:
+    """PDF 里的文字（pypdf）：一页一段，前面标第几页。扫描件（整页是图）读不出字，照实说。"""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        raise Denied("读 PDF 要 pypdf 这个包：重新双击一次 启动.bat 会自动装上") from None
+    try:
+        rd = PdfReader(str(rp))
+        if rd.is_encrypted and not rd.decrypt(""):
+            raise Denied(f"「{rp.name}」加了密码，读不了")
+        out, n = [], len(rd.pages)
+        for i, pg in enumerate(rd.pages[:400], 1):
+            t = (pg.extract_text() or "").strip()
+            if t:
+                out.append(f"【第 {i} 页】\n{t}")
+    except Denied:
+        raise
+    except Exception as e:
+        raise Denied(f"这个 PDF 打不开：{type(e).__name__}") from None
+    if not out:
+        raise Denied(f"「{rp.name}」共 {n} 页，但里面没有能读出来的文字（多半是扫描件 / 整页是图片）")
+    return f"（PDF，共 {n} 页" + ("，只读了前 400 页" if n > 400 else "") + "）\n\n" + "\n\n".join(out)
+
+
+def _xlsx(rp: Path) -> str:
+    """Excel 表格（openpyxl，只读模式）：一张表一段，一行一行用 | 隔开；公式给算好的值。"""
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        raise Denied("读 Excel 要 openpyxl 这个包：重新双击一次 启动.bat 会自动装上") from None
+    try:
+        wb = load_workbook(str(rp), read_only=True, data_only=True)
+    except Exception as e:
+        raise Denied(f"这个 Excel 文件打不开：{type(e).__name__}") from None
+    out, cells = [], 0
+    try:
+        for ws_ in wb.worksheets[:30]:
+            rows = []
+            for row in ws_.iter_rows(values_only=True):
+                vals = ["" if v is None else str(v).replace("\n", " ").strip() for v in row]
+                while vals and not vals[-1]:
+                    vals.pop()
+                if vals:
+                    rows.append(" | ".join(vals))
+                    cells += len(vals)
+                if cells > 200_000:
+                    rows.append("……（太大了，后面的没读）")
+                    break
+            out.append(f"【表：{ws_.title}（{len(rows)} 行）】\n" + ("\n".join(rows) if rows else "（空表）"))
+            if cells > 200_000:
+                break
+    finally:
+        wb.close()
+    return "\n\n".join(out) if out else "（空的 Excel 文件）"
+
+
+def text_of(rp: Path, k=None) -> str:
+    """文字文件、Word、PDF、Excel → 全部文字。"""
+    k = k or kind_of(rp)
+    if k == "docx":
+        return _docx(rp)
+    if k == "pdf":
+        return _pdf(rp)
+    if k == "xlsx":
+        return _xlsx(rp)
+    with open(rp, "rb") as f:
+        b = f.read(MAX_TEXT_BYTES)
+    if b"\x00" in b[:4096]:
+        raise Denied(f"「{rp.name}」看着不是文字文件，读不了")
+    return _decode(b)
+
+
 def kind_of(rp: Path) -> str:
     ext = rp.suffix.lower()
     if ext in IMG_EXT:
         return "image"
     if ext in DOC_EXT:
         return "docx"
+    if ext in PDF_EXT:
+        return "pdf"
+    if ext in SHEET_EXT:
+        return "xlsx"
     if ext in TEXT_EXT or not ext:
         return "text"
     return "other"
@@ -221,15 +299,11 @@ def read(path, offset=0, cloud=False, limit=MAX_CHARS):
         return {"kind": "image", "path": str(rp), "name": rp.name, "size": size, "mime": IMG_EXT[rp.suffix.lower()],
                 "uri": f"data:{IMG_EXT[rp.suffix.lower()]};base64," + base64.b64encode(b).decode()}
     if k == "other":
-        raise Denied(f"「{rp.name}」不是文字文件（{rp.suffix or '没有扩展名'}），读不了；能读 .md .txt .docx、代码、表格（.csv）和图片")
-    if k == "docx":
-        txt = _docx(rp)
-    else:
-        with open(rp, "rb") as f:
-            b = f.read(MAX_TEXT_BYTES)
-        if b"\x00" in b[:4096]:
-            raise Denied(f"「{rp.name}」看着不是文字文件，读不了")
-        txt = _decode(b)
+        from . import mediainfo
+        info = mediainfo.describe(rp)
+        raise Denied(f"「{rp.name}」不是文字文件（{rp.suffix or '没有扩展名'}），读不了" + (f"；它是{info}" if info else "") +
+                     "。能读 .md .txt .docx .pdf .xlsx、代码、表格（.csv）和图片")
+    txt = text_of(rp, k)
     offset = max(0, int(offset or 0))
     part = txt[offset:offset + limit]
     return {"kind": "text", "path": str(rp), "name": rp.name, "size": size, "total": len(txt), "offset": offset, "text": part,
@@ -294,7 +368,7 @@ def find(query, path=None, cloud=False):
                 continue
             name_hit = all(w in f.name.lower() for w in words)
             line = ""
-            if kind_of(f) in ("text", "docx") and f.stat().st_size <= MAX_TEXT_BYTES:
+            if kind_of(f) in ("text", "docx") and f.stat().st_size <= MAX_TEXT_BYTES:      # PDF、Excel 太慢，搜的时候只对文件名
                 try:
                     txt = _docx(f) if kind_of(f) == "docx" else _decode(f.read_bytes())
                 except (Denied, OSError):

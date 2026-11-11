@@ -46,6 +46,7 @@ DEFAULTS = {
     "claudeTpl": "我在搭一个自己的本地 agent。下面是遇到的问题和相关背景，请帮我分析。聊完请输出一份简短的 Markdown 总结，方便我带回给 agent 学习。",
     # QQ
     "qqEnabled": True, "qqAppId": "", "qqUser": "", "qqSandbox": True,
+    "qqSendImg": True,                # Agent 做好的图片也发回 QQ（v2.3，一件事最多 3 张；视频和别的文件只在回复里给路径）
     # 记忆
     "memDir": "", "useGit": True, "logDays": 90,
     # 能读的文件夹（v1.8.17，app/files.py）：[{path, cloud}]，只读；只能在 设置 › 记忆与文件 里加（给 agent 加权限要你点），不走通用的改设置

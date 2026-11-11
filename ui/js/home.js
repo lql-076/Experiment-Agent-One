@@ -74,8 +74,15 @@ function nowHTML() {
   return '<div class="hm-chiprow"><span class="label">现在</span>' + chip + back + '<span class="sp"></span><button class="btn mini ghost" data-now-detail="1" aria-expanded="' + NOW.detail + '">细节 ' + (NOW.detail ? '▴' : '▾') + '</button></div>' +
     '<div class="hm-mid"><div class="hm-title' + (running ? ' caret' : '') + '">' + esc(title) + '</div><div class="hm-sub">' + sub + '</div></div>' + steps +
     '<div class="hm-why"><span>' + esc(running && (!act || act.k === '收到' || act.k === '分流') ? '正在决定交给谁…' : nowWhy(e)) + '</span><span class="sp"></span>' +
-      (running ? '' : '<button class="btn mini" data-chat-open="1">看回答</button>') + '</div>' +
+      (running ? '' : nowOutBtn(e) + '<button class="btn mini" data-chat-open="1">看回答</button>') + '</div>' +
     (NOW.detail ? '<div class="hm-pop" role="dialog" aria-label="这条是怎么分的"><button class="hm-x" data-now-detail="1" aria-label="关掉细节">' + ICONS.cross + '</button>' + eventSideHTML(e) + '</div>' : '');
+}
+/* 这件事做出了文件（v2.3）：「现在」那块直接给一个「打开」按钮（第一个视频 / 音频 / 图片），别的在「看回答」里 */
+function nowOutBtn(e) {
+  var fs = (e.files || []).filter(isOut); if (!fs.length) return '';
+  var f = fs.filter(function (x) { return x.kind === 'out'; })[0] || fs[0], nm = f.name.split('｜')[0];
+  return '<button class="btn mini primary" data-out-open="' + f.id + '" data-how="' + (f.kind === 'out' ? 'file' : 'folder') + '" title="' + esc(f.path) + '">打开 ' + esc(nm.length > 18 ? nm.slice(0, 16) + '…' : nm) +
+    (fs.length > 1 ? '（共 ' + fs.length + ' 个）' : '') + '</button>';
 }
 function jobsHTML() {
   var ts = homeTasks(), n = nextRem();

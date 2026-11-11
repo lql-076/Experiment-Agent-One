@@ -234,6 +234,39 @@ def bal():
     return {"is_available": True, "balance_infos": [{"currency": "CNY", "total_balance": "9.58"}]}
 
 
+# ---------- 假的 QQ 开放平台（v2.3，挂在 8099 的 /qq 下面）：附件下载、富媒体上传、发消息 ----------
+QQ = {"files": [], "msgs": []}
+PNG1 = bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360f8cfc0000003010100c9fe92ef0000000049454e44ae426082")
+
+
+@ds.get("/qq/att/{name}")
+def qq_att(name: str):
+    from fastapi.responses import Response
+    if name == "404":
+        return Response(status_code=404)
+    return Response(PNG1 if name.endswith(".png") else ("QQ 发来的文件：" + name).encode("utf-8"),
+                    media_type="image/png" if name.endswith(".png") else "application/octet-stream")
+
+
+@ds.post("/qq/v2/users/{oid}/files")
+async def qq_files(oid: str, r: Request):
+    j = await r.json()
+    QQ["files"].append({"oid": oid, "file_type": j.get("file_type"), "n": len(j.get("file_data") or ""), "srv_send_msg": j.get("srv_send_msg")})
+    return {"file_uuid": "U1", "file_info": f"FI_{len(QQ['files'])}", "ttl": 3600}
+
+
+@ds.post("/qq/v2/users/{oid}/messages")
+async def qq_msgs(oid: str, r: Request):
+    j = await r.json()
+    QQ["msgs"].append(dict(j, oid=oid))
+    return {"id": "m1", "timestamp": 1}
+
+
+@ds.get("/__qq")
+def qq_seen():
+    return QQ
+
+
 lhm = FastAPI()
 
 

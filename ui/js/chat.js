@@ -25,13 +25,39 @@ function chipHTML(e) {
   var s = stepCount(e, '联网搜索'), r = stepCount(e, '读网页');
   if (s || r) bits.push('联网 ' + s + ' 搜' + (r ? ' ' + r + ' 读' : ''));
   if (stepCount(e, '查了说明书')) bits.push('查了说明书');
-  var fs = e.files || [], ni = fs.filter(function (f) { return f.kind === 'img'; }).length, nf = fs.filter(function (f) { return f.kind !== 'img'; }).length;
+  var fs = e.files || [], ni = fs.filter(function (f) { return f.kind === 'img'; }).length, nf = fs.filter(function (f) { return f.kind !== 'img' && !isOut(f); }).length;
+  var no = fs.filter(isOut).length;
   if (ni) bits.push('看了 ' + ni + ' 张图');
   if (nf) bits.push('读了 ' + nf + ' 个文件');
+  if (no) bits.push('做好 ' + no + ' 个文件');
   if (e.cost) bits.push('¥' + (+e.cost).toFixed(4));
   if (e.latency) bits.push((+e.latency).toFixed(1) + ' 秒');
   return '<button class="why-chip" data-ev="' + e.id + '" style="--c:' + ROUTES[e.to].color + '" aria-pressed="' + (CHAT.sel === e.id && CHAT.tab === 'event') + '">' +
     bits.map(esc).join(' · ') + ' <span aria-hidden="true">›</span></button>';
+}
+/* 做好的文件（v2.3）：这件事在工作区里做出来的视频、音频、图片，回复下面直接能看、能听；「打开」用系统默认的程序，「在文件夹里显示」开资源管理器。
+   名字后面「｜」带着时长、分辨率。别的文件（脚本、网页）只列名字。 */
+function isOut(f) { return f.kind === 'out' || f.kind === 'outd' || f.kind === 'outf'; }
+function outKind(n) { return /\.(mp4|m4v|mov|webm|mkv|3gp)$/i.test(n) ? 'video' : /\.(wav|mp3|m4a|aac|flac|ogg|opus)$/i.test(n) ? 'audio' : /\.(png|jpe?g|gif|webp)$/i.test(n) ? 'image' : ''; }
+function outsHTML(e) {
+  var fs = (e.files || []).filter(isOut); if (!fs.length) return '';
+  var media = fs.filter(function (f) { return f.kind === 'out'; }), dirs = fs.filter(function (f) { return f.kind === 'outd'; }), rest = fs.filter(function (f) { return f.kind === 'outf'; });
+  var card = function (f) {
+    var nm = f.name.split('｜'), k = outKind(nm[0]), u = '/api/chat/out/' + f.id;
+    var view = k === 'video' ? '<video src="' + u + '" controls preload="metadata" playsinline></video>' : k === 'audio' ? '<audio src="' + u + '" controls preload="metadata"></audio>' :
+      k === 'image' ? '<button class="mo-img" data-out-img="' + f.id + '" aria-label="看大图"><img src="' + u + '" alt="" loading="lazy" decoding="async"></button>' : '';
+    return '<div class="mo mo-' + (k || 'file') + '">' + view + '<div class="mo-n"><b title="' + esc(f.path) + '">' + esc(nm[0]) + '</b><span class="num">' + esc(nm[1] || fmtSize(f.size)) + '</span></div>' +
+      '<div class="mo-b"><button class="btn mini" data-out-open="' + f.id + '" data-how="file">打开</button><button class="btn mini" data-out-open="' + f.id + '" data-how="folder">在文件夹里显示</button></div></div>';
+  };
+  var dirRow = dirs.map(function (f) { var nm = f.name.split('｜'); return '<div class="mo-row">' + ICONS.file + '<span>文件夹 <b title="' + esc(f.path) + '">' + esc(nm[0]) + '</b> · ' + esc(nm[1] || '') + '</span><button class="btn mini" data-out-open="' + f.id + '" data-how="folder">打开文件夹</button></div>'; }).join('');
+  var restRow = rest.length ? '<div class="mo-row">' + ICONS.file + '<span>还写了：' + rest.slice(0, 4).map(function (f) { return '<b title="' + esc(f.path) + '">' + esc(f.name) + '</b>'; }).join('、') + (rest.length > 4 ? ' 等 ' + rest.length + ' 个' : '') +
+    '</span><button class="btn mini" data-out-open="' + rest[0].id + '" data-how="folder">在文件夹里显示</button></div>' : '';
+  return '<div class="m-outs"><div class="mo-h">做好的文件</div>' + (media.length ? '<div class="mo-grid">' + media.map(card).join('') + '</div>' : '') + dirRow + restRow + '</div>';
+}
+function fmtSize(n) { n = +n || 0; return n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n / 1024) + ' KB' : n < 1073741824 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1073741824).toFixed(2) + ' GB'; }
+function outOpen(t) {
+  if (!useLive()) { toast('演示模式打不开'); return; }
+  api('POST', '/api/chat/out/' + t.dataset.outOpen + '/open', { how: t.dataset.how || 'folder' }).then(function (j) { toast(j.msg); }).catch(function (e) { toast(e.message, 5000); });
 }
 function msgHTML(e) {
   var src = e.src === 'QQ' ? '<span class="src-qq">QQ</span>' : '';
@@ -41,13 +67,13 @@ function msgHTML(e) {
   var pics = (e.files || []).filter(function (f) { return f.kind === 'img'; });
   var me = '<div class="msg me"><div class="bubble">' + esc(e.text) + (pics.length ? '<div class="m-imgs">' + pics.map(function (f) { return '<button class="m-img" data-img="' + f.id + '" aria-label="看大图"><img src="/api/chat/file/' + f.id + '" alt="" loading="lazy" decoding="async"></button>'; }).join('') + '</div>' : '') +
     '</div><div class="meta">' + src + esc((e.date ? e.date + ' ' : '') + e.t) + '</div></div>';
-  var rd = (e.files || []).filter(function (f) { return f.kind !== 'img'; });
+  var rd = (e.files || []).filter(function (f) { return f.kind !== 'img' && !isOut(f); });
   var rdl = rd.length ? '<div class="m-files">' + ICONS.file + '<span>读了：' + rd.slice(0, 4).map(function (f) { return '<b title="' + esc(f.path) + '">' + esc(f.name) + '</b>'; }).join('、') + (rd.length > 4 ? ' 等 ' + rd.length + ' 个' : '') + '</span></div>' : '';
   var body;
   if (e.status === 'running') body = '<div class="bubble typing"><i></i><i></i><i></i><span>' + esc(e.result || '正在处理……') + '</span></div>';
   else if (e.status === 'queued') body = '<div class="bubble queued"><div class="q-tag">排队中 · 涉及隐私，等本地模型能用了再回你</div>' + mdHTML(e.reply || '') + '</div>';
   else body = '<div class="bubble md">' + (e.reply ? mdHTML(e.reply) : '<p class="cap">（没有回复）</p>') + fixHint(e.reply, e) + '</div>';
-  return me + '<div class="msg ai" data-id="' + e.id + '" style="--c:' + ROUTES[e.to].color + '"><span class="ai-dot" aria-hidden="true"></span><div class="ai-col">' + body + rdl + chipHTML(e) + '</div></div>';
+  return me + '<div class="msg ai" data-id="' + e.id + '" style="--c:' + ROUTES[e.to].color + '"><span class="ai-dot" aria-hidden="true"></span><div class="ai-col">' + body + (e.status === 'running' ? '' : outsHTML(e)) + rdl + chipHTML(e) + '</div></div>';
 }
 /* 出了问题的回复：直接给"下一步去哪"的按钮（出了什么事、为什么、怎么办） */
 function fixHint(r, e) {
@@ -82,7 +108,7 @@ function renderChat() {
     '<button class="btn c-force" type="button" id="cForce" aria-expanded="' + !!CHAT.routeOpen + '" title="指定这一条交给谁（默认决策脑自己分）">交给：' + esc(CHAT.force === 'cl' ? ROUTES.cl.name : FORCE_NAME[CHAT.force]) + '</button>' +
     '<button class="btn primary" type="submit" id="cSend"' + (live ? '' : ' disabled') + '>发送</button>' +
     '<input type="file" id="cFile" multiple hidden></form><div class="c-drop" id="cDrop">松开：把文件带上（放进工作区）</div></div>';
-  CHAT.sig = ''; fillChatLog(true); chatAttsDraw();
+  CHAT.sig = ''; CHAT.logSig = ''; fillChatLog(true); chatAttsDraw();
 }
 /* 抽屉：展开、收起 */
 function chatOpen(id) {
@@ -105,8 +131,9 @@ function fillChatLog(force) {
   var near = force || log.scrollHeight - log.scrollTop - log.clientHeight < 80;
   var list = chatList();
   var more = useLive() && !CHAT.more ? '<div class="more-row"><button class="linkbtn" id="chatMore">看更早的</button></div>' : '';
-  log.innerHTML = list.length || CHAT.pending ? more + list.map(msgHTML).join('') + pendingHTML()
+  var html = list.length || CHAT.pending ? more + list.map(msgHTML).join('') + pendingHTML()
     : '<div class="chat-empty"><b>和它说点什么</b><p>比如：「你能做什么」「帕鲁最近更新了什么」「每天晚上十点提醒我喝水」「记住我的显示器是 27 寸的」。</p><p class="cap">QQ 上发的消息也会出现在这里。处理到哪一步在上面「现在」那块看。</p></div>';
+  if (html !== CHAT.logSig || !log.firstChild) { CHAT.logSig = html; log.innerHTML = html; }      // 没变就不重画：正在放的视频、音频不会每 5 秒被打断（v2.3）
   if (near) log.scrollTop = log.scrollHeight;
 }
 /* ---------- Agent 状态（对话页右边的大仪表盘 + 总览上的小卡片） ----------
@@ -406,7 +433,7 @@ function chatSend() {
   if ((!text && !atts.length) || CHAT.pending) return;
   if (atts.some(function (a) { return a.img && !a.url; })) { toast('图片还在读，等一下'); return; }
   if (atts.some(function (a) { return a.err; })) { toast('有文件没传上去，先去掉它（点 ×）'); return; }
-  if (atts.some(function (a) { return !a.rel; })) { toast('文件还在传，等一下'); return; }
+  if (atts.some(function (a) { return !a.rel || a.done === false; })) { toast('文件还在传，等一下'); return; }
   inp.value = ''; autoGrow(inp); CHAT.atts = []; chatAttsDraw();
   chatAsk(text, atts, function () { inp.value = text; CHAT.atts = atts; chatAttsDraw(); });
 }
@@ -425,27 +452,33 @@ function chatAsk(text, atts, undo) {
    PNG / JPEG / WEBP / GIF 10MB 以内的图片还会交给 DeepSeek 看（最多 6 张）。发之前上面一排，能去掉 */
 function chatAttsDraw() {
   var b = $('#cAtts'); if (!b) return;
-  var ni = CHAT.atts.filter(function (a) { return a.img; }).length, nf = CHAT.atts.length - ni;
+  var ni = CHAT.atts.filter(function (a) { return a.img; }).length, nd = CHAT.atts.filter(function (a) { return a.dir; }).length, nf = CHAT.atts.length - ni - nd;
   b.innerHTML = CHAT.atts.map(function (a, i) {
-    var ext = (a.name.split('.').pop() || '文件').slice(0, 5).toUpperCase();
-    var st = a.err ? '<i class="err">没传上</i>' : a.rel ? '' : '<i>' + (a.pct || 0) + '%</i>';
-    return '<span class="c-att' + (a.img ? '' : ' file') + '" title="' + esc(a.name) + '">' + (a.img && a.url ? '<img src="' + a.url + '" alt="">' : '<b>' + esc(ext) + '</b>') + st +
+    var ext = a.dir ? '文件夹' : (a.name.split('.').pop() || '文件').slice(0, 5).toUpperCase();
+    var st = a.err ? '<i class="err">没传上</i>' : a.rel && a.done !== false ? (a.dir ? '<i>' + a.n + ' 个</i>' : '') : '<i>' + (a.pct || 0) + '%</i>';
+    return '<span class="c-att' + (a.img ? '' : ' file') + (a.dir ? ' dir' : '') + '" title="' + esc(a.name + (a.dir && a.n ? '（' + a.n + ' 个文件）' : '')) + '">' + (a.img && a.url ? '<img src="' + a.url + '" alt="">' : '<b>' + esc(ext) + '</b>') + st +
       '<button type="button" data-unatt="' + i + '" aria-label="去掉">' + ICONS.cross + '</button></span>';
   }).join('') +
-    (CHAT.atts.length ? '<span class="cap">放进工作区' + (ni ? ' · ' + ni + ' 张图片会交给 DeepSeek 看' : '') + (nf ? ' · ' + nf + ' 个文件' : '') + '</span>' : '');
+    (CHAT.atts.length ? '<span class="cap">放进工作区' + (ni ? ' · ' + ni + ' 张图片会交给 DeepSeek 看' : '') + (nf ? ' · ' + nf + ' 个文件' : '') + (nd ? ' · ' + nd + ' 个文件夹' : '') + '</span>' : '');
 }
-function chatUpload(a, f) {
-  var x = new XMLHttpRequest(); a.xhr = x;
-  x.open('POST', '/api/ws/upload?name=' + encodeURIComponent(a.name));
+function upOne(f, name, into, sub, onprog, cb) {
+  var x = new XMLHttpRequest();
+  x.open('POST', '/api/ws/upload?name=' + encodeURIComponent(name) + (into ? '&into=' + encodeURIComponent(into) + '&sub=' + encodeURIComponent(sub || '') : ''));
   x.setRequestHeader('X-Agent', '1');
-  x.upload.onprogress = function (ev) { if (ev.lengthComputable) { a.pct = Math.floor(ev.loaded * 100 / ev.total); chatAttsDraw(); } };
+  x.upload.onprogress = function (ev) { if (ev.lengthComputable && onprog) onprog(ev.loaded, ev.total); };
   x.onload = function () {
     var j = {}; try { j = JSON.parse(x.responseText); } catch (e) { /* 不是 JSON */ }
-    if (x.status === 200 && j.rel) { a.rel = j.rel; a.xhr = null; } else { a.err = true; toast(a.name + ' 没传上：' + (j.detail || x.status), 5000); }
-    chatAttsDraw();
+    if (x.status === 200 && j.rel) cb(null, j); else cb(j.detail || String(x.status));
   };
-  x.onerror = function () { a.err = true; toast(a.name + ' 没传上（连不上后端）', 5000); chatAttsDraw(); };
+  x.onerror = function () { cb('连不上后端'); };
   x.send(f);
+  return x;
+}
+function chatUpload(a, f) {
+  a.xhr = upOne(f, a.name, '', '', function (l, t) { a.pct = Math.floor(l * 100 / t); chatAttsDraw(); }, function (err, j) {
+    if (err) { a.err = true; toast(a.name + ' 没传上：' + err, 5000); } else { a.rel = j.rel; a.xhr = null; }
+    chatAttsDraw();
+  });
 }
 function chatAddFiles(list) {
   if (!useLive()) { toast('演示模式不能发文件'); return; }
@@ -461,9 +494,69 @@ function chatAddFiles(list) {
   chatAttsDraw();
   var inp = $('#cIn'); if (inp) inp.focus();
 }
-function chatImgBox(id) {
+/* 整个文件夹拖进来（v2.3）：先数清里面的文件（跳过 node_modules、.git 这些，最多 2000 个），后端建好同名文件夹，再三个三个地传，子文件夹原样保留 */
+var DIR_SKIP = { 'node_modules': 1, '.git': 1, '__pycache__': 1, '.venv': 1, '$RECYCLE.BIN': 1, 'System Volume Information': 1 }, DIR_MAX = 2000;
+function dirWalk(entry, sub, out, done) {
+  var rd = entry.createReader(), todo = 1, fin = function () { if (!--todo) done(); };
+  (function more() {
+    rd.readEntries(function (ents) {
+      if (!ents.length) { fin(); return; }
+      ents.forEach(function (e) {
+        if (out.length >= DIR_MAX) { out.over = true; return; }
+        if (e.isDirectory) { if (!DIR_SKIP[e.name]) { todo++; dirWalk(e, sub ? sub + '/' + e.name : e.name, out, fin); } }
+        else out.push({ entry: e, sub: sub });
+      });
+      more();
+    }, function () { fin(); });
+  })();
+}
+function chatAddDir(entry) {
+  if (!useLive()) { toast('演示模式不能发文件'); return; }
+  var a = { url: '', name: entry.name, dir: true, img: false, pct: 0, rel: '', n: 0, done: false, xhrs: [] }, list = [];
+  CHAT.atts.push(a); chatAttsDraw();
+  var fail = function (msg) { a.err = true; a.stop = true; a.xhrs.forEach(function (x) { x.abort(); }); toast('文件夹「' + a.name + '」没传完：' + msg, 6000); chatAttsDraw(); };
+  dirWalk(entry, '', list, function () {
+    if (a.stop) return;
+    if (list.over) { fail('里面的文件超过 ' + DIR_MAX + ' 个，分开拖，或者先打成压缩包'); return; }
+    if (!list.length) { fail('里面没有文件'); return; }
+    a.n = list.length;
+    api('POST', '/api/ws/recvdir', { name: entry.name }).then(function (j) {
+      var i = 0, running = 0, okN = 0, sent = 0, total = 0, sizes = {};
+      var next = function () {
+        if (a.stop) return;
+        if (okN === list.length) { a.rel = j.rel; a.done = true; a.pct = 100; chatAttsDraw(); return; }
+        while (running < 3 && i < list.length) (function (it, k) {
+          running++;
+          it.entry.file(function (f) {
+            if (a.stop) return;
+            if (f.size > 2 * 1024 * 1024 * 1024) { fail(f.name + ' 超过 2GB'); return; }
+            total += f.size;
+            var x = upOne(f, f.name, j.rel, it.sub, function (l) { sent += l - (sizes[k] || 0); sizes[k] = l; a.pct = Math.min(99, Math.floor((okN / list.length) * 100)); chatAttsDraw(); }, function (err) {
+              running--;
+              if (err) { fail(f.name + '：' + err); return; }
+              okN++; a.pct = Math.floor(okN * 100 / list.length); chatAttsDraw(); next();
+            });
+            a.xhrs.push(x);
+          }, function () { fail('读不了里面的一个文件'); });
+        })(list[i], i++);
+      };
+      next();
+    }).catch(function (e) { fail(e.message); });
+  });
+}
+/* 拖进来的东西：有文件夹就走文件夹那条路，别的照旧 */
+function chatAddDropped(dt) {
+  var ents = [];
+  [].forEach.call(dt.items || [], function (it) { var e = it.kind === 'file' && it.webkitGetAsEntry && it.webkitGetAsEntry(); if (e) ents.push(e); });
+  var dirs = ents.filter(function (e) { return e.isDirectory; });
+  if (!dirs.length) { chatAddFiles(dt.files); return; }
+  var plain = [].filter.call(dt.files || [], function (f) { return !dirs.some(function (d) { return d.name === f.name; }); });
+  if (plain.length) chatAddFiles(plain);
+  dirs.forEach(chatAddDir);
+}
+function chatImgBox(id, out) {
   var x = document.createElement('div'); x.className = 'c-box'; x.setAttribute('role', 'dialog');
-  x.innerHTML = '<img src="/api/chat/file/' + id + '" alt=""><span class="cap">点任意地方或按 Esc 关掉</span>';
+  x.innerHTML = '<img src="/api/chat/' + (out ? 'out/' : 'file/') + id + '" alt=""><span class="cap">点任意地方或按 Esc 关掉</span>';
   x.onclick = function () { x.remove(); };
   document.body.appendChild(x);
 }
@@ -531,8 +624,10 @@ function chatClick(ev) {
   else if (t.id === 'chatMore') { t.disabled = true; api('GET', '/api/events?limit=300').then(function (l) { CHAT.more = l; var log = $('#chatLog'), h = log.scrollHeight; fillChatLog(false); log.scrollTop = log.scrollHeight - h; }).catch(function (e) { toast(e.message); }); }
   else if (t.dataset.redo) chatRedo(t);
   else if (t.id === 'cClip') $('#cFile').click();
-  else if (t.dataset.unatt != null) { var ua = CHAT.atts.splice(+t.dataset.unatt, 1)[0]; if (ua && ua.xhr) ua.xhr.abort(); chatAttsDraw(); }
+  else if (t.dataset.unatt != null) { var ua = CHAT.atts.splice(+t.dataset.unatt, 1)[0]; if (ua) { ua.stop = true; if (ua.xhr) ua.xhr.abort(); (ua.xhrs || []).forEach(function (x) { x.abort(); }); } chatAttsDraw(); }
   else if (t.dataset.img) chatImgBox(t.dataset.img);
+  else if (t.dataset.outImg) chatImgBox(t.dataset.outImg, true);
+  else if (t.dataset.outOpen) outOpen(t);
   else if (t.dataset.allowDir) {
     var ae = findChatEv(+t.dataset.ask); t.disabled = true;
     api('POST', '/api/files/dirs', { path: t.dataset.allowDir, cloud: true }).then(function (j) {
@@ -564,8 +659,27 @@ $('#view-chat').addEventListener('dragleave', function (ev) { if (!ev.relatedTar
 $('#view-chat').addEventListener('drop', function (ev) {
   var d = $('#cDrop'); if (d) d.classList.remove('on');
   if (!ev.dataTransfer || !ev.dataTransfer.files.length) return;
-  ev.preventDefault(); chatAddFiles(ev.dataTransfer.files);
+  ev.preventDefault(); ev.stopPropagation(); chatAddDropped(ev.dataTransfer);
 });
+/* 拖到主窗口任何地方都能接（v2.3）：主页上拖着文件进来，整个窗口亮一圈提示；松开就展开对话、把文件带上。工具窗口（生图、配音……）不管 */
+(function () {
+  var tip = null, n = 0;
+  var ok = function (ev) { return !TOOL && useLive() && S.view === 'home' && root.dataset.mode === 'normal' && ev.dataTransfer && [].indexOf.call(ev.dataTransfer.types || [], 'Files') >= 0 && !$('#view-chat').contains(ev.target); };
+  var hide = function () { n = 0; if (tip) { tip.remove(); tip = null; } };
+  document.addEventListener('dragenter', function (ev) {
+    if (!ok(ev)) return;
+    ev.preventDefault(); n++;
+    if (!tip) { tip = document.createElement('div'); tip.className = 'drop-all'; tip.innerHTML = '<b>松开：把文件交给 Agent</b><span>放进工作区，文件夹也行；然后在对话里说要拿它做什么</span>'; document.body.appendChild(tip); }
+  });
+  document.addEventListener('dragover', function (ev) { if (ok(ev) || (tip && !$('#view-chat').contains(ev.target))) ev.preventDefault(); });
+  document.addEventListener('dragleave', function (ev) { if (tip && (--n <= 0 || !ev.relatedTarget)) hide(); });
+  document.addEventListener('drop', function (ev) {
+    if (!tip && !ok(ev)) return;
+    var good = ok(ev); hide();
+    if (!good || !ev.dataTransfer.files.length) return;
+    ev.preventDefault(); chatOpen(); chatAddDropped(ev.dataTransfer);
+  });
+})();
 document.addEventListener('keydown', function (ev) {
   if (ev.key !== 'Escape') return;
   var b = $('.c-box'); if (b) { b.remove(); return; }

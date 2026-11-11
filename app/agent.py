@@ -231,9 +231,11 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
         steps.append(["收到图片", f"{len(images)} 张"])
     received = received or []
     for x in received:
-        files.note(eid, "file", x["path"], x["name"], x["size"])
+        files.note(eid, "dir" if x.get("dir") else "file", x["path"], x["name"], x["size"])
     if received:
-        steps.append(["收到文件", f"{len(received)} 个 · 放进了工作区 {Path(received[0]['rel']).parent}"])
+        nd = sum(1 for x in received if x.get("dir"))
+        steps.append(["收到文件", (f"{nd} 个文件夹 · " if nd else "") + (f"{len(received) - nd} 个文件 · " if len(received) > nd else "") +
+                      f"放进了工作区 {Path(received[0]['rel']).parent}"])
     recv_txt = workspace.recv_note(received)
 
     def prog(msg):
@@ -367,6 +369,10 @@ async def handle(text: str, src="qq", user="me", job=None, force=None, allow_pri
             reply, cost = out["text"], cost_all
             if web and web.get("ws"):
                 _remember_ws(user, steps, reply)
+                made = await asyncio.to_thread(workspace.note_made, eid, t0)      # v2.3：这件事做出来的文件，回复下面给卡片
+                if made["n"]:
+                    first = (made["media"] or made["folders"] or made["others"])[0]["name"]
+                    steps.append(["做好的文件", f"{first}" + (f" 等 {made['n']} 个" if made["n"] > 1 else "")])
             steps.append(["交给 DeepSeek", f"{'思考' if thinking else '快速'}模式" + (f" · 联网 {web['searched']} 搜 {web['fetched']} 读" if searched else "") +
                           (f" · 工作区 {web['ws']} 步" if web and web.get("ws") else "") + f" · ¥{cost_all:.4f}"])
             used_claude = any(s.get("claude") for s in snips)
@@ -453,12 +459,32 @@ async def process_queue():
     db.kv_set("queue", rest)
 
 
-async def on_qq(text, openid, msg_id):
-    ev = await handle(text, "qq", openid)
+async def on_qq(text, openid, msg_id, atts=None):
+    """QQ 上发来的一条。v2.3：带的图片、文件先收进 工作区\\收到的\\（图片也给 DeepSeek 看）；这件事做出来的图片发回 QQ（最多 3 张）。"""
+    from . import qq as qqmod
+    rels, imgs, bad = await qqmod.fetch_attachments(atts)
+    got = await asyncio.to_thread(workspace.received, rels)
+    if not text and not got and bad:
+        await BOT.reply(openid, "附件没收下来：" + "；".join(bad), msg_id)
+        return
+    text = text or ("看看这张图。" if imgs else "收到这些文件，先放在工作区。")
+    ev = await handle(text, "qq", openid, images=imgs or None, received=got or None)
     if ev and ev.get("reply"):
-        ok, info = await BOT.reply(openid, plain(ev["reply"]), msg_id)
+        ok, info = await BOT.reply(openid, plain(ev["reply"]) + ("\n（" + "；".join(bad) + "）" if bad else ""), msg_id)
         if not ok:
             db.update("events", ev["id"], {"result": (ev.get("result") or "") + f"\n（QQ 回复失败：{info}）"})
+    if ev and settings.S.get("qqSendImg", True):
+        sent, steps = 0, None
+        for r in db.q("SELECT path,name,size FROM chat_files WHERE event_id=? AND kind='out' ORDER BY id", (ev["id"],)):
+            p = Path(r["path"])
+            if sent >= 3 or p.suffix.lower() not in (".png", ".jpg", ".jpeg") or not p.is_file():
+                continue
+            ok, info = await BOT.send_image(openid, p, msg_id)
+            sent += 1
+            steps = steps or db.jl((db.one("SELECT steps FROM events WHERE id=?", (ev["id"],)) or {}).get("steps"), [])
+            steps.append(["发回 QQ", f"{p.name} · {'发出去了' if ok else '没发成：' + info}"])
+        if steps:
+            db.update("events", ev["id"], {"steps": steps})
 
 
 BOT.on_message = on_qq

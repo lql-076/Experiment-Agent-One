@@ -4,11 +4,18 @@
 只回复你绑定的那个 QQ（openid）；陌生人的消息只记一笔，不回复。
 被动回复：用户消息后 60 分钟内、每条最多回 4 次。主动消息（提醒）不带 msg_id，你在 QQ 里关掉"允许主动发送"就会失败，
 失败后由 notify.py 改用电脑弹窗和常驻屏卡片。
+
+v2.3：QQ 里发的图片、文件也收（消息的 attachments 里有下载地址、文件名、大小）：下载进 工作区\收到的\日期\，图片另外交给 DeepSeek 看；
+Agent 做好的图片能发回 QQ（富媒体：先 POST /v2/users/{openid}/files 用 file_data 传 base64 拿到 file_info，再发 msg_type=7 的消息）。
+视频和别的文件先不发（官方的文件类型 file_type=4 还没开放），回复里给路径。
 """
 import asyncio
+import base64
 import json
 import os
+import re
 import time
+from pathlib import Path
 
 import httpx
 import websockets
@@ -19,6 +26,78 @@ TOKEN_URL = os.environ.get("AGENT_QQ_TOKEN_URL", "https://bots.qq.com/app/getApp
 API = os.environ.get("AGENT_QQ_API", "https://api.sgroup.qq.com")
 SANDBOX_API = os.environ.get("AGENT_QQ_API", "https://sandbox.api.sgroup.qq.com")
 INTENT_C2C = 1 << 25
+
+MAX_ATT = 200 << 20             # QQ 发来的附件一个最多收 200 MB
+MAX_SEND_IMG = 10 << 20         # 发回 QQ 的图片一张最多 10 MB
+EXT_OF = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "video/mp4": ".mp4",
+          "audio/silk": ".silk", "audio/amr": ".amr", "audio/mpeg": ".mp3", "audio/wav": ".wav", "voice": ".silk", "application/pdf": ".pdf", "text/plain": ".txt"}
+
+
+def attachments(d) -> list:
+    """一条 C2C 消息里的附件 → [{url, name, type, size}]。地址有时不带 https://，补上。"""
+    out = []
+    for a in (d.get("attachments") or [])[:10]:
+        if not isinstance(a, dict):
+            continue
+        url = str(a.get("url") or "").strip()
+        if not url:
+            continue
+        if url.startswith("//"):
+            url = "https:" + url
+        elif not re.match(r"https?://", url, re.I):
+            url = "https://" + url
+        ct = str(a.get("content_type") or "").split(";")[0].strip().lower()
+        name = str(a.get("filename") or "").strip()
+        if not name:
+            name = f"QQ{'图片' if ct.startswith('image') else '语音' if 'voice' in ct or ct.startswith('audio') else '视频' if ct.startswith('video') else '文件'}_{time.strftime('%H%M%S')}{EXT_OF.get(ct, '')}"
+        elif "." not in name and EXT_OF.get(ct):
+            name += EXT_OF[ct]
+        out.append({"url": url, "name": name, "type": ct, "size": int(a.get("size") or 0)})
+    return out
+
+
+async def fetch_attachments(atts):
+    """把附件下载进 工作区\\收到的\\日期\\（流式，先写 .part）。返回 (收到的相对路径, 能给模型看的图片, 没收下来的说明)。"""
+    from . import files, workspace
+    rels, imgs, bad = [], [], []
+    if not atts:
+        return rels, imgs, bad
+    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=15, read=120, write=30, pool=None), follow_redirects=True) as c:
+        for a in atts:
+            if a["size"] > MAX_ATT:
+                bad.append(f"{a['name']} 太大了（超过 200 MB）")
+                continue
+            try:
+                dst = await asyncio.to_thread(workspace.recv_target, a["name"])
+                tmp, got = dst.with_name(dst.name + ".part"), 0
+                try:
+                    async with c.stream("GET", a["url"]) as r:
+                        if r.status_code != 200:
+                            raise RuntimeError(f"下载地址返回 {r.status_code}")
+                        with open(tmp, "wb") as f:
+                            async for chunk in r.aiter_bytes(1 << 16):
+                                got += len(chunk)
+                                if got > MAX_ATT:
+                                    raise RuntimeError("太大了（超过 200 MB）")
+                                f.write(chunk)
+                    os.replace(tmp, dst)
+                finally:
+                    if tmp.exists():
+                        tmp.unlink()
+            except Exception as e:
+                bad.append(f"{a['name']} 没收下来（{str(e)[:60] or type(e).__name__}）")
+                continue
+            rels.append(workspace.rel(dst))
+            if got <= files.MAX_IMG and len(imgs) < files.MAX_UPLOADS:           # 图片（按文件头认）：另外存一份给聊天记录，交给 DeepSeek 看
+                head = dst.read_bytes()[:16]
+                sn = files._sniff(head)
+                if sn:
+                    try:
+                        imgs.append(files.save_upload(f"data:{sn[1]};base64," + base64.b64encode(dst.read_bytes()).decode(), len(imgs)))
+                    except ValueError:
+                        pass
+    return rels, imgs, bad
+
 
 ERRORS = {
     40034105: "没有主动消息权限",
@@ -35,7 +114,7 @@ class QQ:
         self.token, self.token_exp = "", 0.0
         self.session, self.seq = None, None
         self.task = None
-        self.on_message = None          # async fn(text, openid, msg_id)
+        self.on_message = None          # async fn(text, openid, msg_id, atts)
         self.msg_seq = {}               # msg_id -> 已回复次数
         self.last_user_msg = {}         # openid -> (msg_id, ts)
 
@@ -90,6 +169,45 @@ class QQ:
 
     async def reply(self, openid, text, msg_id):
         return await self.send(openid, text, msg_id)
+
+    async def send_image(self, openid, path, msg_id=None):
+        """发一张图片（PNG / JPEG，10 MB 以内）：先传上去拿 file_info，再发富媒体消息。返回 (成功?, 说明)。"""
+        p = Path(path)
+        try:
+            b = p.read_bytes()
+        except OSError as e:
+            return False, f"读不到图片：{type(e).__name__}"
+        if len(b) > MAX_SEND_IMG:
+            return False, "图片超过 10 MB"
+        if not (b[:8] == b"\x89PNG\r\n\x1a\n" or b[:3] == b"\xff\xd8\xff"):
+            return False, "QQ 只收 PNG / JPEG 图片"
+        try:
+            async with httpx.AsyncClient(timeout=60) as c:
+                r = await c.post(f"{self.api}/v2/users/{openid}/files", headers=await self._headers(),
+                                 json={"file_type": 1, "file_data": base64.b64encode(b).decode(), "srv_send_msg": False})
+                try:
+                    j = r.json()
+                except Exception:
+                    j = {}
+                info = j.get("file_info") if isinstance(j, dict) else None
+                if r.status_code not in (200, 201, 202) or not info:
+                    code = j.get("code") or j.get("err_code") if isinstance(j, dict) else None
+                    return False, ERRORS.get(code, f"QQ 没收下图片（{r.status_code}）：{(j.get('message') if isinstance(j, dict) else '') or r.text[:120]}")
+                body = {"content": " ", "msg_type": 7, "media": {"file_info": info}}
+                if msg_id and self.msg_seq.get(msg_id, 0) < 4:
+                    self.msg_seq[msg_id] = self.msg_seq.get(msg_id, 0) + 1
+                    body.update(msg_id=msg_id, msg_seq=self.msg_seq[msg_id])
+                r = await c.post(f"{self.api}/v2/users/{openid}/messages", json=body, headers=await self._headers())
+            try:
+                j = r.json()
+            except Exception:
+                j = {}
+            code = j.get("code") or j.get("err_code") if isinstance(j, dict) else None
+            if r.status_code in (200, 201, 202) and not code:
+                return True, "已发出"
+            return False, ERRORS.get(code, f"QQ 返回 {r.status_code}：{j.get('message') or r.text[:120]}")
+        except Exception as e:
+            return False, f"发送失败：{e}"
 
     async def push(self, text):
         """主动消息（提醒用）。"""
@@ -223,8 +341,9 @@ class QQ:
             db.kv_set("qq_stranger", {"openid": openid[:8] + "…", "ts": time.time()})
             return
         self.last_user_msg[openid] = (msg_id, time.time())
-        if self.on_message and text:
-            await self.on_message(text, openid, msg_id)
+        atts = attachments(d)
+        if self.on_message and (text or atts):
+            await self.on_message(text, openid, msg_id, atts)
 
 
 BOT = QQ()

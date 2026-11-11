@@ -474,14 +474,26 @@ async def chat(body: dict = Body(...)):
     return _start_job(text, **kw)
 
 
+@app.post("/api/ws/recvdir")
+async def ws_recvdir(body: dict = Body(...)):
+    """整个文件夹拖进来（v2.3）：先建好 收到的\\日期\\文件夹名（重名加序号），返回它的相对路径；里面的文件再一个个传（/api/ws/upload 带 into、sub）。"""
+    try:
+        d = await asyncio.to_thread(workspace.recv_dir, body.get("name"))
+    except OSError as e:
+        raise HTTPException(400, f"工作文件夹用不了：{e}") from None
+    return {"rel": workspace.rel(d), "name": d.name}
+
+
 @app.post("/api/ws/upload")
-async def ws_upload(request: Request, name: str = ""):
+async def ws_upload(request: Request, name: str = "", into: str = "", sub: str = ""):
     """对话里拖进来、粘贴、回形针选的任何文件（v2.2）：原样流式存进 工作区\\收到的\\日期\\原文件名（重名加序号），一个最多 2 GB。
-    发消息时把返回的 rel 放进 /api/chat 的 files，DeepSeek 就知道文件在哪。"""
+    发消息时把返回的 rel 放进 /api/chat 的 files，DeepSeek 就知道文件在哪。into、sub：整个文件夹拖进来时，放进哪个文件夹的哪个子文件夹（v2.3）。"""
     if int(request.headers.get("content-length") or 0) > workspace.MAX_RECV:
         raise HTTPException(413, "太大了：一个文件最多 2 GB")
     try:
-        dst = await asyncio.to_thread(workspace.recv_target, name)
+        dst = await asyncio.to_thread(workspace.recv_target, name, into, sub)
+    except workspace.Denied as e:
+        raise HTTPException(400, str(e)) from None
     except OSError as e:
         raise HTTPException(400, f"工作文件夹用不了：{e}") from None
     tmp, got = dst.with_name(dst.name + ".part"), 0
@@ -508,6 +520,24 @@ def chat_file(fid: int):
     if not p:
         raise HTTPException(404, "这张图找不到了")
     return FileResponse(p, headers={"Cache-Control": "private, max-age=31536000"})
+
+
+@app.get("/api/chat/out/{fid}")
+def chat_out(fid: int):
+    """做好的文件（v2.3）：对话里直接看视频、图、听音频（支持拖进度条）。只给还在工作区里的。"""
+    p = workspace.out_row(fid)
+    if not p or not p.is_file():
+        raise HTTPException(404, "这个文件找不到了（被挪走或删了）")
+    return FileResponse(p, headers={"Cache-Control": "private, no-cache"})
+
+
+@app.post("/api/chat/out/{fid}/open")
+def chat_out_open(fid: int, body: dict = Body(default={})):
+    """做好的文件：用默认程序打开，或者在资源管理器里显示。"""
+    p = workspace.out_row(fid)
+    if not p:
+        raise HTTPException(404, "这个文件找不到了（被挪走或删了）")
+    return {"msg": workspace.reveal(p, "file" if body.get("how") == "file" else "folder")}
 
 
 # ---------------- 能读的文件夹（v1.8.17，只读；加文件夹 = 给 agent 加权限，只能在界面上点） ----------------
@@ -564,7 +594,7 @@ def ws_open(body: dict = Body(default={})):
             raise HTTPException(404, "还没清理过（半年清一次）")
         p = Path(st["last_list"])
     else:
-        p = workspace.BACKUP if w == "backup" else workspace.ensure()
+        p = workspace.BACKUP if w == "backup" else workspace.ensure() / workspace.RECV if w == "recv" else workspace.ensure()
         p.mkdir(parents=True, exist_ok=True)
     if paths.IS_WIN:
         os.startfile(str(p))          # 打开资源管理器（不是黑窗口）
