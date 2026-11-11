@@ -54,6 +54,9 @@
 - 内存信息：WMI
 - 硬件传感器：LibreHardwareMonitor
 - 真实下载：PyTorch、模型、Kev 权重、配音模型
+- 真的 Claude Code（v3.0）：沙箱里用假的命令行 `dev/fake_claude.py`（测试自己在 `dev/.run/claude` 建一个壳）。真的 `claude` **绝不在沙箱里用 `-p` 跑**（会用作者的额度）；Windows 上 `claude.cmd` 起不起得来、流式输出的编码、长活的耗时要在作者电脑上试
+- 真的语音（v3.0）：听写（Qwen3-ASR）、Breeze TTS 2（要 WSL2）、桌面窗口里的麦克风权限；沙箱里是假听写（`dev/fake_tts.py` 的 `/asr`，念什么写在 `dev/.run/fake_asr.txt`）、假 Breeze（`dev/mocks.py` 8093）、浏览器的假麦克风
+- 真的配乐（v3.0）：ACE-Step 1.5；沙箱里是假的（`dev/mocks.py` 8001）
 - 真的配音（Qwen3-TTS）：沙箱里没有显卡，配音服务换成假的 `dev/fake_tts.py`；音质、显存、速度、同一个人像不像都要在作者电脑上听
 - 真的时间轴对齐（Qwen3-ForcedAligner-0.6B，v1.8.14）：沙箱里用假的对齐器；能不能装上、对得准不准、要几秒、占多少显存要在作者电脑上试
 - 真的看图、读文件（v1.8.17）：沙箱用假的 DeepSeek；DeepSeek 真的看不看得懂截图、带图片时思考模式和工具能不能一起用、Windows 路径（E:\、带空格、网络路径）认不认得出、笔记很多时搜得快不快，要在作者电脑上试
@@ -69,6 +72,10 @@
 | --- | --- |
 | `check.sh` | 一条命令做完整回归，发版本前跑：ruff、演示模式界面、自检窗口、连后端的界面（主页、对话抽屉、工具窗口）、说明页、树状图、帧数统计、硬件读数和显存让路、开机自检和意外退出、更强的模型和换它重做、配音（本地和百炼云端）、生图（含角色）、一页一屏放下、Kev 权重 |
 | `serve.sh` | 起 / 停测试环境：假服务加测试后端，后端在 8765 |
+| `test_agent.py` | v3.0 Agent 的本事（56 项）：计划、技能、工具箱同步、下载只许公网、看视频抽帧、三个工具箱脚本真的跑一遍（Chromium + ffmpeg）、预算、插话、喊停、配音配乐生图当工具、Claude Code 引擎、配乐和语音的接口 |
+| `test_v23.py` | 文件进出工作区：音视频信息、PDF 和表格、收文件夹、做好的文件、放进工作区、QQ 收发文件 |
+| `fake_claude.py` | 假的 claude 命令行：照真的 `stream-json` 格式吐事件；`【没登录】【慢】【被拒】【出错】` 四个记号；收到的参数记在 `dev/.run/fake_claude_last.json` |
+| `ui/deck.py` | v3.0「指挥舱」点一遍：核心、指令条（直接发、插话、停下）、动手干活用谁、说话（假麦克风）、配乐窗口、设置三块、生图差分 |
 | `test_backend.py` | 测试后端：和真的一样，只是一键补齐的每一步换成假步骤；配音服务的启动命令换成 `fake_tts.py` |
 | `fake_tts_install.py` | 假的「安装配音」：输出和 `scripts/install_tts.py` 一样（讲解、pip、魔搭进度），几秒就完；`dev/.run/fake_tts_install_fail.flag` 在就装到一半失败一次，`fake_tts_install_slow.flag` 在就慢慢走 |
 | `fake_apiyi.py` | 假的 API易 生图接口（`mocks.py` 挂在 8096）：`GET /v1/models`（混着聊天模型和一个没收录的生图模型）；`/v1/images/generations`（JSON）、`/v1/images/edits`（multipart，带参考图）、`/v1beta/models/{id}:generateContent`（Nano Banana）；VIP 只认那 30 档、不许带 n；Seedream 要关水印、4.x 出 JPEG；Flux 只回链接（`/_fake/img/dl/…`）；按 size 出渐变 PNG（透明的带透明通道）；Key 只认 `sk-test-0000`；提示词里有「【拦截】」审核没过；`dev/.run/fake_img_slow.flag`（慢，里面写秒数；测停下、看动画）、`fake_img_quota.flag`（余额不够）、`fake_img_opaque.flag`（要透明也不透明）；`GET /_fake/img/log` 看收到的请求 |

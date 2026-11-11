@@ -37,10 +37,11 @@ with sync_playwright() as pw:
         p.wait_for_timeout(600)
         check(p.evaluate("S.view") == "home" and p.evaluate("document.querySelectorAll('#view-home .hm-card').length") == 4,
               "一打开是主页：现在、后台在跑、刚做完、Agent 状态四块")
-        check(p.evaluate("document.getElementById('view-chat').hidden") and p.evaluate("!!document.querySelector('.hm-strip')"), "对话收在最下面一条，平时不占地方")
+        check(p.evaluate("!document.getElementById('view-chat').classList.contains('open') && !!document.querySelector('#cBar #cIn') && getComputedStyle(document.getElementById('cPanel')).visibility === 'hidden'"),
+              "最下面一条指令条一直在（直接打字）；对话记录平时收着不占地方")
         p.keyboard.press("Control+Space")
         p.wait_for_timeout(500)
-        check(p.evaluate("!document.getElementById('view-chat').hidden && document.activeElement.id === 'cIn'"), "Ctrl 空格展开对话，光标在输入框里")
+        check(p.evaluate("document.getElementById('view-chat').classList.contains('open') && document.activeElement.id === 'cIn'"), "Ctrl 空格展开对话记录，光标在输入框里")
         p.fill("#cIn", "帮我搜一下最新的显卡价格，**加粗**试试")
         p.keyboard.press("Enter")
         seen = set()
@@ -77,7 +78,7 @@ with sync_playwright() as pw:
         p.click(".why-chip >> nth=-1")
         p.wait_for_timeout(600)
         pop = p.evaluate("(document.querySelector('#hmNow .hm-pop') || {}).innerText || ''")
-        check(p.evaluate("document.getElementById('view-chat').hidden || !document.getElementById('view-chat').classList.contains('open')") and "每一步" in pop and "联网搜索" in pop,
+        check(p.evaluate("!document.getElementById('view-chat').classList.contains('open')") and "每一步" in pop and "联网搜索" in pop,
               "点回复下面的小字：对话收起，「现在」打开细节（每一步、联网搜索）")
         check(p.evaluate("document.querySelectorAll('#hmNow .es-links a').length") >= 1 and p.evaluate("document.querySelectorAll('#hmNow [data-cfix]').length") == 4
               and p.evaluate("document.querySelectorAll('#hmNow [data-redo]').length") >= 1, "细节里有查过的网页、判错了、换它重做")

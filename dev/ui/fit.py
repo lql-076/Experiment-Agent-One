@@ -11,8 +11,8 @@ from playwright.sync_api import sync_playwright
 from common import launch
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "dev/.run/shots"
-SCROLL_OK = {"prep", "remind", "models", "cloud"}   # 整备、提醒列表、本地模型（v1.8.7 加了「安装配音」）、云端（v1.8.11 加了百炼 Key）：要动手操作的页，可以上下滚（v1.8.1 起）
-LISTS = "#chatLog, .hm-pop, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2, #ttsText, .tts-tl, .tts-vb, .fg-scroll"   # .tts-vb：配音页的音色面板（音色列表、设计、复刻表单，v1.8.12）；.fg-scroll：生图页里自己滚的几块（v1.8.16）
+SCROLL_OK = {"prep", "remind", "models", "cloud", "agent", "voice", "bgm"}   # 整备、提醒列表、本地模型（v1.8.7 加了「安装配音」）、云端（v1.8.11 加了百炼 Key）：要动手操作的页，可以上下滚（v1.8.1 起）
+LISTS = "#chatLog, .hm-pop, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2, #ttsText, .tts-tl, .tts-vb, .fg-scroll, .bg-rows"   # .tts-vb：配音页的音色面板（音色列表、设计、复刻表单，v1.8.12）；.fg-scroll：生图页里自己滚的几块（v1.8.16）
 JS = """(lists) => { const out = []; document.querySelectorAll('#content *, #content').forEach(el => {
   if (!el.offsetParent && el.id !== 'content') return;
   if (el.closest(lists)) return;
@@ -20,7 +20,7 @@ JS = """(lists) => { const out = []; document.querySelectorAll('#content *, #con
   if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 4 && el.clientHeight > 120)
     out.push((el.id ? '#' + el.id : el.className.toString().split(' ')[0]) + ' ' + el.clientHeight + '/' + el.scrollHeight); });
   return out; }"""
-TOOLS = [("view", v) for v in ("events", "monitor", "brains", "reports", "tts", "tts-cloud", "img", "img-batch")]
+TOOLS = [("view", v) for v in ("events", "monitor", "brains", "reports", "tts", "tts-cloud", "img", "img-batch", "bgm")]
 bad, errs = [], []
 
 

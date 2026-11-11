@@ -81,6 +81,7 @@ old_file, s0 = settings._FILE, dict(settings.S)
 settings._FILE = RUN / "读文件测试_设置.json"
 try:
     settings.S["readDirs"] = []
+    settings.S["wsDir"] = str(T / "空的工作区")           # 工作区也算能读的：换成一个空的，别的测试留在真工作区里的文件不来搅和
     check(F.clean([{"path": str(V)}, str(V), {"path": ""}, 5, {"path": str(LOCAL), "cloud": False}]) == [{"path": str(V), "cloud": True}, {"path": str(LOCAL), "cloud": False}],
           "能读的文件夹：去重、去掉不像样的，「能发给 DeepSeek」默认开")
     F.add_dir(str(V))

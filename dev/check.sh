@@ -31,6 +31,7 @@ step "Agent 的本事：计划、停下、插话、预算、看画面、下载�
 step "设置里的联网搜索" "$PY" dev/ui/search.py dev/.run/shots
 step "对话页、Agent 状态、游戏内显示设置" "$PY" dev/ui/chat.py dev/.run/shots
 step "对话页带图片、允许读文件夹、设置里的能读的文件夹" "$PY" dev/ui/attach.py dev/.run/shots
+step "指挥舱点一遍：核心、指令条（直接发、插话、停下）、动手干活用谁、说话（假麦克风）、配乐窗口、设置三块、生图差分" "$PY" dev/ui/deck.py dev/.run/shots
 step "配音：切句子、拼接停顿、时间轴、保存、我的音色、让路和闲置关掉、安装配音" "$PY" dev/test_tts.py
 step "配音的百炼云端引擎：只发文案、字级时间戳、分块、用量、出错说明、Key 不外泄" "$PY" dev/test_tts_cloud.py
 step "配音页点一遍（本地和百炼云端）、设置里的安装配音、百炼 Key 和开机自启" "$PY" dev/ui/tts.py dev/.run/shots

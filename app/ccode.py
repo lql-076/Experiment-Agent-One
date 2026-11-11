@@ -86,8 +86,11 @@ def allowed_tools():
 
 
 def command(session=None):
-    cmd = [find(), "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
-           "--allowedTools", *allowed_tools(), "--append-system-prompt", RULES]
+    exe = find()
+    # npm 装的是 claude.cmd：经过 cmd.exe，参数里有换行会被截断，所以这种情况把规矩压成一行（.exe 的不受影响）
+    rules = " ".join(RULES.split()) if str(exe).lower().endswith((".cmd", ".bat")) else RULES
+    cmd = [exe, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
+           "--allowedTools", *allowed_tools(), "--append-system-prompt", rules]
     if settings.S.get("ccModel"):
         cmd += ["--model", str(settings.S["ccModel"])]
     if session:

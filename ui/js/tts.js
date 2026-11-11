@@ -341,7 +341,7 @@ function ttsSyncRes(s) {
     r += (d.same_test ? '<div class="tts-msg">试同一个人：两段完全不相干的话，听前后像不像一个人。</div>' : '') +
       '<div class="tts-transport"><button class="tts-play" id="ttsPlay" data-act="play" aria-label="播放 / 暂停（空格键）">' + TTS_IC.play + '</button>' +
         '<span class="tts-tc num" id="ttsTc">00:00.0<i> / ' + ttsTime(d.duration, true) + '</i></span>' +
-        '<span class="tts-tsp"></span><button class="btn primary" data-act="save">保存</button><button class="btn" data-act="open" title="打开「配音输出」文件夹">打开文件夹</button></div>' +
+        '<span class="tts-tsp"></span><button class="btn primary" data-act="save">保存</button><button class="btn" data-act="tows" title="把这一段（音频、字幕、时间轴、文案）复制进 工作区\\素材\\配音\\，Agent 做视频时能用">放进工作区</button><button class="btn" data-act="open" title="打开「配音输出」文件夹">打开文件夹</button></div>' +
       (s.saved ? '<div class="cap tts-saved">最近存的：<button class="tts-link" data-act="openlast">' + esc(s.saved.name) + '</button></div>' : '') +
       '<audio id="ttsAudio" preload="auto" src="' + (s.demo ? '' : '/api/tts/draft.wav?v=' + d.ver) + '"></audio>' +
       '<div class="tts-tl" id="ttsTl">' + d.segments.map(function (g, i) { return '<button class="tts-seg' + (g.est ? ' est' : '') + '" data-i="' + i + '" data-t="' + g.start + '"' + (g.est ? ' title="这句的开始、结束没对上，是估的"' : '') + '><span class="num">' + (g.est ? '≈' : '') + ttsTime(g.start, true) + '</span><span>' + esc(g.text) + '</span></button>'; }).join('') + '</div>';
@@ -631,6 +631,7 @@ $('#view-tts').addEventListener('click', function (ev) {
     api('POST', '/api/tts/realign', {}, 300000).then(function (j) { toast(j.msg, 6000); return ttsLoad(); }).then(ttsSync)
       .catch(function (e) { toast(e.message, 6000); t.disabled = false; t.textContent = '重新对齐'; });
   }
+  else if (act === 'tows') api('POST', '/api/tts/tows', {}).then(function (j) { toast(j.msg || '放进工作区了', 5000); }).catch(function (e) { toast(e.message, 6000); });
   else if (act === 'save') api('POST', '/api/tts/save', {}).then(function (j) { toast(j.msg, 4500); return ttsLoad(); }).then(ttsSync).catch(function (e) { toast(e.message); });
   else if (act === 'open' || act === 'openlast') api('POST', '/api/tts/open', { last: act === 'openlast' }).then(function (j) { toast(j.msg, 4000); }).catch(function (e) { toast(e.message); });
 });

@@ -359,6 +359,7 @@ html[data-orient="portrait"] #view-chat.tall .cpanel{top:6.5rem}
 /* 提示条、开机自检 */
 #toasts{top:4.75rem;bottom:auto;right:1.5rem}
 html[data-tool] #toasts{top:3.5rem}
+html[data-orient="portrait"]:not([data-tool]) #toasts{top:auto;bottom:calc(var(--barh) + 6.5rem);right:1rem}
 .toast{transform:translateY(-.5rem) scale(.98)}
 #boot{background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(4px)}
 .boot-card{border-radius:0;border:1px solid var(--ln2);background:var(--bg2);box-shadow:inset 0 2px 0 var(--hud),0 2rem 5rem rgba(0,0,0,.5)}
@@ -424,3 +425,20 @@ html[data-orient="portrait"] .bg{grid-template-columns:minmax(0,1fr);grid-templa
 .cap-row>em{font-style:normal;font-size:.78rem;color:var(--text3)}
 .capbox em.ok,.cap-row em.ok{font-style:normal;color:var(--ok)}.capbox em.warn,.capsw em.warn{font-style:normal;color:var(--warn);font-size:.84rem;margin-left:.375rem}.capbox em.bad{font-style:normal;color:var(--bad)}
 .capsw{max-width:60rem;margin-bottom:1.5rem}
+
+/* ---------- 生图：差分的弹窗、清单里某一条自己的参考图 ---------- */
+.fg-dg{display:grid;grid-template-columns:15rem minmax(0,1fr);gap:1.25rem;margin-top:.875rem;min-height:0}
+.fg-dpick{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.5rem;height:100%;min-height:16rem;border:1px dashed var(--ln2);cursor:pointer;text-align:center;padding:.75rem;background:repeating-conic-gradient(color-mix(in srgb,var(--text) 6%,transparent) 0 25%,transparent 0 50%) 50%/1rem 1rem}
+.fg-dpick:hover{border-color:var(--c)}
+.fg-dpick b{font-family:var(--sans);font-size:1rem}
+.fg-dpick span{font-family:var(--sans);font-size:.8125rem;color:var(--text3)}
+.fg-dpick img{max-width:100%;max-height:18rem;display:block}
+.fg-df{display:flex;flex-direction:column;gap:.75rem;min-width:0;font-family:var(--sans)}
+.fg-df label{display:flex;flex-direction:column;gap:.35rem;font-size:.8125rem;color:var(--text2)}
+.fg-dl{font-size:.8125rem;color:var(--text2)}
+.fg-dch{display:flex;flex-wrap:wrap;gap:.4rem}
+.fg-dr{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
+.fg-bp.diff{width:min(56rem,calc(100vw - 2rem))}
+.fg-irefs{display:inline-flex;align-items:center;gap:.4rem;font-family:var(--sans);font-size:.75rem;color:var(--c);border:1px solid var(--ln2);padding:.1rem .15rem .1rem .3rem}
+.fg-irefs img{width:1.5rem;height:1.5rem;object-fit:cover}
+html[data-orient="portrait"] .fg-dg{grid-template-columns:minmax(0,1fr)}

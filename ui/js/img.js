@@ -133,7 +133,7 @@ function renderImg() {
       '<div class="fg-pct"><b id="fgPct">0</b><small>PERCENT · 进度</small><i id="fgEl"></i></div>' +
       '<div class="fg-info"><div class="fn" id="fgFn"></div><div class="meta" id="fgMeta"></div><div class="pr" id="fgPr"></div></div></section>' +
       '<section class="fp fg-col"><div class="fh"><i></i>OUTPUT<em>· 生图输出</em><span id="fgOn"></span></div><div class="fg-og fg-scroll" id="fgOg"></div>' +
-      '<div class="fg-of"><button class="fb" data-act="open">打开文件夹</button>' + (tab === 'batch' ? '<button class="fb" data-act="zip" id="fgZip">打包 ZIP</button>' : '<button class="fb" data-act="tab" data-tab="hist">看全部历史</button>') + '</div></section>';
+      '<div class="fg-of"><button class="fb" data-act="open">打开文件夹</button>' + (tab === 'batch' ? '<button class="fb" data-act="zip" id="fgZip">打包 ZIP</button><button class="fb" data-act="tows" id="fgTows" title="把这批出好的图复制进 工作区\\素材\\图片\\，Agent 做视频时能用">放进工作区</button>' : '<button class="fb" data-act="tab" data-tab="hist">看全部历史</button>') + '</div></section>';
   }
   v.innerHTML = '<div class="fg" id="fg"><canvas class="fg-fx" id="fgFx"></canvas><div class="fg-flash" id="fgFlash"></div>' +
     '<div class="fg-top"><div class="fp fg-brand"><small id="fgBs"></small><b data-t="IMAGE FORGE">IMAGE FORGE</b></div>' +
@@ -282,6 +282,7 @@ function imgQueue() {
   var run = imgRun();
   $('#fgQn').textContent = b ? '· ' + (b.md_name || b.title) : '· 生图清单';
   var qb = b ? '<button class="fb sm" data-act="pickmd"' + (run ? ' disabled' : '') + '>换一份</button><button class="fb sm" data-act="paste"' + (run ? ' disabled' : '') + '>粘贴</button>' +
+    '<button class="fb sm" data-act="diff"' + (run ? ' disabled' : '') + ' title="一张定稿图 → 闭嘴、张嘴、眨眼……几张只差一处的图">差分</button>' +
     '<button class="fb sm" data-act="rerunall"' + (run || !s.cfg.key ? ' disabled' : '') + ' title="每一张都重出一遍（旧的挪进「旧版」）">全部重出</button><button class="fb sm" data-act="clear" title="清掉这份清单（文件夹里的图不动）"' + (run ? ' disabled' : '') + '>清掉</button>' : '';
   if (IMG.sig.qb !== qb) { $('#fgQb').innerHTML = qb; $('#fgQb').hidden = !qb; IMG.sig.qb = qb; }
   $('#fgQc').textContent = b ? b.items.length + ' 张' + (b.warn.length ? ' · ' + b.warn.length + ' 处没认全' : '') : '';
@@ -290,7 +291,7 @@ function imgQueue() {
       IMG.sig.ql = 'none'; IMG.sel = null; $('#fgEd').hidden = true;
       ql.innerHTML = '<div class="fg-drop"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></svg><b>把生图清单拖进来</b>' +
         '<span>视频窗口按《自媒体正本》出的 .md：视觉方向 + 每条的文件名、用在哪、比例、透明背景、提示词。认出来就一行一张排好，点「批量生成」一张一张出。</span>' +
-        '<span class="bt"><button class="fb pri" data-act="pickmd">选文件</button><button class="fb" data-act="paste">粘贴</button></span></div>';
+        '<span class="bt"><button class="fb pri" data-act="pickmd">选文件</button><button class="fb" data-act="paste">粘贴</button><button class="fb" data-act="diff" title="一张定稿图 → 闭嘴、张嘴、眨眼……几张只差一处的图（做会说话的角色用）">做差分</button></span></div>';
     }
     return;
   }
@@ -311,7 +312,7 @@ function imgQueue() {
     var st = r.querySelector('.st'); if (st.textContent !== g) st.textContent = g;
     r.setAttribute('aria-current', IMG.sel === it.id ? 'true' : 'false');
     var tg = '<em>' + it.ratio + '</em>' + (it.transparent ? '<em class="c">透明</em>' : '') + (it.edited ? '<em class="amb">改过</em>' : '') +
-      '', te = r.querySelector('.ftg');
+      (it.refs ? '<em class="c">参考 ' + it.refs + '</em>' : ''), te = r.querySelector('.ftg');
     if (te.innerHTML !== tg) te.innerHTML = tg;
   });
   imgEditor();
@@ -321,7 +322,7 @@ function imgEditor() {
   if (!it) { ed.hidden = true; IMG.sig.ed = ''; return; }
   ed.hidden = false;
   var s = IMG.st, busy = it.st === 'run' || it.st === 'queue', run = imgRun();
-  var sig = [it.id, it.st, it.ratio, it.transparent, it.err, it.warn, run, s.cfg.key].join('|');
+  var sig = [it.id, it.st, it.ratio, it.transparent, it.err, it.warn, run, s.cfg.key, it.refs || 0].join('|');
   var ta = $('#fgEdPr'), typing = ta && document.activeElement === ta;
   if (IMG.sig.ed === sig) return;
   if (typing && IMG.sig.ed && IMG.sig.ed.split('|')[0] === it.id) {           /* 正在改提示词：只更新别的 */
@@ -333,6 +334,8 @@ function imgEditor() {
     '<textarea class="fi fg-ta" id="fgEdPr" rows="4" spellcheck="false"' + (busy ? ' disabled' : '') + ' aria-label="提示词">' + esc(it.prompt || '') + '</textarea>' +
     '<div class="ft"><select class="fi" id="fgEdR" style="width:auto"' + (busy ? ' disabled' : '') + ' aria-label="比例">' + s.ratios.map(function (r) { return '<option value="' + r + '"' + (r === it.ratio ? ' selected' : '') + '>' + r + ' ' + IMG_RNAME[r] + '</option>'; }).join('') + '</select>' +
     '<button class="fg-sw" id="fgEdT" aria-pressed="' + !!it.transparent + '"' + (busy ? ' disabled' : '') + '>透明背景</button>' +
+    (it.refs ? '<span class="fg-irefs" title="这一条自己带的参考图">' + (useLive() ? '<img src="/api/img/item/' + encodeURIComponent(it.id) + '/ref/0?v=' + it.refs + '" alt="">' : '') + '参考 ' + it.refs + '<button class="fb x" data-act="irefx" data-id="' + esc(it.id) + '" aria-label="去掉这一条的参考图"' + (busy ? ' disabled' : '') + '>' + ICONS.cross + '</button></span>'
+      : '<button class="fb sm" data-act="iref" data-id="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + ' title="只给这一条挂参考图（比如角色定稿图）：这一条就照着参考图出">挂参考图</button>') +
     (it.st === 'ok' ? '<button class="fb sm" data-act="viewi" data-id="' + esc(it.id) + '">看大图</button>' : '') +
     '<button class="fb sm pri" data-act="one" data-id="' + esc(it.id) + '"' + (run || !s.cfg.key ? ' disabled' : '') + '>' + (it.st === 'ok' || it.st === 'err' ? '重生成' : '只出这张') + '</button></div>';
 }
@@ -393,6 +396,7 @@ function imgOut() {
   var list = imgOutList(), s = IMG.st;
   $('#fgOn').textContent = list.filter(function (x) { return !x.err; }).length + ' 张';
   var z = $('#fgZip'); if (z) z.disabled = !(s.board && s.board.items.some(function (x) { return x.st === 'ok'; }));
+  var tw = $('#fgTows'); if (tw) tw.disabled = !z || z.disabled;
   var key = list.map(function (x) { return x.k + ':' + x.sig + (IMG.wait[x.k] ? ':w' : ''); }).join(',');
   if (IMG.sig.og === key) return; IMG.sig.og = key;
   if (!list.length) {
@@ -448,7 +452,7 @@ function imgHistSel() {
     '<div class="nm" title="' + esc(h.file) + '">' + esc(h.file) + '</div>' + imgKv(h) +
     '<div class="pr fg-scroll">' + esc(h.prompt) + '</div>' +
     '<div class="bt"><button class="fb pri" data-act="again" data-id="' + h.id + '">再来一张</button><button class="fb" data-act="asref" data-id="' + h.id + '"' + (h.exists ? '' : ' disabled') + '>当参考图</button>' +
-    '<button class="fb" data-act="hopen" data-id="' + h.id + '"' + (h.exists ? '' : ' disabled') + '>打开文件夹</button><button class="fb" data-act="copy" data-id="' + h.id + '">复制提示词</button></div>';
+    '<button class="fb" data-act="htows" data-id="' + h.id + '"' + (h.exists ? '' : ' disabled') + ' title="复制进 工作区\\素材\\图片\\">放进工作区</button><button class="fb" data-act="hopen" data-id="' + h.id + '"' + (h.exists ? '' : ' disabled') + '>打开文件夹</button><button class="fb" data-act="copy" data-id="' + h.id + '">复制提示词</button></div>';
 }
 function imgKv(h) {
   var kv = [['MODEL', h.model], ['SIZE', (h.w ? h.w + '×' + h.h : '') + ' · ' + h.ratio + ' · ' + String(h.tier || '').toUpperCase()], ['ALPHA', h.transparent ? (h.alpha ? '透明背景 ✓' : '要透明但没透明') : '不透明'],
@@ -496,6 +500,47 @@ function imgPaste() {
     '<div class="bt"><button class="fb" data-act="boxclose">取消</button><button class="fb pri" data-act="pasteok">认这份清单</button></div>', 'paste');
   setTimeout(function () { var t = $('#fgPaste'); if (t) t.focus(); }, 30);
 }
+
+/* ---------- 差分（v3.0）：一张定稿图 → 几张只差一处的图。排成一份清单，每条都带定稿图当参考；文件名 角色_差分.png ---------- */
+var IMG_DIFF = { base: '', name: '', look: '', picks: { '闭嘴': 1, '张嘴': 1, '半张嘴': 1, '眨眼': 1 }, more: '', ratio: '1:1', trans: true };
+function imgDiff() {
+  var s = IMG.st, pre = s.diff_preset || { '闭嘴': '', '半张嘴': '', '张嘴': '', '眨眼': '', '开心': '', '惊讶': '', '生气': '', '无语': '', '难过': '', '得意': '' }, D_ = IMG_DIFF;
+  IMG.box = { kind: 'diff' };
+  imgBox('<h3>VARIANTS<em>差分：同一个角色，只改一处</em></h3><span class="fg-cap">做会说话的角色用：闭嘴、张嘴、眨眼这几张除了嘴和眼睛一模一样，工具箱的「口型」脚本拿它们跟着配音切。每张都带着定稿图当参考，提示词里把外观写全。</span>' +
+    '<div class="fg-dg"><div class="fg-db"><label class="fg-dpick' + (D_.base ? ' has' : '') + '" for="fgDiffImg" id="fgDiffPv">' + (D_.base ? '<img src="' + D_.base + '" alt="">' : '<b>放一张定稿图</b><span>PNG / JPEG / WEBP，10MB 以内</span>') + '</label><input type="file" id="fgDiffImg" accept="image/png,image/jpeg,image/webp" hidden></div>' +
+    '<div class="fg-df"><label>角色名字（文件名用）<input class="fi" id="fgDiffName" spellcheck="false" placeholder="比如 白页_Q版" value="' + esc(D_.name) + '"></label>' +
+    '<label>外观（写全：发型、发色、眼睛、衣服、配饰、画风）<textarea class="fi fg-ta" id="fgDiffLook" rows="3" spellcheck="false" placeholder="比如：银白色短发、蓝色眼睛、白色连帽衫、Q 版二头身、平涂的二次元风格、粗描边">' + esc(D_.look) + '</textarea></label>' +
+    '<div class="fg-dl">要哪几种</div><div class="fg-dch">' + Object.keys(pre).map(function (k) { return '<button class="fg-sw" data-act="diffpick" data-v="' + esc(k) + '" aria-pressed="' + !!D_.picks[k] + '" title="' + esc(pre[k]) + '">' + esc(k) + '</button>'; }).join('') + '</div>' +
+    '<label>还要别的（一行一个，写成「名字：只改什么」）<textarea class="fi fg-ta" id="fgDiffMore" rows="2" spellcheck="false" placeholder="歪头：头向左歪 15 度">' + esc(D_.more) + '</textarea></label>' +
+    '<div class="fg-dr"><select class="fi" id="fgDiffR" style="width:auto" aria-label="比例">' + s.ratios.map(function (r) { return '<option value="' + r + '"' + (r === D_.ratio ? ' selected' : '') + '>' + r + ' ' + IMG_RNAME[r] + '</option>'; }).join('') + '</select>' +
+    '<button class="fg-sw" data-act="difftr" aria-pressed="' + !!D_.trans + '">透明背景</button><span class="fg-cap">比例选跟定稿图一样的</span></div></div></div>' +
+    '<div class="bt"><button class="fb" data-act="boxclose">取消</button><button class="fb pri" data-act="diffok">排成清单</button></div>', 'paste diff');
+}
+function imgDiffKeep() { var g = function (id) { var e = $(id); return e ? e.value : ''; }; IMG_DIFF.name = g('#fgDiffName'); IMG_DIFF.look = g('#fgDiffLook'); IMG_DIFF.more = g('#fgDiffMore'); IMG_DIFF.ratio = g('#fgDiffR') || IMG_DIFF.ratio; }
+function imgDiffOk(t) {
+  imgDiffKeep(); var D_ = IMG_DIFF;
+  if (!useLive()) { toast('演示模式：连上后端才能用'); return; }
+  var vs = Object.keys(D_.picks).filter(function (k) { return D_.picks[k]; });
+  D_.more.split(/\n+/).forEach(function (l) { var m = l.trim().match(/^([^：:]{1,16})[：:]\s*(.+)$/); if (m) vs.push({ name: m[1].trim(), desc: m[2].trim() }); else if (l.trim()) vs.push(l.trim()); });
+  t.disabled = true;
+  api('POST', '/api/img/diff', { name: D_.name, base: D_.base, look: D_.look, variants: vs, ratio: D_.ratio, transparent: D_.trans }, 30000).then(function (j) {
+    IMG.st = j; IMG.sel = null; IMG.sig.ql = ''; imgBoxClose(); imgTab('batch', true); imgLog('◆ 排好一组差分：' + j.board.items.length + ' 张，每张都带定稿图当参考。点「批量生成」一张一张出', 'c');
+  }).catch(function (e) { t.disabled = false; toast(e.message, 7000); });
+}
+document.addEventListener('change', function (ev) {
+  var f = ev.target.files && ev.target.files[0];
+  if (ev.target.id === 'fgDiffImg' && f) {
+    if (f.size > 10 * 1024 * 1024) { toast('太大了：最多 10MB'); return; }
+    var r = new FileReader(); r.onload = function () { imgDiffKeep(); IMG_DIFF.base = String(r.result); imgDiff(); }; r.readAsDataURL(f);
+  }
+  if (ev.target.id === 'fgIref' && f) {                    // 给清单里某一条挂参考图
+    var id = ev.target.dataset.id, fs = [].slice.call(ev.target.files).filter(function (x) { return /^image\/(png|jpeg|webp)$/.test(x.type) && x.size <= 10 * 1024 * 1024; });
+    ev.target.value = '';
+    if (!fs.length) { toast('参考图只认 10MB 以内的 PNG / JPEG / WEBP'); return; }
+    Promise.all(fs.map(function (x) { return new Promise(function (ok) { var fr = new FileReader(); fr.onload = function () { ok(String(fr.result)); }; fr.readAsDataURL(x); }); })).then(function (uris) {
+      return api('PATCH', '/api/img/item/' + encodeURIComponent(id), { refs: uris }, 30000); }).then(imgLoad).then(function () { IMG.sig.ed = ''; imgQueue(); toast('挂上了：这一条照着参考图出'); }).catch(function (e) { toast(e.message, 6000); });
+  }
+});
 
 /* ---------- 换模型：按厂商分好的列表 ---------- */
 function imgPick() {
@@ -1029,6 +1074,7 @@ $('#view-img').addEventListener('click', function (ev) {
   else if (act === 'unref') { IMG.refs.splice(+t.dataset.i, 1); imgCmp(); imgGo(); fgPorts(); }
   else if (act === 'pickmd') $('#fgMd').click();
   else if (act === 'paste') imgPaste();
+  else if (act === 'diff') imgDiff();
   else if (act === 'sel') { IMG.sel = IMG.sel === id ? null : id; IMG.sig.ed = ''; imgQueue(); fgPorts(); }
   else if (act === 'unsel') { IMG.sel = null; imgQueue(); fgPorts(); }
   else if (act === 'viewi') imgViewItem(id);
@@ -1041,6 +1087,9 @@ $('#view-img').addEventListener('click', function (ev) {
   else if (act === 'asref') imgUrlToRef('/api/img/hfile/' + id).then(function (r) { IMG.refs.push(r); imgTab('single', true); toast('当参考图了'); }).catch(function (e) { toast(e.message); });
   else if (act === 'hopen') api('POST', '/api/img/open', { hid: +id }).then(function (j) { toast(j.msg, 4000); }).catch(function (e) { toast(e.message); });
   else if (act === 'clear') api('POST', '/api/img/clear', {}).then(function (j) { IMG.st = j; IMG.sel = null; imgSync(); imgLog('◆ 清掉了这份清单（文件夹里的图没动）', 'c'); }).catch(function (e) { toast(e.message); });
+  else if (act === 'iref') { var fi = $('#fgIref'); if (!fi) { fi = document.createElement('input'); fi.type = 'file'; fi.id = 'fgIref'; fi.multiple = true; fi.accept = 'image/png,image/jpeg,image/webp'; fi.hidden = true; document.body.appendChild(fi); } fi.dataset.id = id; fi.click(); }
+  else if (act === 'irefx') api('PATCH', '/api/img/item/' + encodeURIComponent(id), { refs: [] }).then(imgLoad).then(function () { IMG.sig.ed = ''; imgQueue(); }).catch(function (e) { toast(e.message); })
+  else if (act === 'tows' || act === 'htows') { t.disabled = true; api('POST', '/api/img/tows', act === 'htows' ? { hid: +id } : {}, 60000).then(function (j) { toast(j.msg || '放进工作区了', 5000); imgLog('◆ ' + esc(j.msg || '放进工作区了'), 'c'); t.disabled = false; }).catch(function (e) { toast(e.message, 6000); t.disabled = false; }); }
   else if (act === 'rerunall') imgBatch({});
   else if (act === 'one') imgBatch({ ids: [id] });
   else if (act === 'open') api('POST', '/api/img/open', IMG.tab === 'single' ? { single: true } : {}).then(function (j) { toast(j.msg, 4000); }).catch(function (e) { toast(e.message); });
@@ -1057,6 +1106,9 @@ document.addEventListener('click', function (ev) {   /* 弹出的那一层在 bo
   if (act === 'boxclose') imgBoxClose();
   else if (act === 'pasteok') { var v = ($('#fgPaste') || {}).value || ''; if (!v.trim()) { toast('先把清单粘贴进来'); return; } imgLoadMd(v, ''); }
   else if (act === 'one') { imgBoxClose(); imgBatch({ ids: [id] }); }
+  else if (act === 'diffpick') { IMG_DIFF.picks[t.dataset.v] = !IMG_DIFF.picks[t.dataset.v]; t.setAttribute('aria-pressed', !!IMG_DIFF.picks[t.dataset.v]); }
+  else if (act === 'difftr') { IMG_DIFF.trans = !IMG_DIFF.trans; t.setAttribute('aria-pressed', !!IMG_DIFF.trans); }
+  else if (act === 'diffok') imgDiffOk(t);
   else if (act === 'vend') { IMG.vend = t.dataset.v; imgPickDraw(); }
   else if (act === 'usem') imgUseModel(id);
   else if (act === 'mid') { var mv = ($('#fgMid').value || '').trim(); if (!/^[\w.\-:/]{2,80}$/.test(mv)) { toast('模型 ID 只能有字母、数字和 - _ . : /'); return; } imgUseModel(mv); }

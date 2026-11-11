@@ -59,7 +59,7 @@ function nowNodes(e) {
 function nowWhy(e) {
   var cap = (e.steps || []).filter(function (s) { return s[0] === '按本事分' || s[0] === '你指定了去向'; })[0];
   var why = cap ? cap[1].replace(/[（(].*$/, '').replace(/[，,；;]?\s*(→|交给|改交).*$/, '').trim() || confWord(e) : e.private ? (e.to === 'local' ? '涉及隐私，只在本地' : '涉及隐私，你确认了发出本机') : confWord(e);
-  return '交给 ' + routeName(e) + ' · ' + why;
+  return '交给 ' + routeName(e) + (e.engine === 'cc' ? ' → Claude Code 动手' : '') + ' · ' + why;
 }
 /* 计划清单（v3.0）：最多放 rows 行，正在做的那步保证看得见；前后放不下的写「前面 n 步做完了」「后面还有 n 步」 */
 function planHTML(e, rows) {
