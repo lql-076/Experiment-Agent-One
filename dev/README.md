@@ -57,6 +57,7 @@
 - 真的 Claude Code（v3.0）：沙箱里用假的命令行 `dev/fake_claude.py`（测试自己在 `dev/.run/claude` 建一个壳）。真的 `claude` **绝不在沙箱里用 `-p` 跑**（会用作者的额度）；Windows 上 `claude.cmd` 起不起得来、流式输出的编码、长活的耗时要在作者电脑上试
 - 真的语音（v3.0）：听写（Qwen3-ASR）、Breeze TTS 2（v3.1 起随包代码 + tts-env 在 Windows 上直接跑，没在真机上跑过）、桌面窗口里的麦克风权限；沙箱里是假听写（`dev/fake_tts.py` 的 `/asr`，念什么写在 `dev/.run/fake_asr.txt`）、假 Breeze（`dev/mocks.py` 8093）、浏览器的假麦克风
 - 真的配乐（v3.0）：ACE-Step 1.5；沙箱里是假的（`dev/mocks.py` 8001）
+- 发抖音（v3.2）：沙箱连不上抖音，全流程是拿假抖音（`dev/fake_sau.py`）测的；真代码只测了导入和开一个空白页。真的扫码、发布、验证码，用他电脑上的 Chrome / Edge 会不会被抖音拦，要在作者电脑上试
 - 一键装配乐、Breeze（v3.1）：沙箱连不上 acemusic.ai、魔搭、hf-mirror。`install_bgm.py` 是拿现做的假便携包走通的（`dev/test_media.py`，7za 用 npm 上真的 7zip-bin 包，第一次跑会从 npmjs 下一次存进 `dev/.run`）；真便携包多大、解不解得开、它自带的 Python 跑不跑得起来，Breeze 权重要不要登录才给下，都要在作者电脑上试
 - 真的配音（Qwen3-TTS）：沙箱里没有显卡，配音服务换成假的 `dev/fake_tts.py`；音质、显存、速度、同一个人像不像都要在作者电脑上听
 - 真的时间轴对齐（Qwen3-ForcedAligner-0.6B，v1.8.14）：沙箱里用假的对齐器；能不能装上、对得准不准、要几秒、占多少显存要在作者电脑上试
@@ -100,6 +101,8 @@
 | `test_fps.py` | 用假的 ETW 事件测游戏帧数统计，以及游戏加加、播放器这些不当成游戏 |
 | `test_checks.py` | 整备 14 项都查得完、没有"检测出错"；一键补齐 6 步按自检结果标「已就绪 / 自动启动中 / 要补」 |
 | `test_media.py` | v3.1：配音清单、配乐清单怎么认；旧文件进「旧版」；整备「配音、语音、配乐」那组（只装一项、两组不同时跑）；真跑一遍 `scripts/install_bgm.py`（假下载站、现做的假便携包，做完删掉装出来的）；Breeze 一键装好后的启动命令；配音批量、配乐批量（每段的音色、按名字存、跑的时候不让单个生成、重来、改、选几个 .txt、写错音色先拦、停下、打包、放进工作区） |
+| `test_publish.py` | v3.2 发布到抖音：`vendor/social-auto-upload` 的真代码导得进来、patchright 的 launch 换成本机浏览器能开页面（不联网）；假抖音（`dev/fake_sau.py`）走全流程：扫码登录、cookie 加密存、明文不留、发之前的检查、发、验证码、停下、失败、Agent 的 publish_douyin（没开不给、默认等确认、改了再发、关掉确认直接发）、退出 |
+| `ui/publish.py` | v3.2「发布」窗口点一遍；侧栏只剩那几个、设置里的「其他页面」和 外观 › 全屏、深浅色 |
 | `ui/batch.py` | v3.1 配音批量、配乐批量点一遍：切到批量、贴清单、改一段、开始、听、选文件、刷新后还在 |
 | `test_kev.py` | Kev 权重在不在本机：没有、LoRA 缺底座、都在、有半截文件 |
 | `test_route.py` | 第三条路「更强的模型」：指定去向、不接受时并进 DeepSeek、换它重做、隐私的事要确认才发出本机 |

@@ -8,6 +8,7 @@ r"""Agent 的本事（v3.0）：交给 DeepSeek 做事时，除了联网、读�
 - make_voice    配音（用配音页上次用的音色）。默认只用本地的；云端（百炼，花钱）要他在 设置 › Agent 能力 里打开。
 - make_image    生图（API易，花钱）。默认关着，要他打开；一件事最多出几张有上限。
 - make_music    配乐（本地 ACE-Step，纯音乐）。配好了才给。
+- publish_douyin 发抖音（v3.2，app/publish.py）。默认关着；开了也默认要他在「发布」窗口点确认才发（agPublishAsk）。登录过才给。
 
 还管三件事：
 - 喊停、插话：每件正在做的事有一个开关（CTRL）。界面上点「停下」→ 这一步做完就停；中途又说了一句 → 下一步之前告诉 DeepSeek。
@@ -187,20 +188,22 @@ def toolbox_list():
 def caps():
     """现在给了 Agent 哪些本事（设置 › Agent 能力）。"""
     s = settings.S
-    from . import bgm, tts
+    from . import bgm, publish, tts
     img_key = bool(settings.get_secret("imgKey"))
     return {"plan": True, "look": True, "download": bool(s.get("agDownload", True)),
             "voice": bool(s.get("agVoice", True)), "voice_cloud": bool(s.get("agVoiceCloud", False)), "voice_ready": bool(db.kv_get("tts_last_req")),
             "voice_env": tts.T.env_ok(),
             "image": bool(s.get("agImage", False)), "image_key": img_key, "image_max": int(s.get("agImageMax") or 8),
             "music": bool(s.get("agMusic", True)), "music_ready": bgm.B.configured(),
+            "publish": bool(s.get("agPublish", False)), "publish_ask": bool(s.get("agPublishAsk", True)), "publish_ready": publish.COOKIE.exists(),
             "steps": int(s.get("agSteps") or 120), "budget": float(s.get("agBudget") or 0),
             "cc": bool(s.get("ccOn", False))}
 
 
 def set_cap(k, v):
     """打开 / 关上一项本事（只有界面上他点的才走到这里），记进动作日志。"""
-    keys = {"download": "agDownload", "voice": "agVoice", "voice_cloud": "agVoiceCloud", "image": "agImage", "music": "agMusic", "cc": "ccOn"}
+    keys = {"download": "agDownload", "voice": "agVoice", "voice_cloud": "agVoiceCloud", "image": "agImage", "music": "agMusic", "cc": "ccOn",
+            "publish": "agPublish", "publish_ask": "agPublishAsk"}
     texts = {"cc_cmd": "ccCmd", "cc_bash": "ccBash"}             # Claude Code 在哪、许它跑哪些程序：也是权限
     if k in texts:
         settings.S[texts[k]] = str(v or "").strip()[:400]
@@ -254,10 +257,18 @@ def tools():
         t.append(_fn("make_music", "配乐：生成一段纯音乐（背景音乐，没有人声），存成 WAV。描述写风格、情绪、乐器、速度。要等一两分钟。",
                      {"prompt": {"type": "string", "description": "比如：轻快的电子流行，明亮的合成器和鼓点，适合科技类视频开场"},
                       "seconds": {"type": "integer", "description": "多长，10~600 秒，默认 60"}, "path": {"type": "string", "description": "存成工作文件夹里的哪个文件，.wav 结尾"}}, ["prompt", "path"]))
+    if c["publish"] and c["publish_ready"]:
+        t.append(_fn("publish_douyin", "发到他的抖音（v3.2）：把工作文件夹里做好的一条视频发出去。" +
+                     ("发之前要他在「发布」窗口点确认：你交过去就行，不用等。" if c["publish_ask"] else "会直接发出去，公开可见：标题、话题想清楚、视频用 look 看过再发。") +
+                     "标题最多 30 字；话题不带 #；定时发布要 2 小时以后。",
+                     {"path": {"type": "string", "description": "视频在工作文件夹里的路径（mp4 这类）"}, "title": {"type": "string", "description": "标题，最多 30 字"},
+                      "desc": {"type": "string", "description": "简介（可以不写）"}, "tags": {"type": "array", "items": {"type": "string"}, "description": "话题，最多 10 个，不带 #"},
+                      "schedule": {"type": "string", "description": "定时发布：2026-11-14 20:00 这样；不写就马上发"},
+                      "cover": {"type": "string", "description": "封面图在工作文件夹里的路径（可以不写，抖音自己选一帧）"}}, ["path", "title"]))
     return t
 
 
-NAMES = {"update_plan", "look", "media_info", "read_skill", "download_file", "make_voice", "make_image", "make_music"}
+NAMES = {"update_plan", "look", "media_info", "read_skill", "download_file", "make_voice", "make_image", "make_music", "publish_douyin"}
 
 
 def hint(user_text="") -> str:
@@ -281,6 +292,8 @@ def hint(user_text="") -> str:
         s += "生图现在没给你（他没开或者没填 Key）：需要图就用他给的素材，或者告诉他去 设置 › Agent 能力 打开。"
     if c["music"] and c["music_ready"]:
         s += "配乐用 make_music。"
+    if c["publish"] and c["publish_ready"]:
+        s += "发抖音用 publish_douyin（" + ("交给他确认，他点了才发" if c["publish_ask"] else "直接发出去，公开可见") + "）；他没让你发的时候不要发。"
     for n, body in skills_for(user_text):
         s += f"\n\n【技能：{n}】\n{body}"
     return s
@@ -568,4 +581,13 @@ async def run_tool(name, args, eid=None, say=None):
         say("正在配乐……")
         r = await make_music(args.get("prompt"), args.get("path"), args.get("seconds") or 60, say, stopped)
         return f"配乐好了：{r['rel']}（{mediainfo.clock(r['duration'] or 0)}，用了 {r['sec']:.0f} 秒）。", ["配乐", f"{r['rel']} · {mediainfo.clock(r['duration'] or 0)}"], [], 0.0
+    if name == "publish_douyin":
+        from . import publish
+        say("正在交给「发布」……")
+        r = await publish.agent_publish({"file": args.get("path"), "title": args.get("title"), "desc": args.get("desc"), "tags": args.get("tags"),
+                                         "schedule": args.get("schedule"), "cover": args.get("cover")}, eid, say, stopped)
+        if r.get("asked"):
+            return (f"交给他确认了：「{r['title']}」在「发布」窗口里等他点「发布」（他点了才发）。告诉他去看一眼。", ["发抖音", f"等他确认 · {r['title']}"], [], 0.0)
+        return ((f"发出去了：「{r['title']}」（{r['msg']}，用了 {r['sec']} 秒）。" if r["ok"] else f"没发成：{r['msg']}"),
+                ["发抖音", f"{'好了' if r['ok'] else '没成'} · {r['title']}"], [], 0.0)
     raise workspace.Denied(f"没有这个工具：{name}")

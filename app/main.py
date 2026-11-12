@@ -16,11 +16,11 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import (agent, agentkit, agentstate, autostart, bgm, ccode, checks, db, deepseek, docs, events, exam, feed, files, growth, hw, hwctl, imagegen, media_batch, memory,
-               monitor, nightly, osd, paths, reminders, reports, router, safety, settings, setup, tts, tts_install, voice, websearch, workspace)
+               monitor, nightly, osd, paths, publish, reminders, reports, router, safety, settings, setup, tts, tts_install, voice, websearch, workspace)
 from .models import M
 from .qq import BOT
 
-VERSION = "3.1.0"
+VERSION = "3.2.0"
 PORT = 8765
 _bg = []
 
@@ -178,6 +178,7 @@ app.include_router(imagegen.api)                  # 「生图」页的接口（a
 app.include_router(autostart.api)                 # 设置 › 自动化 的「开机自启」（app/autostart.py）
 app.include_router(bgm.api)                       # 「配乐」的接口（app/bgm.py，v3.0）
 app.include_router(media_batch.api)               # 配音批量、配乐批量（app/media_batch.py，v3.1）
+app.include_router(publish.api)                   # 发布到抖音（app/publish.py，v3.2）
 app.include_router(voice.api)                     # 语音对话的接口（app/voice.py，v3.0）
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}", "127.0.0.1", "localhost"}
 

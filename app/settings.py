@@ -60,6 +60,9 @@ DEFAULTS = {
     # 下载、配音、云端配音、生图、配乐给不给它用——这几个开关是给 agent 加权限，有自己的接口（设置 › Agent 能力），不走通用的改设置
     "agSteps": 120, "agBudget": 5.0, "agImageMax": 8,
     "agDownload": True, "agVoice": True, "agVoiceCloud": False, "agImage": False, "agMusic": True,
+    # 发抖音（v3.2，app/publish.py）：Agent 能不能用（默认关）、用的时候要不要他点确认（默认要）——也是权限，走 设置 › Agent 能力；
+    # pubHeadless 发的时候不弹浏览器窗口、pubBrowser 用哪个浏览器（留空自动找 Chrome / Edge）、pubDecl 默认的自主声明
+    "agPublish": False, "agPublishAsk": True, "pubHeadless": True, "pubBrowser": "", "pubDecl": "内容由AI生成",
     # Claude Code 执行引擎（v3.0，app/ccode.py）：把整件事交给他电脑上装的 Claude Code 去做（默认关，他在设置里开）。
     # ccCmd 留空 = 自己找 claude；ccModel 留空 = 用他 Claude Code 自己配的；ccMinutes 一件事最多跑多少分钟
     "ccOn": False, "ccAuto": True, "ccCmd": "", "ccModel": "", "ccMinutes": 60, "ccBash": "python,pip,ffmpeg,ffprobe,node,npm,npx,git",
@@ -86,7 +89,7 @@ DEFAULTS = {
 }
 SECRET_KEYS = ("dsKey", "qqSecret", "blKey", "imgKey", "hfToken")      # blKey：百炼 API Key（云端配音）；imgKey：API易 Key（生图，v1.8.15）；hfToken：只在下 Breeze 权重要登录时用（v3.1）
 LOCKED = {"gpuOnly": True, "privLocal": True}   # 这两条界面上改不了
-PERM = {"wsDir", "wsRun", "agDownload", "agVoice", "agVoiceCloud", "agImage", "agMusic", "ccOn", "ccCmd", "ccBash"}                         # 给 agent 的权限：有自己的接口（记进动作日志），通用的改设置改不了
+PERM = {"wsDir", "wsRun", "agDownload", "agVoice", "agVoiceCloud", "agImage", "agMusic", "agPublish", "agPublishAsk", "ccOn", "ccCmd", "ccBash"}                         # 给 agent 的权限：有自己的接口（记进动作日志），通用的改设置改不了
 
 _lock = threading.Lock()
 _FILE = paths.DATA / "settings.json"
@@ -210,6 +213,19 @@ def _write_secrets(d: dict):
     tmp = _SECRETS.with_suffix(".tmp")
     tmp.write_bytes(blob)
     tmp.replace(_SECRETS)
+
+
+def seal(raw: bytes) -> bytes:
+    """加密一份文件的内容（v3.2：抖音的登录 cookie）。Windows 上用 DPAPI，只有这个 Windows 账号解得开；开发环境（不是 Windows）只是 base64。"""
+    return b"DPAPI1" + _dpapi(raw, True) if paths.IS_WIN else b"PLAIN1" + base64.b64encode(raw)
+
+
+def unseal(blob: bytes) -> bytes:
+    if blob.startswith(b"DPAPI1"):
+        return _dpapi(blob[6:], False)
+    if blob.startswith(b"PLAIN1"):
+        return base64.b64decode(blob[6:])
+    raise ValueError("认不出的加密格式")
 
 
 def get_secret(k: str) -> str:

@@ -8,7 +8,9 @@ r"""安装配乐引擎 ACE-Step 1.5（v3.1）：整备 › 「配音、语音、
 2. 下 ACE-Step 官方的 Windows 便携包 ACE-Step-1.5.7z（files.acemusic.ai，自带 python_embedded 和装好的依赖、PyTorch 2.7.1 cu128，
    RTX 50 系能用）到 tools\downloads\，多线程分段下、断了接着下（scripts\fastdl.py）。
 3. 解压到 Agent 文件夹里的 ace-step\（先解到 ace-step.tmp，好了再改名；已经有的旧版改名留着，不删）。
-4. 用它自带的 Python 下模型（约 10GB）：先魔搭、不行再 hf-mirror，放 ace-step\checkpoints\（就是它自己的 ACE-Step/Ace-Step1.5 主仓库：
+4. 用它自带的 Python 下模型（约 10GB）：先魔搭、不行再 hf-mirror，放 ace-step\checkpoints\。用的是便携包一直带着的
+   acestep.model_downloader（v3.2 改的：v3.1 调的 acestep.api.model_download 只有新版代码才有，便携包里没有，一导入就退出）；
+   它打印的东西都转进整备的日志（就是它自己的 ACE-Step/Ace-Step1.5 主仓库：
    出曲子的 DiT turbo、VAE、文本编码器、1.7B 语言模型——我们不开语言模型，但它是同一个仓库一起下的）。
 5. 用它自带的 Python 导入一次 PyTorch 看显卡在不在。
 装好以后 app\bgm.py 直接用 ace-step\ 这一份（设置 › 配乐 不用填）。启动时不走它的 start_api_server.bat（那个会检查更新、问 Y/N，没有窗口就卡住），
@@ -183,17 +185,64 @@ def ensure_code():
 
 # ---------- 4. 模型 ----------
 DL_CODE = r"""
-import os, sys
+import inspect, os, sys
+from pathlib import Path
 sys.path.insert(0, os.getcwd())
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
-from acestep.api import model_download as D
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 ck, src = sys.argv[1], sys.argv[2]
+want = "modelscope" if src == "modelscope" else "huggingface"
+os.environ["ACESTEP_DOWNLOAD_SOURCE"] = want
+try:
+    from acestep import model_downloader as M              # 便携包一直带着的下载工具（就是它的 acestep-download 命令）
+except ImportError as e:
+    M = None
+    print("这个版本没有 acestep.model_downloader：", e, flush=True)
+if M is not None and hasattr(M, "download_main_model"):
+    ps = inspect.signature(M.download_main_model).parameters
+    kw = {k: v for k, v in (("prefer_source", want), ("force", True)) if k in ps}   # force：上次下了一半的也重新核一遍（下好的文件会跳过）
+    print("用它自带的 acestep.model_downloader 下主模型（" + want + "）", flush=True)
+    ok, msg = M.download_main_model(Path(ck), **kw)
+    print(msg, flush=True)
+    sys.exit(0 if ok else 1)
+from acestep.api import model_download as D                   # 新版才有的那一个
 if src == "modelscope":
     D.download_from_modelscope(%r, ck, "acestep-v15-turbo")
 else:
-    os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     D.download_from_huggingface(%r, ck, "acestep-v15-turbo")
 """ % (ACE_REPO, ACE_REPO)
+
+
+def run_fwd(cmd, cwd, env):
+    """跑一个子程序，它打印的东西原样转到我们自己的输出上（整备的日志里看得到、进度条也认得出）。
+    v3.2：以前没接，CREATE_NO_WINDOW 时它的输出进了一个看不见的控制台，出错只剩「退出码 1」。返回 (退出码, 最后几行)。"""
+    p = subprocess.Popen([str(c) for c in cmd], cwd=str(cwd), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    out = getattr(sys.stdout, "buffer", None)
+    tail, buf = [], b""
+    while True:
+        chunk = p.stdout.read1(4096) if hasattr(p.stdout, "read1") else p.stdout.read(4096)
+        if not chunk:
+            break
+        if out is not None:
+            try:
+                out.write(chunk)
+                out.flush()
+            except Exception:
+                out = None
+        buf += chunk
+        *lines, buf = re.split(rb"[\r\n]", buf)
+        for x in lines:
+            t = x.decode("utf-8", "replace").strip()
+            if t and not TQDM_LINE.search(t):
+                tail = (tail + [t])[-30:]
+    t = buf.decode("utf-8", "replace").strip()
+    if t:
+        tail.append(t)
+    return p.wait(), tail
+
+
+TQDM_LINE = re.compile(r"\d+%\|")
 
 
 def ensure_models():
@@ -207,12 +256,13 @@ def ensure_models():
     errs = []
     for src, name in (("modelscope", "魔搭"), ("hf", "hf-mirror")):
         say(f"下载 ACE-Step 的模型（约 10GB）：从{name} {ACE_REPO}，放到 {paths.show(ck)}")
-        r = subprocess.run([str(py), "-c", DL_CODE, str(ck), src], cwd=str(ACE), env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        if r.returncode == 0 and models_ok():
+        code, tail = run_fwd([py, "-c", DL_CODE, ck, src], ACE, env)
+        if code == 0 and models_ok():
             say("ACE-Step 的模型下好了", "✓")
             return
-        errs.append(f"{name}：退出码 {r.returncode}" + ("" if r.returncode else "，但文件不全"))
-        say(f"{name}没下全，{'换 hf-mirror 再试' if src == 'modelscope' else '都试过了'}", "!")
+        why = next((x for x in reversed(tail) if re.search(r"Error|错误|失败|failed|Exception|没有", x, re.I)), tail[-1] if tail else "")
+        errs.append(f"{name}：" + (f"退出码 {code}" if code else "跑完了但文件不全") + (f"（{why[:160]}）" if why else ""))
+        say(f"{name}没下全，{'换 hf-mirror 再试' if src == 'modelscope' else '都试过了'}" + (f"：{why[:160]}" if why else ""), "!")
     raise RuntimeError("模型没下成：" + "；".join(errs))
 
 

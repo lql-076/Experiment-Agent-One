@@ -30,8 +30,8 @@ STATE = paths.DATA / "window.json"
 MUTEX = "Local\\AgentMainWindow"
 ICON = paths.UI / "icon.ico"
 # 工具窗口的默认大小：都按 1600×975 的设计尺寸等比缩放（界面里 autoScale），这个大小下字是 0.9 倍；屏幕大就按屏幕的七成八放大
-TOOLS = {k: (v, 1440, 880) for k, v in {"img": "生图", "tts": "配音", "bgm": "配乐", "events": "事件", "monitor": "后台", "brains": "大脑", "reports": "报告",
-                                         "settings": "设置", "docs": "说明"}.items()}
+TOOLS = {k: (v, 1440, 880) for k, v in {"img": "生图", "tts": "配音", "bgm": "配乐", "publish": "发布", "events": "事件", "monitor": "后台", "brains": "大脑",
+                                         "reports": "报告", "settings": "设置", "docs": "说明"}.items()}
 WINS = {}          # 开着的工具窗口：key → webview.Window
 MAIN = {}          # 主窗口（工具窗口里点「去对话」时拿到前面）
 ROOT_ST = {}       # data/window.json 的全部内容（主窗口 + tools）
@@ -135,6 +135,20 @@ class Api:
             return True
         except Exception:
             return False
+
+    def broadcast(self, cmd=""):
+        """v3.2：深浅色、布局、全屏挪进了设置（设置是单独的窗口）。设置里一改，告诉主窗口和别的工具窗口跟着变（界面里的 winCmd）。"""
+        cmd = str(cmd or "")[:400]
+        n = 0
+        for k, w in [("main", MAIN.get("w"))] + list(WINS.items()):
+            if w is None or k == self._key:
+                continue
+            try:
+                w.evaluate_js(f"winCmd({json.dumps(cmd)})")
+                n += 1
+            except Exception:
+                pass
+        return n
 
     def _bring(self, w):
         import ctypes

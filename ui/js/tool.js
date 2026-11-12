@@ -4,8 +4,8 @@
    都是左边的按钮，点了弹出一个独立窗口。工具窗口打开的是同一个界面，地址带 ?tool=img 这种：只显示那一个工具，自己的标题栏
    （拖动、置顶、收起、关掉），桌面窗口那边见 app/window.py 的 open_tool。不在桌面窗口里（用浏览器打开）时，用 window.open 开新窗口。
    Ctrl K：命令面板，打开工具、跳到设置的哪一块、切深浅色。 */
-var TOOL_KEYS = ['img', 'tts', 'bgm', 'events', 'monitor', 'brains', 'reports', 'settings', 'docs'];
-var TOOL_NAME = { img: '生图', tts: '配音', bgm: '配乐', events: '事件', monitor: '后台', brains: '大脑', reports: '报告', settings: '设置', docs: '说明' };
+var TOOL_KEYS = ['img', 'tts', 'bgm', 'publish', 'events', 'monitor', 'brains', 'reports', 'settings', 'docs'];
+var TOOL_NAME = { img: '生图', tts: '配音', bgm: '配乐', publish: '发布', events: '事件', monitor: '后台', brains: '大脑', reports: '报告', settings: '设置', docs: '说明' };
 var TOOL = TOOL_KEYS.indexOf(root.dataset.tool) >= 0 ? root.dataset.tool : '';
 if (root.dataset.tool && !TOOL) delete root.dataset.tool;
 var TOOL_ARG = (function () { try { var a = new URLSearchParams(location.search).get('arg'); return a ? JSON.parse(a) : null; } catch (e) { return null; } })();
@@ -72,7 +72,7 @@ $$('.nav[data-tool]').forEach(function (b) { b.addEventListener('click', functio
 /* 正在干活的工具，按钮上一个小点（生图、配音在跑） */
 function syncToolBusy(tasks) {
   var busy = {};
-  (tasks || []).forEach(function (t) { if (t.k === 'img') busy.img = 1; if (t.k === 'tts' || t.k === 'tts_install') busy.tts = 1; if (t.k === 'bgm') busy.bgm = 1; });
+  (tasks || []).forEach(function (t) { if (t.k === 'img') busy.img = 1; if (t.k === 'tts' || t.k === 'tts_install') busy.tts = 1; if (t.k === 'bgm') busy.bgm = 1; if (t.k === 'publish') busy.publish = 1; });
   $$('.nav[data-tool]').forEach(function (b) { b.classList.toggle('on-busy', !!busy[b.dataset.tool]); });
 }
 
@@ -110,6 +110,30 @@ document.addEventListener('keydown', function (ev) {
   if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'k' || ev.key === 'K')) { ev.preventDefault(); if ($('#pal').hidden) palOpen(); else palClose(); return; }
   if (!TOOL && ev.ctrlKey && ev.code === 'Space') { ev.preventDefault(); if (root.dataset.mode === 'resident') exitResident(); if (S.view !== 'home') goView('home'); chatToggle(); }
 });
+
+/* ---------- 窗口之间传话（v3.2）----------
+   深浅色、布局、全屏的开关挪进了 设置 › 外观，设置是单独的窗口：在那里一改，主窗口和别的工具窗口跟着变。
+   桌面窗口走 app/window.py 的 broadcast（每个窗口 evaluate_js 调 winCmd）；在浏览器里打开时走 localStorage 的 storage 事件。 */
+function winSend(cmd) {
+  var a = deskApi();
+  if (a && a.broadcast) { a.broadcast(JSON.stringify(cmd)).catch(function () {}); return; }
+  try { localStorage.setItem('agentCmd', JSON.stringify(Object.assign({ t: Date.now() }, cmd))); } catch (e) { /* 存不了就算了 */ }
+}
+function winCmd(s) {
+  var c = null; try { c = typeof s === 'string' ? JSON.parse(s) : s; } catch (e) { return; }
+  if (!c) return;
+  if (c.theme && c.theme !== S.set.theme && hasTheme(c.theme)) {
+    S.set.theme = c.theme; root.dataset.theme = c.theme; save(); syncTone();
+    if (typeof renderResident === 'function' && !TOOL) renderResident();
+    $$('[data-theme-pick]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.themePick === c.theme); });
+    $$('[data-tone]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.tone === (c.theme === 'light' ? 'light' : 'dark')); });
+  }
+  if (c.layout && c.layout !== S.set.layout) { S.set.layout = c.layout; save(); applyOrient(true); var sel = $('#f-layout'); if (sel) sel.value = c.layout; }
+  if (c.full && !TOOL) toggleFull();
+}
+window.addEventListener('storage', function (e) { if (e.key === 'agentCmd' && e.newValue) winCmd(e.newValue); });
+/* 设置 › 外观 的「主窗口全屏」：在主窗口里就直接切，在设置窗口里就叫主窗口切 */
+function mainFull() { if (TOOL) { winSend({ full: 1 }); toast('叫主窗口切全屏了（主窗口里按 F 也行）'); } else toggleFull(); }
 
 /* ---------- 深色 / 浅色 ---------- */
 function toggleTone(x, y) { setTheme(S.set.theme === 'light' ? 'dark' : 'light', x, y); syncTone(); }

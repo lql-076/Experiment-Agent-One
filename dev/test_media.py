@@ -2,8 +2,9 @@
 1. 清单怎么认：配音（## 文件名、音色 / 语气、没小节就整份一段、空的跳过）、配乐（## 名字 + 时长 + 描述、一行一首、表格、混着写）、时长的各种写法
 2. 存文件：同名的旧文件挪进「旧版」（不删），新的先写 .part
 3. 整备 ›「配音、语音、配乐」那一组：4 项、只装一项、一组在装时另一组不让开（409）、别的组的状态不被冲掉
-4. 一键装配乐（scripts/install_bgm.py）真的跑一遍：假下载站（dev/mocks.py 8001 /files/）给 7za 和一个假的 ACE-Step 便携包（这里现做的）→
-   校验 7za → 多连接下载 → 7za 测试、解压、改名 ace-step → 魔搭下不了换 hf-mirror → 自检；装完配乐认得出（不用填文件夹）；做完把装出来的删掉
+4. 一键装配乐（scripts/install_bgm.py）真的跑一遍：假下载站（dev/mocks.py 8001 /files/）给 7za 和一个假的 ACE-Step 便携包（这里现做的，
+   照官方便携包只带 acestep.model_downloader）→ 校验 7za → 多连接下载 → 7za 测试、解压、改名 ace-step → 魔搭下不了换 hf-mirror（报错进日志）→ 自检；
+   装完配乐认得出（不用填文件夹）；做完把装出来的删掉
 5. 说话的声音（Breeze TTS 2）一键装好之后：启动命令用随包的代码（app/breeze_run.py）+ 配音环境，设置里什么都不用填
 6. 配音批量（连测试后端，假配音服务）：认清单 → 每段自己的音色（我的音色 / 预设）→ 一段一段念、存进 配音输出\\日期_清单名\\ →
    跑的时候单个生成、重新对齐不让开 → 重来一段旧的进「旧版」→ 改一段 → 一次选几个 .txt → 写错的音色开始前就拦下 → 停下 → 打包、放进工作区
@@ -174,23 +175,25 @@ else:
         za = build / "bin" / "7za"
         za.chmod(za.stat().st_mode | stat.S_IEXEC)
         a = build / "ACE-Step-1.5"
-        (a / "acestep" / "api").mkdir(parents=True)
+        (a / "acestep").mkdir(parents=True)
         (a / "python_embedded").mkdir()
         (a / "acestep" / "__init__.py").write_text("")
-        (a / "acestep" / "api" / "__init__.py").write_text("")
         (a / "acestep" / "api_server.py").write_text('print("fake api server")\n')
-        (a / "acestep" / "api" / "model_download.py").write_text('''import os
-def _fake(local_dir):
+        (a / "acestep" / "model_downloader.py").write_text('''import os
+from pathlib import Path
+# 照便携包里那一版：只有 acestep.model_downloader（没有 acestep.api.model_download），download_main_model 没有 prefer_source 参数
+def download_main_model(checkpoints_dir=None, force=False, token=None):
+    src = os.environ.get("ACESTEP_DOWNLOAD_SOURCE", "")
+    print("Downloading main model from ACE-Step/Ace-Step1.5... (" + src + ")", flush=True)
+    if os.environ.get("FAKE_MS_FAIL") and src == "modelscope":
+        print("Error: 魔搭连不上（假的）", flush=True)
+        return False, "ModelScope download failed"
     for m in ("acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"):
-        os.makedirs(os.path.join(local_dir, m), exist_ok=True)
-        open(os.path.join(local_dir, m, "model.safetensors"), "wb").write(b"x" * 1000)
+        d = Path(checkpoints_dir) / m
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "model.safetensors").write_bytes(b"x" * 1000)
         print(f"Downloading [{m}]: 100%|##########| 1.00k/1.00k [00:00<00:00, 5.00MB/s]", flush=True)
-def download_from_modelscope(repo_id, local_dir, model_name):
-    if os.environ.get("FAKE_MS_FAIL"):
-        raise RuntimeError("魔搭连不上（假的）")
-    _fake(local_dir)
-def download_from_huggingface(repo_id, local_dir, model_name):
-    _fake(local_dir)
+    return True, "Main model downloaded"
 ''')
         py = a / "python_embedded" / "python"                 # 便携包自带的 Python：这里用一段 sh 接到本机的 Python 上；问 PyTorch 时假装有显卡
         py.write_text('#!/bin/sh\ncase "$2" in *"import torch"*) echo "PyTorch 2.7.1+cu128 | 显卡 测试显卡"; exit 0;; esac\nexec ' + sys.executable + ' "$@"\n')
@@ -210,6 +213,8 @@ def download_from_huggingface(repo_id, local_dir, model_name):
                   "解压到 ace-step（先解到 ace-step.tmp 再改名）")
             check("换 hf-mirror" in out and all((ACE / "checkpoints" / m / "model.safetensors").exists() for m in ("acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B")),
                   "魔搭下不了，换 hf-mirror 下全了三个模型")
+            check("acestep.model_downloader" in out and "魔搭连不上（假的）" in out and "换 hf-mirror 再试：" in out,
+                  "便携包里只有 acestep.model_downloader（没有 api/model_download）也能下；它打印的报错进了日志，「没下全」后面写着原因")
             check((DLD / "ACE-Step-1.5.7z").exists(), "下好的便携包留在 tools\\downloads（不删；要腾地方自己删）")
             from app import bgm
             check(bgm.B.installed() and bgm.B.builtin() and str(bgm.B.cmd()[0]).endswith("python_embedded/python") and str(bgm.B.cmd()[1]).endswith("acestep/api_server.py"),

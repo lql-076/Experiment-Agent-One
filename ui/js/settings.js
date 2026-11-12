@@ -70,7 +70,9 @@ function sectionBody(sec) {
       '<div class="field"><label>快捷键</label><div class="help">R 进入或退出常驻 · F 全屏或回到窗口 · T 切换风格 · Esc 退出常驻或关闭详情</div></div></div>';
   }
   if (sec.custom === 'look') {
-    h += '<div class="label" style="margin-bottom:.75rem">风格 · 点一下实时切换</div><div class="tpick">' + THEMES.map(function (t) {
+    h += '<div class="fields" style="margin-bottom:1.5rem"><div class="field row"><div><label>主窗口全屏</label><div class="help">以前在下边栏的「全屏」。主窗口里按 F 也行；全屏时再点一次回到窗口</div></div><button class="btn" data-main-full="1" style="white-space:nowrap">切换全屏</button></div>' +
+      '<div class="field row"><div><label>深色 / 浅色</label><div class="help">以前在下边栏。也能直接点下面的风格；所有窗口一起变。快捷键 T</div></div><div class="seg" role="group" aria-label="深色还是浅色"><button data-tone="dark" aria-pressed="' + (S.set.theme !== 'light') + '">深色</button><button data-tone="light" aria-pressed="' + (S.set.theme === 'light') + '">浅色</button></div></div></div>' +
+      '<div class="label" style="margin-bottom:.75rem">风格 · 点一下实时切换</div><div class="tpick">' + THEMES.map(function (t) {
       return '<button class="tcard" data-theme-pick="' + t.id + '" aria-pressed="' + (S.set.theme === t.id) + '"><span class="tprev" data-theme="' + t.id + '"><i class="tp-bg"></i><i class="tp-ring"></i><i class="tp-time num">21:47</i><i class="tp-bar"></i></span><b>' + esc(t.name) + '</b><span class="tdesc">' + esc(t.desc) + '</span></button>';
     }).join('') + '</div><p class="help" style="margin:-1rem 0 1.75rem">主题都在 ' + esc(P('root')) + '\\ui\\themes 里，一个 .css 文件就是一套。想加新的：复制一个改名、改颜色，刷新界面就会出现在这里。</p>';
   }
@@ -199,6 +201,7 @@ function searchHTML() {
 }
 function renderSettings() {
   $('#view-settings').innerHTML = '<div class="settings"><nav class="snav" aria-label="设置分类">' +
+    otherPagesHTML() +
     SECTIONS.map(function (s) { return '<button class="sitem" data-sec="' + s.id + '" aria-current="' + (s.id === S.sec) + '">' + s.name + (s.id === 'prep' ? '<em class="num" id="prepMini">' + readyCount() + '/' + LIVE_CHECKS.length + '</em>' : '') + '</button>'; }).join('') +
     '</nav><div class="sbody" id="sbody"></div></div>';
   $('#sbody').innerHTML = sectionBody(secById(S.sec));
@@ -206,6 +209,14 @@ function renderSettings() {
   if (S.sec === 'prep') setupPoll();
   if (S.sec === 'osd') requestAnimationFrame(osdFitPrev);
   secOpened(S.sec);
+}
+/* v3.2：大脑、报告、说明从下边栏挪到这里（点了照样开它自己的窗口） */
+var OTHER_PAGES = [['brains', '大脑', '本地模型和路由'], ['reports', '报告', '一周用了什么、等你拍板的'], ['docs', '说明', '操作手册、结构图']];
+function otherPagesHTML() {
+  var n = typeof pendingAsks === 'function' ? pendingAsks() : 0;
+  return '<div class="snav-other" role="group" aria-label="其他页面（新窗口）">' + OTHER_PAGES.map(function (p) {
+    return '<button class="sopen" data-open-tool="' + p[0] + '" title="' + p[2] + '（新窗口）">' + p[1] + (p[0] === 'reports' && n ? '<em class="num">' + n + '</em>' : '') + '</button>';
+  }).join('') + '</div>';
 }
 /* 打开某个分区时要现查的：配音装没装（本地模型）、开机自启开没开（自动化） */
 function secOpened(id) { if (id === 'models') ttsInstLoad(); if (id === 'auto') autoLoad(); }
@@ -237,7 +248,7 @@ function setVal(k, val) {
   if (k === 'take') syncTh();
   if (['bright', 'warmth', 'scale', 'autoScale', 'motion', 'perf', 'demo'].indexOf(k) >= 0) applyLook();
   if (k === 'scale') requestAnimationFrame(function () { placeInd(true); });
-  if (k === 'layout') applyOrient(true);
+  if (k === 'layout') { applyOrient(true); if (typeof winSend === 'function') winSend({ layout: val }); }
   if (k === 'h24' || k === 'secs') renderClock();
   if (k === 'idleRes') resetIdle();
   if (k === 'hwSource' || k === 'hwInterval' || k === 'demo') startHW();
@@ -332,7 +343,9 @@ var CAP_ROWS = [['download', '从网上下载文件到工作区', '只下公网�
   ['voice', '自己配音（本地）', '用「配音」页上次用的那套音色，出音频 + 每句的时间 + 字幕，直接放进工作区。不花钱'],
   ['voice_cloud', '配音可以用云端（百炼）', '要花钱，文案会发给百炼。关着就只用本地的'],
   ['music', '自己出配乐（ACE-Step）', '本地出纯音乐，不花钱。要先在 设置 › 配乐 里配好'],
-  ['image', '自己生图（API易）', '要花钱：每张按「生图」页选的模型算，一件事最多出几张在上面设。提示词和参考图会发给 API易']];
+  ['image', '自己生图（API易）', '要花钱：每张按「生图」页选的模型算，一件事最多出几张在上面设。提示词和参考图会发给 API易'],
+  ['publish', '自己发抖音', '做好的视频它能交给「发布」发到你的抖音（发出去是公开的）。要先在「发布」窗口扫码登录'],
+  ['publish_ask', '发抖音之前要我点确认', '开着：它只是交过去，在「发布」窗口里等你看一眼、点「发布」才发。关掉：它直接发']];
 function capsHTML() {
   var c = useLive() ? CAPS.st : CAPS_DEMO;
   if (!c) return '<div class="field"><div class="cap">正在读取…</div></div>';
@@ -346,7 +359,8 @@ function capsHTML() {
       '<div class="secret"><input class="inp" id="ccBash" spellcheck="false" placeholder="它能跑哪些命令，逗号隔开" value="' + esc(cc.bash || '') + '"><button class="btn" data-cap-set="cc_bash"' + dis + '>保存</button></div>' +
       '<div class="help">能跑的命令只认名字（python、ffmpeg 这种），别的一律不让跑。' + (cc.log ? '它的原始输出记在 ' + esc(cc.log) : '') + '</div></div>' +
     '<div class="fields capsw">' + CAP_ROWS.map(function (r) {
-      var warn = r[0] === 'image' && !k.image_key ? '（还没填 API易 的 Key）' : r[0] === 'music' && !k.music_ready ? '（ACE-Step 还没配好）' : r[0] === 'voice' && !k.voice_env ? '（本地配音还没装）' : '';
+      var warn = r[0] === 'image' && !k.image_key ? '（还没填 API易 的 Key）' : r[0] === 'music' && !k.music_ready ? '（ACE-Step 还没配好）' : r[0] === 'voice' && !k.voice_env ? '（本地配音还没装）' :
+        r[0] === 'publish' && !k.publish_ready ? '（抖音还没登录：在「发布」窗口扫码）' : r[0] === 'publish_ask' && !k.publish_ask && k.publish ? '（现在是直接发）' : '';
       return '<div class="field row"><div><label>' + r[1] + (warn ? '<em class="warn">' + warn + '</em>' : '') + '</label><div class="help">' + r[2] + '</div></div><button class="switch" role="switch" data-cap="' + r[0] + '" aria-checked="' + !!k[r[0]] + '" aria-label="' + r[1] + '"' + dis + '></button></div>'; }).join('') + '</div>' +
     '<div class="capbox"><div class="cap-h"><b>技能</b><span class="cap">' + (c.skills || []).length + ' 份 · 做某类事的成套做法，它用到时自己翻</span><span class="sp"></span><button class="btn mini" data-ws-open="ws"' + dis + '>打开工作区</button></div>' +
       (c.skills || []).map(function (x) { return '<div class="cap-row"><b>' + esc(x.name) + '</b><span>' + esc(x.use || '') + '</span><em>' + (x.mine ? '你写的' : '自带') + '</em></div>'; }).join('') +
@@ -418,6 +432,12 @@ sv.addEventListener('click', function (ev) {
     else if (d.voiceOff) api('POST', '/api/voice/off', {}).then(function () { toast('Breeze 关掉了，显存还回去了'); voiceBoxFetch(); }).catch(function (e) { toast(e.message); });
     else if (d.voiceUnref) api('DELETE', '/api/voice/ref').then(function (j) { VBOX.st = j; $('#voiceBox').innerHTML = voiceBoxHTML(); toast('去掉了：回到按描述造声音'); }).catch(function (e) { toast(e.message); });
     else if (d.bgmOff) api('POST', '/api/bgm/off', {}).then(function () { toast('ACE-Step 关掉了'); bgmBoxFetch(); }).catch(function (e) { toast(e.message); });
+    return;
+  }
+  var mf = ev.target.closest('[data-main-full],[data-tone]');
+  if (mf) {
+    if (mf.dataset.mainFull) mainFull();
+    else { var r2 = mf.getBoundingClientRect(); setTheme(mf.dataset.tone, r2.left + r2.width / 2, r2.top + r2.height / 2); }
     return;
   }
   var t = ev.target.closest('button'); if (!t || t.disabled) return;

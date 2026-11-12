@@ -34,7 +34,7 @@ def launch(pw):
         return pw.chromium.launch(executable_path="/opt/pw-browsers/chromium")
 
 
-TOOLS = ["img", "tts", "bgm", "events", "monitor", "brains", "reports", "settings", "docs"]
+TOOLS = ["img", "tts", "bgm", "publish", "events", "monitor", "brains", "reports", "settings", "docs"]   # v3.2 加了「发布」；大脑、报告、说明的按钮藏起来了（挪进设置），还在 DOM 里
 TOOL_SIZE = {"横屏": (1440, 880), "竖屏": (1080, 1860)}       # 工具窗口（v2.0）：默认 1440×880；竖屏放在竖着的显示器上
 
 

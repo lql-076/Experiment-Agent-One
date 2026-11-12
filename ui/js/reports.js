@@ -3,7 +3,8 @@
 function missingCount() { return LIVE_CHECKS.filter(function (c) { return S.check[c.k] && S.check[c.k].st === 'miss' && !S.manual[c.k]; }).length; }
 function syncBadges() {
   var n = pendingAsks(), b = $('#repBadge'); b.hidden = !n; b.textContent = n;
-  var m = missingCount(), sb = $('#setBadge'); sb.hidden = !m; sb.textContent = m;
+  var m = missingCount(), sb = $('#setBadge'); sb.hidden = !(m + n); sb.textContent = m + n;     // v3.2：报告挪进了设置，等你拍板的也算在设置的小红点里
+  sb.title = [m ? m + ' 项整备要补' : '', n ? n + ' 条报告等你拍板（设置 › 其他页面 › 报告）' : ''].filter(Boolean).join('，');
 }
 function renderReports() {
   var v = $('#view-reports'), live = useLive();

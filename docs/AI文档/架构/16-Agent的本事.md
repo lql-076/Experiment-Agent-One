@@ -1,6 +1,6 @@
 # 架构 · Agent 的本事（工具循环、计划、技能、工具箱、Claude Code 引擎）
 
-> 最后核对：v3.0.0（2026-11-11）。
+> 最后核对：v3.2.0（2026-11-13）。
 
 ## 结构图
 
@@ -27,6 +27,7 @@ mindmap
       make_voice 本地配音进工作区
       make_music ACE-Step
       make_image 默认关 · 有上限
+      publish_douyin 发抖音 · 默认关 · 默认要他确认
       read_skill 翻技能
     技能 · skills 和 工作区的技能文件夹
       用在 · 触发 · 步骤
@@ -76,6 +77,7 @@ v2.x 的 Agent 在工作区里只会「读、写、跑命令」，一件事 40 �
 | `make_voice(text, dir, name)` | 用配音页上次的设置出音频 + 时间轴 + 字幕，放进工作区；云端要另开 | `agVoice` / `agVoiceCloud` |
 | `make_music(prompt, seconds, path)` | 交给 ACE-Step 出纯音乐 | `agMusic` |
 | `make_image(prompt, path, ratio, refs)` | 走生图页选的模型；一件事最多 `agImageMax` 张；钱算进这件事 | `agImage`（默认关） |
+| `publish_douyin(path, title, desc, tags, schedule, cover)` | v3.2：把工作区里的视频发到他的抖音（[19](19-发布.md)）。默认交给他在「发布」窗口确认，工具马上返回；关掉确认才直接发、等发完 | `agPublish`（默认关）/ `agPublishAsk`（默认开）；登录过才给 |
 
 ## 技能和工具箱
 

@@ -80,10 +80,11 @@ function themeName(id) { return THEMES.filter(function (t) { return t.id === id;
 function setTheme(id, x, y) {
   if (S.set.theme === id) return;
   var apply = function () {
-    S.set.theme = id; root.dataset.theme = id; save(); pushSet({ theme: id });
+    S.set.theme = id; root.dataset.theme = id; save(); pushSet({ theme: id }); if (typeof winSend === 'function') winSend({ theme: id });
     renderResident(); placeInd(true); if (typeof syncTone === 'function') syncTone();
     if (root.dataset.mode === 'resident') { cancelAnims($$('#resident .rc-svg, #resident .rc-arc, #resident .rc-glow, #resident .rc-ticks, #rcSec')); }
     $$('[data-theme-pick]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.themePick === id); });
+    $$('[data-tone]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.tone === (id === 'light' ? 'light' : 'dark')); });
   };
   if (!smooth()) { apply(); toast('风格：' + themeName(id)); return; }
   root.classList.add('theme-vt');
@@ -110,6 +111,7 @@ function goView(v) {
   if (S.view === 'tts') ttsLeave();
   if (S.view === 'img') imgLeave();
   if (S.view === 'bgm') bgmLeave();
+  if (S.view === 'publish') pubLeave();
   var usingVT = moving();
   var t = vt(function () {
     S.view = v;
@@ -124,6 +126,7 @@ function goView(v) {
     if (v === 'tts') { if (TTS.st) renderTTS(); ttsEnter(); }
     if (v === 'img') { if (IMG.st) renderImg(); imgEnter(); }
     if (v === 'bgm') { BGM.sig = ''; renderBgm(); bgmEnter(); }
+    if (v === 'publish') { renderPub(); pubEnter(); }
     placeInd(usingVT);
   });
   if (!t) replay($('#view-' + v));

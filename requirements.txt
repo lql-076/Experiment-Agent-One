@@ -11,3 +11,5 @@ pywebview>=6.2,<7; sys_platform == "win32"
 pywintrace>=0.2; sys_platform == "win32"
 pypdf>=4
 openpyxl>=3.1
+patchright>=1.55
+loguru>=0.7
