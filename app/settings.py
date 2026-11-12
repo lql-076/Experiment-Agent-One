@@ -84,7 +84,7 @@ DEFAULTS = {
     "hwOn": False,          # 硬件监控助手：开着就跟着 Agent 一起启动（app/hwctl.py）
     "fpsSkip": "",          # 你说过"不是游戏"的程序（逗号分隔，比如 GamePP.exe），读帧数时跳过
 }
-SECRET_KEYS = ("dsKey", "qqSecret", "blKey", "imgKey")      # blKey：百炼 API Key（云端配音）；imgKey：API易 Key（生图，v1.8.15）
+SECRET_KEYS = ("dsKey", "qqSecret", "blKey", "imgKey", "hfToken")      # blKey：百炼 API Key（云端配音）；imgKey：API易 Key（生图，v1.8.15）；hfToken：只在下 Breeze 权重要登录时用（v3.1）
 LOCKED = {"gpuOnly": True, "privLocal": True}   # 这两条界面上改不了
 PERM = {"wsDir", "wsRun", "agDownload", "agVoice", "agVoiceCloud", "agImage", "agMusic", "ccOn", "ccCmd", "ccBash"}                         # 给 agent 的权限：有自己的接口（记进动作日志），通用的改设置改不了
 

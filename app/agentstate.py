@@ -275,10 +275,10 @@ async def view():
     if not S.get("voiceOn"):
         hands.append(_row("voice", "语音", "off", "没开", {"label": "去打开", "sec": "voice"}))
     elif eng == "none":
-        hands.append(_row("voice", "语音", "bad", f"{ears} · 还没有能出声的（配 Breeze TTS 2，或者先装本地配音）", {"label": "去设置", "sec": "voice"}))
+        hands.append(_row("voice", "语音", "bad", f"{ears} · 还没有能出声的（在整备里一键装 Breeze TTS 2）", {"label": "去装", "sec": "prep"}))
     else:
-        hands.append(_row("voice", "语音", "ok" if vv.asr_ok() else "warn", f"{ears} · 出声：" + ("Breeze TTS 2" + (" · 开着" if vv.proc.alive() else "") if eng == "breeze" else "本地配音顶着（Breeze 还没配）"),
-                          None if vv.asr_ok() else {"label": "去装", "sec": "voice"}))
+        hands.append(_row("voice", "语音", "ok" if vv.asr_ok() else "warn", f"{ears} · 出声：" + ("Breeze TTS 2" + (" · 开着" if vv.proc.alive() else "") if eng == "breeze" else "本地配音顶着（Breeze 还没装）"),
+                          None if vv.asr_ok() else {"label": "去装", "sec": "prep"}))
     bb = bgm.B
     if bb.job and bb.job.get("st") == "run":
         hands.append(_row("bgm", "配乐（ACE-Step）", "ok", "正在出一首：" + str(bb.job.get("prompt") or "")[:20]))
@@ -287,7 +287,7 @@ async def view():
     elif bb.configured():
         hands.append(_row("bgm", "配乐（ACE-Step）", "idle", "配好了 · 用到才启动"))
     else:
-        hands.append(_row("bgm", "配乐（ACE-Step）", "off", "还没配：填 ACE-Step 的文件夹或者地址", {"label": "去设置", "sec": "bgm"}))
+        hands.append(_row("bgm", "配乐（ACE-Step）", "off", "还没装：在整备里一键装好", {"label": "去装", "sec": "prep"}))
 
     groups = [{"name": "大脑", "items": brain}, {"name": "云端", "items": cloud}, {"name": "手脚", "items": hands}, {"name": "通道", "items": chan}, {"name": "后台", "items": back}]
     cnt = {"ok": 0, "idle": 0, "warn": 0, "bad": 0, "off": 0, "start": 0, "stuck": 0}

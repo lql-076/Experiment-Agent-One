@@ -283,6 +283,17 @@ def _env(d):
     return {"data": d, "code": 200, "error": None, "timestamp": int(time.time() * 1000), "extra": None}
 
 
+@ace.get("/files/{name}")
+def ace_files(name: str):
+    """一键装测试用的「下载站」（v3.1）：dev/.run/mockfiles 里的文件，支持分段下载（Range）。"""
+    from pathlib import Path
+    from fastapi.responses import FileResponse, JSONResponse
+    p = Path(__file__).resolve().parent / ".run" / "mockfiles" / name
+    if not p.is_file():
+        return JSONResponse({"detail": "没有"}, status_code=404)
+    return FileResponse(p)
+
+
 @ace.get("/health")
 def ace_health():
     return _env({"status": "ok", "service": "ACE-Step API", "version": "1.0"})

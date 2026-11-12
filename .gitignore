@@ -26,6 +26,10 @@ tools/cache/
 tools/tmp/
 tools/wheels/*
 !tools/wheels/*放这里.txt
+# 配乐引擎 ACE-Step（一键装好时解压的官方便携包，约 10GB 带模型）、解压工具、下载到一半的大文件（v3.1）
+ace-step/
+tools/7z/
+tools/downloads/
 
 # ── 开发用 ──
 dist/

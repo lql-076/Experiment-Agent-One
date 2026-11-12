@@ -755,9 +755,14 @@ def setup_status():
 
 
 @app.post("/api/setup/start")
-async def setup_start():
-    if not setup.start():
-        raise HTTPException(409, "已经在补了")
+async def setup_start(body: dict = Body(default={})):
+    """{group: core|media, keys: [只装这几步]}；不带就是一键补齐那 6 步。"""
+    try:
+        ok = setup.start(body.get("group") or "core", body.get("keys"))
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from None
+    if not ok:
+        raise HTTPException(409, "已经在装了：等这一轮装完（或者先点「停下」）")
     return setup.status()
 
 

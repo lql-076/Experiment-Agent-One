@@ -33,6 +33,20 @@ ASR_MODEL = "Qwen3-ASR-0.6B"
 JOBN = "语音"
 PY_DIRS = (".venv/Scripts", "venv/Scripts", "python_embeded", "python", ".venv/bin", "venv/bin")
 HF_ID = "BreezeBlue/breeze-tts-2"
+CODE = paths.ROOT / "vendor" / "breeze-tts"            # 推理代码随包带着（v3.1；Apache-2.0，见那里的说明）
+MODEL = paths.MODELS_TTS / "breeze-tts-2"               # 一键装好时把权重下到这里（scripts/install_tts.py --breeze）
+
+
+def model_ok(d=MODEL):
+    """权重下全了没有：config.json、.safetensors、它自带的声音编解码器（audio_tokenizer），没有下到一半的文件。"""
+    d = Path(d)
+    return ((d / "config.json").exists() and any(d.glob("*.safetensors")) and (d / "audio_tokenizer" / "config.json").exists()
+            and not any(d.rglob("*.incomplete")))
+
+
+def installed():
+    """一键装好的那套能不能用：配音环境（tts-env）在、权重下全了、代码在。"""
+    return tts.T.env_ok() and model_ok() and (CODE / "breeze_infer" / "api.py").exists()
 
 
 class VoiceError(RuntimeError):
@@ -112,10 +126,17 @@ class Voice:
             except ValueError:
                 return None
         d, py = self.folder(), self.python()
-        if not (d and d.is_dir() and py):
-            return None
         m = re.match(r"https?://([^:/]+)(?::(\d+))?", self.url())
-        return [py, "-m", "breeze_infer.api", self.model(), "--host", m.group(1) if m else "127.0.0.1", "--port", (m.group(2) if m else None) or "8093"]
+        host, port = (m.group(1) if m else "127.0.0.1"), ((m.group(2) if m else None) or "8093")
+        if d and d.is_dir() and py:                              # 自己装的一份（填了文件夹）
+            return [py, "-m", "breeze_infer.api", self.model(), "--host", host, "--port", port]
+        if not d and installed():                                # 整备里一键装好的：配音环境 + 随包的代码 + 下好的权重
+            return [paths.tts_python(), paths.ROOT / "app" / "breeze_run.py", MODEL, "--host", host, "--port", port]
+        return None
+
+    def cwd(self):
+        d = self.folder()
+        return d if d and d.is_dir() else CODE if CODE.is_dir() else paths.ROOT
 
     async def health(self):
         try:
@@ -136,7 +157,7 @@ class Voice:
             return
         cmd = self.cmd()
         if not cmd:
-            raise VoiceError("说话的声音还没配好：到 设置 › 语音 填 Breeze TTS 2 的文件夹（或者先自己把它的接口开着）")
+            raise VoiceError("说话的声音还没装：到 设置 › 整备 点「配音、语音、配乐」那张卡片的一键装好（或者只装 Breeze TTS 2 那一项）")
         if M.yielding:
             raise VoiceError(f"现在在让路（{M.yield_reason or '显存不够'}），先不开口")
         if not self.proc.alive():
@@ -147,7 +168,7 @@ class Voice:
                     tts.T.stop("给语音让显存")
             env = M.env()
             env.update(PYTHONUTF8="1")
-            self.proc.start(cmd, self.folder() or paths.ROOT, env)
+            self.proc.start(cmd, self.cwd(), env)
             self.last = time.time()
             feed.add("语音（Breeze TTS 2）启动中：装模型要几十秒（日志 data\\logs\\voice.log）", "info", job=JOBN)
         t0 = time.time()
@@ -337,7 +358,7 @@ class Voice:
                 "speaker": self.s.get("voiceSpeaker") or "Vivian", "up": up, "alive": self.proc.alive(), "configured": self.configured(), "url": self.url(),
                 "dir": str(d) if d else "", "dir_ok": bool(d and d.is_dir()), "python": paths.show(self.python()) if self.python() else "",
                 "model": self.model(), "can_start": bool(self.cmd()), "ref": REF.exists(), "ref_text": self.s.get("voiceRefText") or "",
-                "desc": self.s.get("voiceDesc") or "", "asr": self.asr_ok(), "asr_why": self.asr_why(), "tts_env": tts.T.env_ok(),
+                "desc": self.s.get("voiceDesc") or "", "installed": installed(), "model_ok": model_ok(), "asr": self.asr_ok(), "asr_why": self.asr_why(), "tts_env": tts.T.env_ok(),
                 "yielding": M.yielding, "yield_reason": M.yield_reason, "auto": bool(self.s.get("voiceAuto", True)), "hands": bool(self.s.get("voiceHands", False)), "all": bool(self.s.get("voiceAll", False)),
                 "max": int(self.s.get("voiceMax") or 400), "sr": SR}
 

@@ -25,6 +25,9 @@ from app import voice  # noqa: E402
 voice.V.asr_ok = lambda: not (RUN / "fake_tts_noasr.flag").exists()
 os.environ["AGENT_DL_ANY"] = "1"
 os.environ.setdefault("AGENT_CHROMIUM", "/opt/pw-browsers/chromium")
+# v3.1 一键装配乐：下载地址换成假的下载站（dev/mocks.py 8001 的 /files/，文件由 dev/test_media.py 放进 dev/.run/mockfiles）
+os.environ.setdefault("AGENT_7Z_URLS", "http://127.0.0.1:8001/files/7zip-bin-5.2.0.tgz")
+os.environ.setdefault("AGENT_ACE_URLS", "http://127.0.0.1:8001/files/ACE-Step-1.5.7z")
 
 
 async def fake(k, opts):

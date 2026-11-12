@@ -1,9 +1,11 @@
 r"""配乐（v3.0）：本地 ACE-Step 1.5 出纯音乐，替 Suno（MIT 协议，能商用；显存最低不到 4 GB）。
 
-ACE-Step 不由 Agent 安装（模型几个 GB、官方有 Windows 便携包，他自己下）：
-- 设置 › 本地模型 › 配乐 里填 ACE-Step 的文件夹（bgmDir）→ Agent 用到时自己启动它的接口服务（python -m acestep.api_server，不弹黑窗口，
-  日志在 data\logs\bgm.log），闲置 bgmIdle 分钟关掉，打游戏让路时关掉——和配音服务一个规矩。第一次启动它会自己下模型，要等。
-- 不填文件夹：他自己把 ACE-Step 的接口开着（start_api_server.bat），Agent 只连 bgmUrl（默认 http://127.0.0.1:8001）。
+怎么装（v3.1 起）：设置 › 整备 ›「配音、语音、配乐」一键装好（scripts\install_bgm.py）：下官方 Windows 便携包、解压到 Agent 文件夹里的
+ace-step\、用它自带的 Python 下好模型。装好了这里直接用那一份，设置里什么都不用填。
+- 用到时 Agent 自己启动它的接口：照它的 start_api_server.bat 那样跑 python_embedded\python.exe acestep\api_server.py（不走那个 bat：
+  它会检查更新、问 Y/N，没有窗口就卡住），不弹黑窗口，日志在 data\logs\bgm.log；只开出曲子要的部分（ACESTEP_INIT_LLM=false，不装语言模型）；
+  闲置 bgmIdle 分钟关掉，打游戏让路时关掉——和配音服务一个规矩。
+- 也能用自己装的一份：设置 › 配乐 填它的文件夹（bgmDir）；或者自己把接口开着，Agent 只连 bgmUrl（默认 http://127.0.0.1:8001）。
 
 接口（ACE-Step 1.5 的 REST API）：POST /release_task 交任务 → POST /query_result 每 2 秒问一次 → 拿到 file（/v1/audio?path=…）下载。
 纯音乐：歌词写 [Instrumental]。一次出一首。出好的存在 配乐输出\日期\时分秒_描述.wav，旁边一份同名 .json（描述、时长、用时）。
@@ -25,6 +27,7 @@ from . import db, feed, mediainfo, paths, settings
 from .models import M, Proc
 
 OUT = paths.ROOT / "配乐输出"
+INSTALL = paths.ROOT / "ace-step"                    # 整备一键装好的那一份（v3.1）
 NEED_GB = 5.0
 JOBN = "配乐"
 PY_DIRS = ("python_embeded", "python_embedded", "python", ".venv/Scripts", "venv/Scripts", ".venv/bin", "venv/bin")
@@ -52,7 +55,20 @@ class Bgm:
 
     def folder(self):
         v = str(self.s.get("bgmDir") or "").strip().strip('"')
-        return Path(v) if v else None
+        if v:
+            return Path(v)
+        return INSTALL if (INSTALL / "acestep" / "api_server.py").exists() else None
+
+    def builtin(self):
+        """用的是整备里一键装好的那一份（没在设置里填别的文件夹）。"""
+        return not str(self.s.get("bgmDir") or "").strip() and self.folder() == INSTALL
+
+    def installed(self):
+        """整备一键装好的那一份：程序在、模型下全了。"""
+        ck = INSTALL / "checkpoints"
+        return ((INSTALL / "acestep" / "api_server.py").exists() and any((INSTALL / s / "python.exe").exists() or (INSTALL / s / "python").exists()
+                                                                          for s in ("python_embedded", "python_embeded"))
+                and all((ck / m).is_dir() and any((ck / m).rglob("*.safetensors")) for m in ("acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B")))
 
     def python(self):
         d = self.folder()
@@ -76,6 +92,8 @@ class Bgm:
         d, py = self.folder(), self.python()
         m = re.match(r"https?://([^:/]+)(?::(\d+))?", self.url())
         host, port = (m.group(1), m.group(2) or "8001") if m else ("127.0.0.1", "8001")
+        if py and (d / "acestep" / "api_server.py").exists():      # 和它的 start_api_server.bat 一样直接跑脚本（便携包的 Python 不认当前文件夹）
+            return [py, d / "acestep" / "api_server.py", "--host", host, "--port", port]
         if py:
             return [py, "-m", "acestep.api_server", "--host", host, "--port", port]
         if d and shutil.which("uv"):
@@ -104,12 +122,15 @@ class Bgm:
             return
         cmd = self.cmd()
         if not cmd:
-            raise BgmError("配乐还没配好：到 设置 › 本地模型 › 配乐 填 ACE-Step 的文件夹（或者先自己把它的接口开着）")
+            raise BgmError("配乐还没装：到 设置 › 整备 点「配音、语音、配乐」那张卡片的一键装好（或者只装 ACE-Step 那一项）")
         if M.yielding:
             raise BgmError(f"现在在让路（{M.yield_reason or '显存不够'}），配乐先不开")
         if not self.proc.alive():
             env = M.env()
             env.update(ACESTEP_API_HOST=cmd[cmd.index("--host") + 1], ACESTEP_API_PORT=cmd[cmd.index("--port") + 1], PYTHONUTF8="1")
+            env.setdefault("ACESTEP_INIT_LLM", "false")              # 只出纯音乐：语言模型不装（省 3GB 显存）
+            if self.builtin():
+                env["ACESTEP_CHECKPOINTS_DIR"] = str(INSTALL / "checkpoints")
             self.proc.start(cmd, self.folder(), env)
             self.last = time.time()
             feed.add("配乐服务（ACE-Step）启动中：第一次要下模型、装模型，会久一点（日志 data\\logs\\bgm.log）", "info", job=JOBN)
@@ -275,6 +296,7 @@ class Bgm:
         d, up = self.folder(), await self.health()
         return {"up": up, "alive": self.proc.alive(), "configured": self.configured(), "url": self.url(), "dir": str(d) if d else "",
                 "dir_ok": bool(d and d.is_dir()), "python": paths.show(self.python()) if self.python() else "", "can_start": bool(self.cmd()),
+                "builtin": self.builtin(), "installed": self.installed(),
                 "yielding": M.yielding, "yield_reason": M.yield_reason, "job": self.public(), "out": paths.show(self.out_dir()), "recent": self.history()[:30],
                 "idle": int(self.s.get("bgmIdle") or 10), "steps": int(self.s.get("bgmSteps") or 8)}
 
@@ -297,7 +319,7 @@ async def bgm_gen(body: dict = Body(...)):
     if not prompt:
         raise HTTPException(400, "写一句描述：风格、情绪、乐器、快慢")
     if not B.cmd() and not await B.health():
-        raise HTTPException(400, "配乐还没配好：到 设置 › 本地模型 › 配乐 填 ACE-Step 的文件夹（或者先自己把它的接口开着）")
+        raise HTTPException(400, "配乐还没装：到 设置 › 整备 点「配音、语音、配乐」那张卡片的一键装好（或者只装 ACE-Step 那一项）")
 
     async def run():
         try:

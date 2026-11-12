@@ -42,7 +42,7 @@ function prepHTML() {
   var n = readyCount(), tot = LIVE_CHECKS.length;
   var when = S.checking ? '正在自检…' : S.lastCheck ? '上次自检 ' + pad(S.lastCheck.getHours()) + ':' + pad(S.lastCheck.getMinutes()) + (useLive() ? '' : ' · 演示数据') : '还没有自检';
   return '<div class="prep-head"><div><div class="prep-num num"><b id="prepReady">' + n + '</b> / ' + tot + '</div><div class="help" id="prepWhen" style="margin-top:.375rem">' + when + ' · Agent 文件夹：' + esc(P('root')) + (LIVE ? '' : '（示例路径，按你实际放的位置）') + '</div></div><button class="btn primary" id="recheck">重新自检</button></div>' +
-    '<div class="prep-bar"><i id="prepBar" style="transform:scaleX(' + (n / tot).toFixed(3) + ')"></i></div>' + setupHTML() + '<div id="prepGroups">' + prepGroups() + '</div>' +
+    '<div class="prep-bar"><i id="prepBar" style="transform:scaleX(' + (n / tot).toFixed(3) + ')"></i></div>' + setupHTML('core') + setupHTML('media') + '<div id="prepGroups">' + prepGroups() + '</div>' +
     '<div class="label grp">以后再装 · 不参与自检</div><div class="setup ready">' +
     CHECKS.filter(function (c) { return c.later; }).map(function (c) { return '<div class="su sm later"><span></span><div class="su-b"><div class="su-top"><h3>' + esc(c.t) + '</h3></div><p class="su-d">' + esc(c.why) + '</p>' + (c.links && c.links.length ? '<div class="links">' + linksHTML(c.links) + '</div>' : '') + '</div></div>'; }).join('') + '</div>';
 }

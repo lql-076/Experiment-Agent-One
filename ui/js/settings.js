@@ -363,10 +363,10 @@ function voiceBoxHTML() {
   var v = useLive() ? VBOX.st : VBOX_DEMO, dis = useLive() ? '' : ' disabled';
   if (!v) return '<div class="field"><div class="cap">正在读取…</div></div>';
   var mouth = v.engine === 'breeze' ? '<em class="ok">Breeze TTS 2</em>' + (v.up ? ' · 连得上' : v.can_start ? ' · 用到才启动' : ' · <em class="warn">现在连不上（' + esc(v.url) + '）</em>')
-    : v.engine === 'local' ? '<em class="ok">本地配音顶着</em>（Breeze 还没配好：' + (v.up ? '' : '地址连不上，') + '配好了自动换成它）' : '<em class="bad">还没有能出声的</em>：配 Breeze，或者先在 设置 › 本地模型 里把本地配音装上';
+    : v.engine === 'local' ? '<em class="ok">本地配音顶着</em>（Breeze 还没装：装好了自动换成它）' : '<em class="bad">还没有能出声的</em>：点右边一键装 Breeze（或者在整备里把本地配音装上）';
   return '<div class="capbox"><div class="cap-row"><b>听（你说的话变成字）</b><span>' + (v.asr ? '<em class="ok">装好了</em> 本地 Qwen3-ASR，跑在配音服务里（用到才启动，约多占 2GB 显存）' : '<em class="warn">还没装</em> ' + esc(v.asr_why || '')) + '</span>' +
-      (v.asr ? '' : '<button class="btn mini primary" data-voice-asr="1"' + dis + (v.tts_env ? '' : ' disabled title="先在 设置 › 本地模型 里装好本地配音"') + '>安装听写（约 1.9 GB）</button>') + '</div>' +
-    '<div class="cap-row"><b>说（它的回答念出来）</b><span>' + mouth + '</span><button class="btn mini" data-voice-test="1"' + dis + '>说一句试试</button>' + (v.alive ? '<button class="btn mini ghost" data-voice-off="1">关掉 Breeze</button>' : '') + '</div>' +
+      (v.asr ? '' : '<button class="btn mini primary" data-setup-one="asr"' + dis + ' title="在 设置 › 整备 的「配音、语音、配乐」里装，进度在那张卡片上">一键装听写（约 1.9 GB）</button>') + '</div>' +
+    '<div class="cap-row"><b>说（它的回答念出来）</b><span>' + mouth + '</span>' + (v.engine !== 'breeze' && !v.installed ? '<button class="btn mini primary" data-setup-one="breeze"' + dis + ' title="在 设置 › 整备 的「配音、语音、配乐」里装，进度在那张卡片上">一键装 Breeze</button>' : '') + '<button class="btn mini" data-voice-test="1"' + dis + '>说一句试试</button>' + (v.alive ? '<button class="btn mini ghost" data-voice-off="1">关掉 Breeze</button>' : '') + '</div>' +
     '<div class="cap-row"><b>声音照谁的</b><span>' + (v.ref ? '<em class="ok">有参考音频</em>：照它的声音念（记得把音频里说的话填在下面「参考音频里念的字」）' : '没放参考音频：按下面那句「声音是什么样的」造一个') + '</span>' +
       '<label class="btn mini" for="voiceRefFile"' + (useLive() ? '' : ' aria-disabled="true"') + '>' + (v.ref ? '换一段' : '放一段参考音频') + '</label><input type="file" id="voiceRefFile" accept=".wav,audio/wav" hidden' + dis + '>' + (v.ref ? '<button class="btn mini ghost" data-voice-unref="1">去掉</button>' : '') + '</div>' +
     '<div class="help">参考音频：3~30 秒、16 位 WAV、你自己有权用的声音。麦克风只在你点了核心 / 话筒以后才开，收住就关；录音不存盘。快捷键：Alt + V 开始说，Esc 打断。</div></div>';
@@ -378,9 +378,10 @@ function bgmBoxHTML() {
   var v = useLive() ? BBOX.st : { up: false, alive: false, configured: false, can_start: false, url: 'http://127.0.0.1:8001', out: 'F:\\Agent\\配乐输出' };
   if (!v) return '<div class="field"><div class="cap">正在读取…</div></div>';
   var line = v.alive ? '<em class="ok">开着</em>（Agent 开的，闲着会自己关）' : v.up ? '<em class="ok">连得上</em>（你自己开着的）' : v.can_start ? '<em class="ok">配好了</em>：用到才启动' + (v.python ? ' · ' + esc(v.python) : '')
-    : v.dir && !v.dir_ok ? '<em class="bad">这个文件夹不存在</em>：' + esc(v.dir) : '<em class="warn">还没配</em>：' + esc(v.url) + ' 连不上，也没填 ACE-Step 的文件夹';
-  return '<div class="capbox"><div class="cap-row"><b>ACE-Step 1.5</b><span>' + line + '</span><button class="btn mini primary" data-open-tool="bgm">打开配乐窗口</button>' + (v.alive ? '<button class="btn mini ghost" data-bgm-off="1">现在关掉</button>' : '') + '</div>' +
-    '<div class="help">没装过：到 ACE-Step 1.5 的 GitHub 发布页下 Windows 整合包解压（自带 Python 环境和 start_api_server.bat），把解压出来的文件夹填在下面就行。出的音乐放在：' + esc(v.out || '') + '</div></div>';
+    : v.dir && !v.dir_ok ? '<em class="bad">这个文件夹不存在</em>：' + esc(v.dir) : '<em class="warn">还没装</em>：点右边一键装（官方便携包 + 模型，约 15GB）';
+  var inst = !v.can_start && !v.up ? '<button class="btn mini primary" data-setup-one="bgm"' + (useLive() ? '' : ' disabled') + ' title="在 设置 › 整备 的「配音、语音、配乐」里装，进度在那张卡片上">一键装 ACE-Step</button>' : '';
+  return '<div class="capbox"><div class="cap-row"><b>ACE-Step 1.5</b><span>' + line + '</span>' + inst + '<button class="btn mini" data-open-tool="bgm">打开配乐窗口</button>' + (v.alive ? '<button class="btn mini ghost" data-bgm-off="1">现在关掉</button>' : '') + '</div>' +
+    '<div class="help">一键装：从 ACE 官方下 Windows 便携包（自带 Python 和依赖）解压到 Agent 文件夹里的 ace-step，再下模型，下面什么都不用填；进度在 设置 › 整备 的「配音、语音、配乐」卡片上。想用自己装的一份才填下面的文件夹。出的音乐放在：' + esc(v.out || '') + '</div></div>';
 }
 function bgmBoxFetch() { api('GET', '/api/bgm').then(function (j) { BBOX.st = j; var b = $('#bgmBox'); if (b) b.innerHTML = bgmBoxHTML(); }).catch(function () {}); }
 var sv = $('#view-settings');
@@ -403,6 +404,8 @@ sv.addEventListener('click', function (ev) {
     else rdirsDo('PATCH', { path: rd.dataset.rdCloud, cloud: rd.getAttribute('aria-checked') !== 'true' }).catch(function (e) { toast(e.message); });
     return;
   }
+  var so = ev.target.closest('#voiceBox [data-setup-one], #bgmBox [data-setup-one]');
+  if (so && !so.disabled) { setupStart(so, 'media', [so.dataset.setupOne]); setTimeout(function () { toast('开始装了：进度在 设置 › 整备 的「配音、语音、配乐」卡片上', 6000); }, 600); return; }
   var cp = ev.target.closest('[data-cap],[data-cap-set],[data-voice-asr],[data-voice-test],[data-voice-off],[data-voice-unref],[data-bgm-off],[data-open-tool]');
   if (cp && !cp.disabled) {
     if (cp.dataset.openTool) { openView(cp.dataset.openTool); return; }
@@ -489,7 +492,9 @@ sv.addEventListener('click', function (ev) {
       .then(function () { setTimeout(function () { if (S.sec === 'cloud') $('#sbody').innerHTML = sectionBody(secById('cloud')); }, 900); });
   }
 
-  else if (t.id === 'setupGo') setupStart(t);
+  else if (t.dataset.setupGo) setupStart(t, t.dataset.setupGo);
+  else if (t.dataset.setupOne) setupStart(t, 'media', [t.dataset.setupOne]);
+  else if (t.dataset.setupStop) setupStop();
   else if (t.id === 'setupStop') setupStop();
   else if (t.id === 'recheck') checkPanel(true);
   else if (t.dataset.osdItem) {

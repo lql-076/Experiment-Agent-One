@@ -117,9 +117,7 @@ var CHECKS = [
     why: '提醒靠主动消息。你在 QQ 里关掉了"允许主动发送"就会失败，这时会自动改成电脑弹窗 + 界面卡片。', links: [] },
   { k: 'memory', t: '记忆文件夹', how: '看文件夹在不在、有没有 git 记录', place: '{memory}', demo: ['ok', '文件夹在 · git 记录中'], go: 'memory',
     why: '启动时自动创建，记忆、技能、提示词全是中文 Markdown。想放进 Obsidian：在 设置 › 记忆与文件 填库里的一个子文件夹。', links: [['Obsidian 官网', 'https://obsidian.md']] },
-  { k: 'media', t: '做视频（图像生成、配音、背景音乐、合成）', later: true, why: '以后做自媒体用：留好了位置，先不做。图像生成接 OpenAI 最新的图像模型；配音用本地 TTS（显存 3~5GB 以内，用到才加载）；背景音乐用代码编曲或你从剪映选；动画代码逐帧渲染再用 FFmpeg 合成。发布前一律先问你。', links: [] },
   { k: 'train', t: '小脑训练（Unsloth / PEFT）', later: true, why: '慢成长：样本攒够后先问你，你说开始才训练新小脑。训练用的就是现在这套本地模型环境。', links: [['Unsloth', 'https://unsloth.ai']] },
-  { k: 'voice', t: '语音（听写 + 说话）', later: true, why: '以后接：本地听写和说话，QQ 语音消息也能直接发给它。', links: [] },
   { k: 'rea', t: 'REA 逆向工具', later: true, why: '只认官方仓库 morluto/rea，网上有带木马的假冒版本。', links: [['REA 官方仓库', 'https://github.com/morluto/rea']] }
 ];
 var LIVE_CHECKS = CHECKS.filter(function (c) { return !c.later; });
@@ -196,12 +194,13 @@ var SECTIONS = [
     { k: 'voiceRefText', l: '参考音频里念的字', ph: '放了参考音频才用填：把那段音频里说的话原样写在这里' },
     { k: 'voiceSpeaker', l: '本地配音顶着的时候用哪个音色', t: 'select', d: 'Vivian', o: [['Vivian', 'Vivian（女声，明亮）'], ['Serena', 'Serena（女声，温柔）'], ['Uncle_Fu', 'Uncle_Fu（男声，低沉）'], ['Dylan', 'Dylan（男声，北京话）'], ['Eric', 'Eric（男声，四川话）'], ['Ryan', 'Ryan（男声，英文）']] },
     { k: 'voiceMax', l: '一次最多念多少字', t: 'number', u: '字', d: 400, h: '回答太长只念前面，剩下的在屏幕上看。代码、链接、表格不念' },
-    { k: 'voiceUrl', l: 'Breeze 服务的地址', d: 'http://127.0.0.1:8093', h: 'Breeze TTS 2 官方只支持 Linux：在 WSL2 里把它的接口跑起来（python -m breeze_infer.api 模型文件夹 --port 8093），Windows 这边照这个地址连' },
-    { k: 'voiceCmd', l: '启动 Breeze 的命令（可选）', ph: '比如：wsl -d Ubuntu -- bash -lc "cd ~/Breeze-TTS && python -m breeze_infer.api ~/models/breeze2 --host 0.0.0.0 --port 8093"', h: '填了它，Agent 用到时自己把 Breeze 开起来、闲着自己关、打游戏让路。不填就是你自己开着' },
+    { k: 'voiceUrl', l: 'Breeze 服务的地址', d: 'http://127.0.0.1:8093', h: '一般不用改。在 设置 › 整备 一键装好以后，Agent 用到时自己在本机这个端口把它开起来（配音环境里跑，不用 WSL）' },
+    { k: 'voiceCmd', l: '自己的启动命令（一般不用填）', ph: '不填 = 用整备里一键装好的那套', h: '只有你想用别处装的一份（比如 WSL 里的）才填，填了就按这条命令启动' },
+    { k: 'hfToken', l: 'Hugging Face 令牌（一般不用填）', t: 'secret', h: '只有一键装 Breeze TTS 2 时提示「要登录才给下」才填：先在 huggingface.co 打开 BreezeBlue/breeze-tts-2 点同意许可证，再建一个 Read 令牌贴在这里。加密保存在本机，只在下载时用' },
     { k: 'voiceIdle', l: 'Breeze 闲多久关掉', t: 'number', u: '分钟', d: 10, h: '只关 Agent 自己开的。Breeze 大约占 7.7GB 显存' }
   ] },
-  { id: 'bgm', name: '配乐', custom: 'bgm', desc: '本地的 ACE-Step 1.5 出纯音乐，不花钱、不出本机。左边「配乐」窗口里手动出，Agent 做视频时也会自己用。', fields: [
-    { k: 'bgmDir', l: 'ACE-Step 的文件夹', ph: '比如 F:\\ACE-Step-1.5（里面有 start_api_server.bat 或者 acestep 文件夹）', h: '填了它，Agent 用到时自己把 ACE-Step 的接口开起来、闲着自己关、打游戏让路。不填就照下面的地址连（你自己开着）' },
+  { id: 'bgm', name: '配乐', custom: 'bgm', desc: '本地的 ACE-Step 1.5 出纯音乐，不花钱、不出本机。在 设置 › 整备 一键装好就能用；左边「配乐」窗口里手动出（能批量），Agent 做视频时也会自己用。', fields: [
+    { k: 'bgmDir', l: '自己装的 ACE-Step 文件夹（一般不用填）', ph: '不填 = 用整备里一键装好的那一份（Agent 文件夹里的 ace-step）', h: '填了它，Agent 用到时自己把 ACE-Step 的接口开起来、闲着自己关、打游戏让路。不填就照下面的地址连（你自己开着）' },
     { k: 'bgmUrl', l: 'ACE-Step 接口的地址', d: 'http://127.0.0.1:8001', h: 'ACE-Step 自带的接口默认就是 8001 端口' },
     { k: 'bgmIdle', l: '闲多久关掉', t: 'number', u: '分钟', d: 10 },
     { k: 'bgmSteps', l: '出一首走多少步', t: 'number', u: '步', d: 8, h: 'Turbo 模型 8 步就够；步数多一点细节好一点、慢一点' },

@@ -4,6 +4,8 @@
   python scripts/install_tts.py --env      只装环境
   python scripts/install_tts.py --models   只下模型
   python scripts/install_tts.py --asr      只下听写模型（v3.0，语音对话用：Qwen/Qwen3-ASR-0.6B，Apache 2.0，约 1.9 GB；代码就是已经装好的 qwen-asr）
+  python scripts/install_tts.py --breeze   只下 Breeze TTS 2 的权重（v3.1，语音对话「说话的声音」：BreezeBlue/breeze-tts-2，研究和非商业用途；
+                                           先 hf-mirror、不行再魔搭；推理代码随包在 vendor\breeze-tts，环境就是这个配音环境，不另装）
 
 为什么单独一个环境：官方的 qwen-tts 要 Transformers 4.57.3，本地模型环境（ai-env）用的是 5.x，装在一起会互相打架。
 PyTorch 和 ai-env 用同一个版本（2.8.0 cu128）：tools\\wheels 里已经有安装包就直接用，不用再下 3GB。
@@ -157,9 +159,68 @@ def install_models():
     return 0
 
 
+BREEZE = "BreezeBlue/breeze-tts-2"
+
+
+def breeze_done(d: Path) -> bool:
+    return ((d / "config.json").exists() and any(d.glob("*.safetensors")) and (d / "audio_tokenizer" / "config.json").exists()
+            and not any(d.rglob("*.incomplete")))
+
+
+def install_breeze():
+    """Breeze TTS 2 的权重：先 hf-mirror（官方仓库的镜像），不行再试魔搭。要登录才给下的话，用 设置 › 语音 里填的 Hugging Face 令牌（HF_TOKEN）。"""
+    dest = paths.MODELS_TTS / "breeze-tts-2"
+    if breeze_done(dest):
+        say("Breeze TTS 2 的权重已经下好了，跳过", "✓")
+        return 0
+    dest.mkdir(parents=True, exist_ok=True)
+    errs = []
+    for src in ("hf", "modelscope"):
+        try:
+            if src == "hf":
+                os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+                os.environ["HF_HUB_DISABLE_XET"] = "1"          # hf-mirror 不支持新的 Xet 下载方式（Kev 踩过）
+                try:
+                    from huggingface_hub import snapshot_download
+                except ImportError:
+                    say("先装下载工具 huggingface_hub")
+                    subprocess.run([sys.executable, "-m", "pip", "install", "huggingface_hub"], check=False)
+                    from huggingface_hub import snapshot_download
+                say(f"下载 Breeze TTS 2 的权重：从 hf-mirror {BREEZE}，放到 {paths.show(dest)}（几个 GB，断了再点一次接着下）")
+                snapshot_download(BREEZE, local_dir=str(dest), token=os.environ.get("HF_TOKEN") or None)
+            else:
+                try:
+                    from modelscope import snapshot_download as ms
+                except ImportError:
+                    subprocess.run([sys.executable, "-m", "pip", "install", "modelscope"], check=False)
+                    from modelscope import snapshot_download as ms
+                say(f"改从魔搭试一次：{BREEZE}")
+                ms(BREEZE, local_dir=str(dest))
+            if breeze_done(dest):
+                say("Breeze TTS 2 的权重下好了", "✓")
+                return 0
+            errs.append(f"{src}：下完了但文件不全")
+        except Exception as e:
+            msg = str(e)
+            print(f"{src} 不行：{msg[:600]}", flush=True)
+            if any(x in msg for x in ("401", "403", "gated", "Gated", "accept", "authorized")):
+                errs.append(f"{src}：要登录才给下（{msg[:80]}）")
+                say("Hugging Face 上这个模型要先登录、点同意许可证才能下：到 huggingface.co 打开 BreezeBlue/breeze-tts-2 点同意，"
+                    "再在 Hugging Face 设置里建一个 Read 令牌，填到 Agent 的 设置 › 语音 ›「Hugging Face 令牌」，回来再点一次", "!")
+            else:
+                errs.append(f"{src}：{msg[:120]}")
+                say(f"{'hf-mirror' if src == 'hf' else '魔搭'} 没下成：{msg[:120]}", "!")
+    print("Breeze TTS 2 的权重没下成：" + "；".join(errs), flush=True)
+    return 7
+
+
 def main():
     args = sys.argv[1:]
     code = 0
+    if "--breeze" in args:                         # 只下 Breeze 的权重（配音环境由一键装好那一步先保证）
+        code = install_breeze()
+        print("\nBreeze TTS 2 装好了。" if not code else "\nBreeze TTS 2 没装好，看上面的说明。")
+        return code
     if "--asr" in args:                            # 只下听写模型（配音环境要先装好）
         MODELS[:] = [("听写模型 Qwen3-ASR", "Qwen/" + ASR_MODEL)]
         code = install_models()

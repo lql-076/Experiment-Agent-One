@@ -23,13 +23,19 @@ from . import checks, db, deepseek, feed, hw, memory, paths, router, safety, set
 from .models import M, NOWIN
 
 STEPS = [
-    {"k": "git", "t": "Git（便携版）", "d": "放进 tools\\git，不装进系统，只给 agent 自己用"},
-    {"k": "aienv", "t": "本地模型环境", "d": "显卡版 PyTorch、Transformers、PEFT、Kev，约 3GB"},
-    {"k": "models", "t": "底座和嵌入模型", "d": "从魔搭下载，约 6GB，断了会接着下"},
-    {"k": "start", "t": "启动本地模型服务", "d": "加载嵌入模型，约占 1.2GB 显存"},
-    {"k": "kev", "t": "Kev 的权重", "d": "经 hf-mirror 下载约 2GB，只下一次"},
-    {"k": "hwmon", "t": "硬件监控助手", "d": "会弹一次管理员确认，点「是」"},
+    {"k": "git", "g": "core", "t": "Git（便携版）", "d": "放进 tools\\git，不装进系统，只给 agent 自己用"},
+    {"k": "aienv", "g": "core", "t": "本地模型环境", "d": "显卡版 PyTorch、Transformers、PEFT、Kev，约 3GB"},
+    {"k": "models", "g": "core", "t": "底座和嵌入模型", "d": "从魔搭下载，约 6GB，断了会接着下"},
+    {"k": "start", "g": "core", "t": "启动本地模型服务", "d": "加载嵌入模型，约占 1.2GB 显存"},
+    {"k": "kev", "g": "core", "t": "Kev 的权重", "d": "经 hf-mirror 下载约 2GB，只下一次"},
+    {"k": "hwmon", "g": "core", "t": "硬件监控助手", "d": "会弹一次管理员确认，点「是」"},
+    # v3.1：配音、语音、配乐（整备里第二张卡片「配音、语音、配乐」，单独一键装好，也能一项一项装）
+    {"k": "tts", "g": "media", "t": "本地配音（Qwen3-TTS）", "d": "配音环境 + 两个配音模型 + 时间轴对齐，约 14GB；视频配音、批量配音、Agent 自己配音都用它"},
+    {"k": "asr", "g": "media", "t": "听写（Qwen3-ASR）", "d": "你说的话变成字，约 1.9GB，装在配音环境里"},
+    {"k": "breeze", "g": "media", "t": "说话的声音（Breeze TTS 2）", "d": "和它聊天时念回答（约 8GB 显存）；代码随包带着，只下权重；只许自己用、非商用"},
+    {"k": "bgm", "g": "media", "t": "配乐（ACE-Step 1.5）", "d": "官方 Windows 便携包 + 模型，约 15GB；出纯音乐，能商用"},
 ]
+GROUPS = {"core": "一键补齐", "media": "配音、语音、配乐"}
 NEEDS = {"start": ["aienv", "models"], "kev": ["aienv"]}
 FIXES = {
     "common": {
@@ -41,6 +47,9 @@ FIXES = {
     "git": {"next_mirror": "换一个镜像下载 Git"},
     "aienv": {"pypi_mirror": "所有 pip 安装改走清华镜像"},
     "models": {"source_hf": "改从 hf-mirror 下载模型"},
+    "tts": {"pypi_mirror": "所有 pip 安装改走清华镜像", "source_hf": "改从 hf-mirror 下载模型"},
+    "asr": {"pypi_mirror": "所有 pip 安装改走清华镜像", "source_hf": "改从 hf-mirror 下载模型"},
+    "breeze": {"pypi_mirror": "所有 pip 安装改走清华镜像"},
 }
 NET_ERR = re.compile(r"time[d ]?out|connection|10054|10060|ssl|reset|temporar|getaddrinfo|readerror|remotedisconnected|incompleteread|503|502|429", re.I)
 
@@ -63,7 +72,7 @@ def _blank():
     return {k["k"]: {"st": "wait", "info": "", "tail": [], "tries": 0, "why": "", "tell": "", "prog": None, "t0": 0.0, "t1": 0.0} for k in STEPS}
 
 
-JOB = {"running": False, "stop": False, "started": 0.0, "finished": 0.0, "cur": None, "line": "", "steps": _blank()}
+JOB = {"running": False, "stop": False, "started": 0.0, "finished": 0.0, "cur": None, "line": "", "group": "", "keys": [], "steps": _blank()}
 _proc = {"p": None}
 _task = {"t": None}
 
@@ -76,8 +85,34 @@ READY_INFO = {"git": "Git 有了", "aienv": "环境装好了", "models": "模型
               "kev": "权重已下载，用到才启动", "hwmon": "助手在运行"}
 
 
+def _media_ready(k):
+    """配音、语音、配乐那几步：直接看文件在不在（不靠自检结果）。"""
+    from . import bgm, tts, voice
+    T = tts.T
+    if k == "tts":
+        ok = T.env_ok() and all(T.model_ok(x) for x in paths.TTS_MODELS) and T.align_ok()
+        return ok, "配音环境和三个模型都在" if ok else ""
+    if k == "asr":
+        return voice.V.asr_ok(), "听写模型在（用到才装进显存）"
+    if k == "breeze":
+        if str(settings.S.get("voiceCmd") or "").strip() or str(settings.S.get("voiceDir") or "").strip():
+            return True, "用的是你自己配的那一份（设置 › 语音）"
+        return voice.installed(), "权重下好了，用到才启动（约 8GB 显存）"
+    if k == "bgm":
+        if str(settings.S.get("bgmDir") or "").strip():
+            return bgm.B.configured(), "用的是你自己配的那一份（设置 › 配乐）"
+        return bgm.B.installed(), "程序和模型都在 ace-step\\，用到才启动"
+    return False, ""
+
+
 def _ready(k, res):
     """对照自检结果：这一步是不是已经好了（"ready"）、正在自动起（"auto"）、还是真缺东西（"wait"）。"""
+    if k in MEDIA:
+        try:
+            ok, info = _media_ready(k)
+        except Exception:
+            ok, info = False, ""
+        return ("ready", info) if ok else ("wait", "")
     st = lambda x: (res.get(x) or {}).get("st")      # noqa: E731
     if k == "models":
         ok = st("base") == "ok" and st("embed") == "ok"
@@ -100,15 +135,18 @@ def _ready(k, res):
     return "wait", ""
 
 
+MEDIA = {s['k'] for s in STEPS if s['g'] == 'media'}
+
+
 def refresh_ready():
     """没在一键补齐时，按最近的自检结果给每一步标状态：已经好了的标「已就绪」，正在自动起的标「自动启动中」，
     只有真缺东西（要下载、要你确认一次）的留着「等待」。所以每次启动不用你点一键补齐再过一遍。"""
     if JOB["running"]:
         return
     res = (db.kv_get("checks") or {}).get("res") or {}
-    if not res:
-        return
     for s in STEPS:
+        if not res and s["k"] not in MEDIA:
+            continue
         cur = JOB["steps"][s["k"]]
         if cur["st"] == "ok":                          # 这次一键补齐装好的，留着它的说明和用时
             continue
@@ -120,6 +158,7 @@ def refresh_ready():
 def status():
     refresh_ready()
     return {"running": JOB["running"], "started": JOB["started"], "finished": JOB["finished"], "cur": JOB["cur"], "line": JOB["line"][-160:],
+            "group": JOB["group"], "groups": GROUPS, "tts_busy": _tts_busy(),
             "steps": [{**s, **{x: JOB["steps"][s["k"]][x] for x in ("st", "info", "why", "tell", "tries", "t0", "t1")}, "prog": _clean(JOB["steps"][s["k"]]["prog"]),
                        "tail": JOB["steps"][s["k"]]["tail"][-6:], "log": paths.show(paths.LOGS / f"setup_{s['k']}.log")} for s in STEPS],
             "last": db.kv_get("setup_last"), "ds_key": bool(settings.get_secret("dsKey"))}
@@ -129,9 +168,10 @@ def brief():
     """给总览用的一句话。"""
     if not JOB["running"]:
         return None
-    i = next((n for n, s in enumerate(STEPS) if s["k"] == JOB["cur"]), 0)
-    pr = JOB["steps"][STEPS[i]["k"]].get("prog") or {}
-    return {"running": True, "n": i + 1, "total": len(STEPS), "t": STEPS[i]["t"], "pct": pr.get("pct"),
+    run = [s for s in STEPS if s["k"] in JOB["keys"]] or STEPS
+    i = next((n for n, s in enumerate(run) if s["k"] == JOB["cur"]), 0)
+    pr = JOB["steps"][run[i]["k"]].get("prog") or {}
+    return {"running": True, "n": i + 1, "total": len(run), "t": run[i]["t"], "pct": pr.get("pct"), "group": GROUPS.get(JOB["group"], ""),
             "phase": pr.get("phase") or "", "speed": pr.get("speed"), "eta": pr.get("eta")}
 
 
@@ -599,10 +639,69 @@ async def s_hwmon(opts):
     return False, f"硬件监控助手没起来：{msg}"
 
 
-STEP_FN = {"git": s_git, "aienv": s_aienv, "models": s_models, "start": s_start, "kev": s_kev, "hwmon": s_hwmon}
+# ---------------- v3.1：配音、语音、配乐 ----------------
+def _tts_env(opts):
+    return {**({"AGENT_PIP_MIRROR": "1"} if opts.get("mirror") else {}), **({"AGENT_MODEL_SOURCE": "hf"} if opts.get("hf") else {})}
+
+
+async def _need_tts_env(k, opts):
+    """听写、Breeze 都跑在配音环境里：环境还没有就先装环境（不下配音模型）。返回 (好了没有, 说明)。"""
+    from . import tts
+    if tts.T.env_ok():
+        return True, ""
+    _say(k, "要先有配音环境（tts-env，约 3GB；本地配音也用它）：先装环境，不下配音模型")
+    code = await _run(k, [sys.executable, paths.ROOT / "scripts" / "install_tts.py", "--env"], _tts_env(opts))
+    return (True, "") if code == 0 and tts.T.env_ok() else (False, f"配音环境没装上（退出码 {code}）")
+
+
+async def s_tts(opts):
+    code = await _run("tts", [sys.executable, paths.ROOT / "scripts" / "install_tts.py"], _tts_env(opts))
+    ok, info = _media_ready("tts")
+    if ok:
+        return True, info
+    return False, {1: "Python 版本太旧", 2: "显卡版 PyTorch 没装上", 3: "torchaudio 没装上", 4: "qwen-tts 没装上", 5: "配音要的库没装上",
+                   6: "装完了但导入出错"}.get(code, f"退出码 {code}") + "（看 setup_tts.log）"
+
+
+async def s_asr(opts):
+    ok, info = await _need_tts_env("asr", opts)
+    if not ok:
+        return False, info
+    code = await _run("asr", [sys.executable, paths.ROOT / "scripts" / "install_tts.py", "--asr"], _tts_env(opts))
+    ok, info = _media_ready("asr")
+    return (True, info) if ok else (False, f"听写模型没下全（退出码 {code}），再点一次接着下")
+
+
+async def s_breeze(opts):
+    ok, info = await _need_tts_env("breeze", opts)
+    if not ok:
+        return False, info
+    tok = settings.get_secret("hfToken")
+    code = await _run("breeze", [sys.executable, paths.ROOT / "scripts" / "install_tts.py", "--breeze"], {"HF_TOKEN": tok} if tok else None)
+    ok, info = _media_ready("breeze")
+    if ok:
+        return True, info
+    tail = "\n".join(JOB["steps"]["breeze"]["tail"][-30:])
+    if "要登录才给下" in tail:
+        return False, "Hugging Face 要登录才给下：先在网页上点同意许可证，再把 Read 令牌填到 设置 › 语音 ›「Hugging Face 令牌」"
+    return False, f"Breeze 的权重没下全（退出码 {code}），再点一次接着下"
+
+
+async def s_bgm(opts):
+    if not paths.IS_WIN and not os.environ.get("AGENT_ACE_URLS"):
+        return True, "不是 Windows，跳过（ACE-Step 的便携包只有 Windows 版）"
+    code = await _run("bgm", [sys.executable, paths.ROOT / "scripts" / "install_bgm.py"])
+    ok, info = _media_ready("bgm")
+    return (True, info) if ok else (False, f"配乐没装好（退出码 {code}，看 setup_bgm.log）")
+
+
+STEP_FN = {"git": s_git, "aienv": s_aienv, "models": s_models, "start": s_start, "kev": s_kev, "hwmon": s_hwmon,
+           "tts": s_tts, "asr": s_asr, "breeze": s_breeze, "bgm": s_bgm}
 
 
 async def already(k):
+    if k in MEDIA:
+        return _media_ready(k)[0]
     if k == "git":
         return shutil.which("git") is not None
     if k == "aienv":
@@ -651,27 +750,33 @@ async def _sleep(sec):
         await asyncio.sleep(1)
 
 
-async def _job():
-    JOB.update(running=True, stop=False, started=time.time(), finished=0.0, cur=None, line="", steps=_blank())
-    safety.log("setup.start", {}, "user")
-    feed.add(f"开始一键补齐：一共 {len(STEPS)} 步，已经装好的会跳过", "head", job=JOBN)
+async def _job(keys):
+    run = [x for x in STEPS if x["k"] in keys]
+    steps = _blank()
+    for k, v in JOB["steps"].items():            # 这次不跑的那几步：留着上次的状态（另一张卡片上的不清掉）
+        if k not in keys:
+            steps[k] = v
+    JOB.update(running=True, stop=False, started=time.time(), finished=0.0, cur=None, line="", steps=steps, keys=keys)
+    safety.log("setup.start", {"group": JOB["group"], "keys": keys}, "user")
+    name = GROUPS.get(JOB["group"], "一键补齐")
+    feed.add(f"开始{name if JOB['group'] == 'core' else '装' + name}：一共 {len(run)} 步，已经装好的会跳过", "head", job=JOBN)
     try:
-        for step in STEPS:
+        for step in run:
             k = step["k"]
             if JOB["stop"]:
                 break
             JOB["cur"], JOB["line"] = k, ""
-            i = STEPS.index(step) + 1
+            i = run.index(step) + 1
             if any(JOB["steps"][n]["st"] != "ok" for n in NEEDS.get(k, [])):
                 _mark(k, "blocked", "要等前面的步骤装好")
-                _say(k, f"第 {i}/{len(STEPS)} 步「{step['t']}」：要等前面的步骤装好，这次先不做", "warn")
+                _say(k, f"第 {i}/{len(run)} 步「{step['t']}」：要等前面的步骤装好，这次先不做", "warn")
                 continue
             _mark(k, "run", "检查中")
             if await already(k):
                 _mark(k, "ok", "已经好了，跳过")
-                _say(k, f"第 {i}/{len(STEPS)} 步「{step['t']}」：已经装好了，跳过", "ok")
+                _say(k, f"第 {i}/{len(run)} 步「{step['t']}」：已经装好了，跳过", "ok")
                 continue
-            feed.add(f"第 {i}/{len(STEPS)} 步：{step['t']} — {step['d']}", "step", job=JOBN, step=step["t"])
+            feed.add(f"第 {i}/{len(run)} 步：{step['t']} — {step['d']}", "step", job=JOBN, step=step["t"])
             opts = {}
             for attempt in range(3):
                 if JOB["stop"]:
@@ -722,18 +827,35 @@ async def _job():
     finally:
         JOB.update(running=False, finished=time.time(), cur=None, line="")
         c = {}
-        for v in JOB["steps"].values():
+        for k in keys:
+            v = JOB["steps"][k]
             c[v["st"]] = c.get(v["st"], 0) + 1
         bits = [f"{c[x]} 步{n}" for x, n in (("ok", "好了"), ("manual", "要你处理"), ("fail", "失败"), ("skip", "跳过"), ("blocked", "没轮到")) if c.get(x)]
-        feed.add(f"一键补齐结束：{'，'.join(bits)} · 总用时 {feed.dur(JOB['finished'] - JOB['started'])}", "head", job=JOBN)
-        db.kv_set("setup_last", {"ts": time.time(), "res": {k: v["st"] for k, v in JOB["steps"].items()}})
+        feed.add(f"{name}结束：{'，'.join(bits)} · 总用时 {feed.dur(JOB['finished'] - JOB['started'])}", "head", job=JOBN)
+        if JOB["group"] == "core":
+            db.kv_set("setup_last", {"ts": time.time(), "res": {k: JOB["steps"][k]["st"] for k in keys}})
 
 
-def start():
+def _tts_busy():
+    try:
+        from . import tts_install
+        return tts_install.ST.get("st") == "run"
+    except Exception:
+        return False
+
+
+def start(group="core", keys=None):
+    """group：core（一键补齐那 6 步）/ media（配音、语音、配乐那 4 步）；keys：只装这几步（卡片上「只装这一项」）。"""
     if JOB["running"]:
         return False
+    group = group if group in GROUPS else "core"
+    allk = [x["k"] for x in STEPS if x["g"] == group]
+    keys = [k for k in (keys or allk) if k in allk] or allk
+    if group == "media" and _tts_busy():
+        raise RuntimeError("设置 › 本地模型 里「安装配音」正在跑，等它装完（两个都在下东西，容易打架）")
+    JOB["group"] = group
     paths.LOGS.mkdir(parents=True, exist_ok=True)
-    _task["t"] = asyncio.get_event_loop().create_task(_job())
+    _task["t"] = asyncio.get_event_loop().create_task(_job(keys))
     return True
 
 
