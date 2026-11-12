@@ -20,7 +20,7 @@ from . import (agent, agentkit, agentstate, autostart, bgm, ccode, checks, db, d
 from .models import M
 from .qq import BOT
 
-VERSION = "3.3.0"
+VERSION = "3.3.1"
 PORT = 8765
 _bg = []
 
@@ -1029,19 +1029,46 @@ async def _open_later():
     await asyncio.to_thread(open_ui)
 
 
-def run():
-    """起后端。返回退出码：0 正常停了；10 已经在运行（刚帮你把界面拿出来了）。"""
+def _busy(port):
     import socket
-    import uvicorn
-    monitor.tee_console()                 # 从一开始就写进 data\logs\backend.log（pythonw 没有黑窗口，出错原因全靠它）
     with socket.socket() as sk:
         sk.settimeout(0.5)
-        if sk.connect_ex(("127.0.0.1", PORT)) == 0:
-            print("Agent 已经在运行了，直接打开界面。")
-            if os.environ.get("AGENT_OPEN_UI") == "1":
-                settings.load()
-                open_ui()
-            return 10
+        return sk.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _replace_old():
+    """更新完再双击 启动.bat，跑着的却是这个文件夹的旧版本（v3.3.1，作者 11-13：替换了文件，后台没重启，发布页一片空白）：
+    让旧的自己退出（它的「退出 Agent」接口），端口空出来再起新的。版本一样、或者不是这个文件夹的，不动。"""
+    import httpx
+    try:
+        j = httpx.get(f"http://127.0.0.1:{PORT}/api/ping", timeout=3).json()
+    except Exception:
+        return False
+    if j.get("version") == VERSION or (j.get("root") and j.get("root") != paths.show(paths.ROOT)):
+        return False
+    print(f"跑着的是旧版本 v{j.get('version')}，换成 v{VERSION}：先让旧的退出")
+    try:
+        httpx.post(f"http://127.0.0.1:{PORT}/api/quit", headers={"X-Agent": "1"}, json={}, timeout=5)
+    except Exception:
+        pass
+    for _ in range(60):
+        time.sleep(0.5)
+        if not _busy(PORT):
+            time.sleep(1)
+            return True
+    return False
+
+
+def run():
+    """起后端。返回退出码：0 正常停了；10 已经在运行（刚帮你把界面拿出来了）。"""
+    import uvicorn
+    monitor.tee_console()                 # 从一开始就写进 data\logs\backend.log（pythonw 没有黑窗口，出错原因全靠它）
+    if _busy(PORT) and not _replace_old():
+        print("Agent 已经在运行了，直接打开界面。")
+        if os.environ.get("AGENT_OPEN_UI") == "1":
+            settings.load()
+            open_ui()
+        return 10
     monitor.start_guard()                 # 崩溃记录 + 看看上次是不是正常退出的
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning", use_colors=False)
     monitor.clean_exit()

@@ -178,7 +178,10 @@ function pubFetch() {
     var was = PUB.st && PUB.st.job && PUB.st.job.st === 'run' ? PUB.st.job : null;
     PUB.st = j; pubSync();
     if (was && j.job && j.job.id === was.id && j.job.st !== 'run') toast(j.job.name + '：' + j.job.msg, 7000);
-  }).catch(function () {});
+  }).catch(function (e) {                         /* v3.3.1：后台没有发布接口（还是旧版本）时别一片空白 */
+    if (PUB.st) return;
+    pubPut('pbAcct', '<p class="pb-p bad">连不上后台的发布功能（' + esc(e.message) + '）。多半是后台还是旧版本：右上角 × 选「退出 Agent」，再双击 启动.bat。</p>');
+  });
 }
 function pubEnter() {
   pubFetch(); clearInterval(PUB.t);
