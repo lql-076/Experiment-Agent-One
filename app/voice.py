@@ -37,9 +37,9 @@ CODE = paths.ROOT / "vendor" / "breeze-tts"            # 推理代码随包带�
 MODEL = paths.MODELS_TTS / "breeze-tts-2"               # 一键装好时把权重下到这里（scripts/install_tts.py --breeze）
 
 
-def model_ok(d=MODEL):
+def model_ok(d=None):
     """权重下全了没有：config.json、.safetensors、它自带的声音编解码器（audio_tokenizer），没有下到一半的文件。"""
-    d = Path(d)
+    d = Path(d or MODEL)
     return ((d / "config.json").exists() and any(d.glob("*.safetensors")) and (d / "audio_tokenizer" / "config.json").exists()
             and not any(d.rglob("*.incomplete")))
 

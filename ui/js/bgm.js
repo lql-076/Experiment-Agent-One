@@ -4,8 +4,10 @@
    - 左：要什么样的（一句描述 + 几个现成的风格 + 多长）→「出一首」；下面一行写服务现在什么样（没配 / 用到才启动 / 开着），能手动关掉腾显存。
    - 中：正在听的这一首：波形（真的从音频里算出来的）、播放、名字、多长、当时的描述；正在出的时候这里是进度。
    - 右：最近出的，点一首就在中间听；每首能「放进工作区」（给 Agent 做视频用）、打开所在的文件夹。
+   - 批量（v3.1，ui/js/mbatch.js）：左边顶上切到「批量」，一份配乐清单一首存一个文件（配乐输出\日期_清单名\名字.wav）；点一首出好的，中间就放它。
    Agent 自己做视频时也会用同一个服务（make_music 工具），出的也在这份历史里。 */
-var BGM = { st: null, sel: null, t: null, audio: null, peaks: {}, prompt: '', seconds: 60, sig: '', busyBtn: false, raf: 0 };
+var BGM = { st: null, sel: null, t: null, audio: null, peaks: {}, prompt: '', seconds: 60, sig: '', busyBtn: false, raf: 0, mode: 'one' };
+try { if (localStorage.getItem('agentBgm.mode') === 'batch') BGM.mode = 'batch'; } catch (e) {}
 var BGM_PRESET = [['轻快电子', '轻快的电子乐，明亮的合成器，节奏清晰，适合科技类视频开场'], ['安静钢琴', '安静的钢琴独奏，舒缓，留白多，适合讲解时垫在下面'],
   ['Lo-fi', 'lo-fi hip hop，松弛的鼓点，温暖的电钢琴，带一点黑胶底噪'], ['科技感', '冷色调的氛围电子，脉冲贝斯，未来感，中速'],
   ['悬疑', '低沉的弦乐铺底，缓慢推进，带一点紧张感'], ['热血', '史诗感管弦乐，鼓点有力，逐渐推向高潮'], ['8-bit', '8-bit 芯片音乐，欢快，像老游戏的关卡音乐'], ['温暖吉他', '木吉他指弹，温暖明亮，轻松的午后']];
@@ -25,18 +27,21 @@ function bgmSvcLine(st) {
   if (st.alive) return ['ok', 'ACE-Step 开着 · 闲 ' + (st.idle || 10) + ' 分钟自己关', '<button class="btn mini ghost" data-bgm-off="1">现在关掉</button>'];
   if (st.up) return ['ok', 'ACE-Step 开着（不是 Agent 开的，不归它关）', ''];
   if (st.can_start) return ['idle', '用到才启动：点「出一首」会先把 ACE-Step 开起来（第一次要等它装模型）', ''];
-  return ['off', '还没配：先把 ACE-Step 的地址或文件夹填上', '<button class="btn mini" data-go-sec="bgm">去设置</button>'];
+  return ['off', '还没装：到 设置 › 整备 一键装好（ACE-Step 1.5 和它的模型，不用自己去 GitHub 下）', '<button class="btn mini" data-go-sec="prep">去装</button>'];
 }
 function bgmHTML() {
   var st = bgmSt(), job = st && st.job, run = job && job.st === 'run', cur = bgmCur(), sv = bgmSvcLine(st), list = (st && st.recent) || [];
-  var left = '<section class="hud bg-pn bg-make"><div class="bg-h"><b>要什么样的</b><span>纯音乐，不带人声</span></div>' +
+  var mode = '<div class="seg bg-mode" role="group" aria-label="一首还是批量"><button data-bgm-mode="one" aria-pressed="' + (BGM.mode !== 'batch') + '">一首</button><button data-bgm-mode="batch" aria-pressed="' + (BGM.mode === 'batch') + '" title="一份配乐清单，一首存一个文件（v3.1）">批量</button></div>';
+  var left = BGM.mode === 'batch' ? '<section class="hud bg-pn bg-make bg-batch"><div class="bg-h"><b>批量配乐</b><span>一首一个文件</span><span class="sp"></span>' + mode + '</div>' +
+    '<div class="mb" data-mbk="bgm"></div><div class="bg-svc st-' + sv[0] + '"><i></i><span>' + esc(sv[1]) + '</span>' + sv[2] + '</div></section>' :
+    '<section class="hud bg-pn bg-make"><div class="bg-h"><b>要什么样的</b><span>纯音乐，不带人声</span><span class="sp"></span>' + mode + '</div>' +
     '<textarea class="bg-in" id="bgPrompt" spellcheck="false" placeholder="一句话写清楚：风格、情绪、乐器、快慢。比如：轻快的电子乐，明亮的合成器，适合科技类视频开场"' + (run ? ' disabled' : '') + '>' + esc(BGM.prompt) + '</textarea>' +
     '<div class="bg-pre" role="group" aria-label="现成的风格">' + BGM_PRESET.map(function (p, i) { return '<button class="chip" data-bgm-pre="' + i + '"' + (run ? ' disabled' : '') + '>' + p[0] + '</button>'; }).join('') + '</div>' +
     '<div class="bg-len"><label for="bgSec">多长</label><input type="range" id="bgSec" min="10" max="240" step="5" value="' + BGM.seconds + '"' + (run ? ' disabled' : '') + '><output class="num" id="bgSecO">' + bgmClock(BGM.seconds) + '</output></div>' +
     '<div class="bg-go">' + (run ? '<button class="btn danger bg-big" data-bgm-stop="1">不等了</button>' : '<button class="btn primary bg-big" data-bgm-gen="1"' + (useLive() ? '' : ' disabled') + '>出一首</button>') + '</div>' +
     '<div class="bg-svc st-' + sv[0] + '"><i></i><span>' + esc(sv[1]) + '</span>' + sv[2] + '</div></section>';
   var mid;
-  if (run) mid = '<div class="bg-now"><div class="bg-run"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="bg-t">正在出这一首</div>' +
+  if (run) mid = '<div class="bg-now">' + (BGM.mode === 'batch' ? mbNowLine('bgm') : '') + '<div class="bg-run"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="bg-t">正在出这一首</div>' +
     '<div class="bg-m num">已经 ' + bgmClock(job.elapsed) + ' · 要 ' + bgmClock(job.seconds) + ' 长的</div><div class="bg-p">' + esc(job.prompt || '') + '</div></div>';
   else if (job && job.st === 'err') mid = '<div class="bg-now"><div class="bg-t bad">这一首没出成</div><div class="bg-p">' + esc(job.err || '') + '</div></div>';
   else if (cur) mid = '<div class="bg-now"><canvas class="bg-wave" id="bgWave" data-id="' + cur.id + '" aria-label="波形，点一下跳到那里"></canvas>' +
@@ -58,6 +63,7 @@ function renderBgm() {
   var html = bgmHTML(); if (html === BGM.sig) return; BGM.sig = html;
   v.innerHTML = html;
   if (keep) { var p = $('#bgPrompt'); if (p && !p.disabled) { p.focus(); p.setSelectionRange(keep[0], keep[1]); } }
+  if (BGM.mode === 'batch') mbDraw('bgm', true);
   bgmWave();
 }
 function bgmFetch() {
@@ -69,8 +75,8 @@ function bgmFetch() {
     renderBgm();
   }).catch(function () {});
 }
-function bgmEnter() { bgmFetch(); clearInterval(BGM.t); BGM.t = setInterval(function () { if (S.view === 'bgm') bgmFetch(); }, 1500); }
-function bgmLeave() { clearInterval(BGM.t); BGM.t = null; if (BGM.audio) BGM.audio.pause(); }
+function bgmEnter() { bgmFetch(); mbEnter('bgm'); clearInterval(BGM.t); BGM.t = setInterval(function () { if (S.view === 'bgm') bgmFetch(); }, 1500); }
+function bgmLeave() { mbLeave('bgm'); clearInterval(BGM.t); BGM.t = null; if (BGM.audio) BGM.audio.pause(); }
 /* 波形：把这一首读进来算 200 个峰值（算过的记着）；演示数据画一条假的 */
 function bgmPeaks(id) {
   if (BGM.peaks[id]) return Promise.resolve(BGM.peaks[id]);
@@ -127,6 +133,7 @@ $('#view-bgm').addEventListener('click', function (ev) {
   if (cv) { var r = cv.getBoundingClientRect(); bgmPlay(+cv.dataset.id, Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width))); return; }
   var t = ev.target.closest('button'); if (!t) return;
   var d = t.dataset;
+  if (d.bgmMode) { BGM.mode = d.bgmMode; try { localStorage.setItem('agentBgm.mode', BGM.mode); } catch (e) {} BGM.sig = ''; renderBgm(); if (BGM.mode === 'batch') mbFetch('bgm'); return; }
   if (d.bgmPre != null) { BGM.prompt = BGM_PRESET[+d.bgmPre][1]; BGM.sig = ''; renderBgm(); return; }
   if (d.bgmSel) { BGM.sel = +d.bgmSel; if (BGM.audio && BGM.playing !== BGM.sel) BGM.audio.pause(); renderBgm(); return; }
   if (d.bgmPlay) { bgmPlay(+d.bgmPlay); return; }

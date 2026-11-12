@@ -1,7 +1,8 @@
 """一页内容一屏放下（作者的规矩：闲下来"一眼看"的页，信息不靠鼠标滚轮翻）。
 v2.0 起主窗口只有主页（横屏 1680×1000、竖屏 1080×1860，竖屏再把字调到 130%）；工具都是独立窗口（?tool=），
 按工具窗口的默认大小 1440×880 和竖屏 1080×1860 看每个工具、每个设置分区：除了本来就是长列表的地方
-（聊天记录、事件列表、后台日志、说明文档、报告里的两张清单、事件的回复正文、配音的文案框和时间轴、生图页里自己滚的几块：清单、出好的图、历史、模板、提示词框；配音页本地、云端两种引擎都看），别的地方都不该出现滚动。
+（聊天记录、事件列表、后台日志、说明文档、报告里的两张清单、事件的回复正文、配音的文案框和时间轴、生图页里自己滚的几块：清单、出好的图、历史、模板、提示词框；
+配音、配乐批量的清单那一列（v3.1）；配音页本地、云端、批量都看，配乐页一首、批量都看），别的地方都不该出现滚动。
 要动手操作的页可以滚（作者说的：用它时手本来就在鼠标上），列在 SCROLL_OK 里，不查。
 用法：python dev/ui/fit.py 截图文件夹（要先 dev/serve.sh start）"""
 import sys
@@ -12,7 +13,7 @@ from common import launch
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "dev/.run/shots"
 SCROLL_OK = {"prep", "remind", "models", "cloud", "agent", "voice", "bgm"}   # 整备、提醒列表、本地模型（v1.8.7 加了「安装配音」）、云端（v1.8.11 加了百炼 Key）：要动手操作的页，可以上下滚（v1.8.1 起）
-LISTS = "#chatLog, .hm-pop, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2, #ttsText, .tts-tl, .tts-vb, .fg-scroll, .bg-rows"   # .tts-vb：配音页的音色面板（音色列表、设计、复刻表单，v1.8.12）；.fg-scroll：生图页里自己滚的几块（v1.8.16）
+LISTS = "#chatLog, .hm-pop, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2, #ttsText, .tts-tl, .tts-vb, .fg-scroll, .bg-rows, .mb-list, .mb-paste"   # .tts-vb：配音页的音色面板（音色列表、设计、复刻表单，v1.8.12）；.fg-scroll：生图页里自己滚的几块（v1.8.16）
 JS = """(lists) => { const out = []; document.querySelectorAll('#content *, #content').forEach(el => {
   if (!el.offsetParent && el.id !== 'content') return;
   if (el.closest(lists)) return;
@@ -20,7 +21,10 @@ JS = """(lists) => { const out = []; document.querySelectorAll('#content *, #con
   if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 4 && el.clientHeight > 120)
     out.push((el.id ? '#' + el.id : el.className.toString().split(' ')[0]) + ' ' + el.clientHeight + '/' + el.scrollHeight); });
   return out; }"""
-TOOLS = [("view", v) for v in ("events", "monitor", "brains", "reports", "tts", "tts-cloud", "img", "img-batch", "bgm")]
+TOOLS = [("view", v) for v in ("events", "monitor", "brains", "reports", "tts", "tts-cloud", "tts-batch", "img", "img-batch", "bgm", "bgm-batch")]
+# 配音、配乐的批量（v3.1）：先认一份 8 段 / 6 首的清单，看排得下（清单那一列自己滚）
+BATCH_MD = {"tts": "# 第 5 期 · 配音清单\n" + "".join(f"## {i:02d}_{'橘页' if i % 2 else '紫苏'}_第{i}段\n音色：{'Serena' if i % 2 else 'Uncle_Fu'}\n这是第 {i} 段要念的字，一段一个文件。\n" for i in range(1, 9)),
+            "bgm": "# 第 5 期 · 配乐清单\n" + "".join(f"## bgm{i:02d}_第{i}首\n时长：{20 + i * 5}\n描述：轻快的电子乐，第 {i} 首\n" for i in range(1, 7))}
 bad, errs = [], []
 
 
@@ -84,8 +88,14 @@ with sync_playwright() as pw:
             tool = k.split("-")[0]
             p = b.new_page(viewport={"width": w, "height": h})
             start(p, "http://127.0.0.1:8765/?tool=" + tool)
+            if k.endswith("-batch") and tool in BATCH_MD:   # 配音、配乐的批量（v3.1）
+                p.evaluate("(a) => fetch('/api/' + a[0] + '/batch/load', {method: 'POST', headers: {'X-Agent': '1', 'Content-Type': 'application/json'}, body: JSON.stringify({md: a[1]})})",
+                           [tool, BATCH_MD[tool]])
             if k.startswith("tts"):                     # 配音页的两种引擎都看（v1.8.11 加了百炼云端；只在这页切，不存进设置）
-                p.evaluate("TTS.eng='" + ("cloud" if k == "tts-cloud" else "local") + "'; if (TTS.st) TTS.st.engine=TTS.eng; if (TTS.st) renderTTS()")
+                p.evaluate("TTS.eng='" + ("cloud" if k == "tts-cloud" else "local") + "'; if (TTS.st) TTS.st.engine=TTS.eng; ttsForm().batch=" +
+                           ("true" if k == "tts-batch" else "false") + "; if (TTS.st) renderTTS(); mbFetch('tts')")
+            if k.startswith("bgm"):
+                p.evaluate("BGM.mode='" + ("batch" if k == "bgm-batch" else "one") + "'; BGM.sig=''; renderBgm(); mbFetch('bgm')")
             if k.startswith("img"):                     # 生图的单张页、批量页都看（v2.1 撤掉了角色、模板）
                 p.wait_for_timeout(800)
                 p.evaluate("imgTab('" + ("batch" if k == "img-batch" else "single") + "', true)")

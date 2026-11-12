@@ -35,6 +35,8 @@ step "指挥舱点一遍：核心、指令条（直接发、插话、停下）�
 step "配音：切句子、拼接停顿、时间轴、保存、我的音色、让路和闲置关掉、安装配音" "$PY" dev/test_tts.py
 step "配音的百炼云端引擎：只发文案、字级时间戳、分块、用量、出错说明、Key 不外泄" "$PY" dev/test_tts_cloud.py
 step "配音页点一遍（本地和百炼云端）、设置里的安装配音、百炼 Key 和开机自启" "$PY" dev/ui/tts.py dev/.run/shots
+step "配音、语音、配乐进整备一键装好（真跑一遍装配乐，假下载站）；配音批量、配乐批量：认清单、每段的音色、按名字存、旧版、停下、打包" "$PY" dev/test_media.py
+step "配音批量、配乐批量点一遍：贴清单、改一段、开始、听、选文件" "$PY" dev/ui/batch.py dev/.run/shots
 step "生图：认清单、按比例和透明背景出图、按文件名存、重生成、停下、打包、Key 不外泄" "$PY" dev/test_img.py
 step "生图页点一遍：粘贴清单、改卡片、全部生成、看大图" "$PY" dev/ui/img.py dev/.run/shots
 step "开机自启开关" "$PY" dev/test_autostart.py

@@ -749,6 +749,10 @@ class TTS:
 
     def start(self, req):
         cloud = (req.get("engine") or self.s.get("ttsEngine") or "local") == "cloud"
+        if not req.get("_batch"):
+            from .media_batch import TB
+            if TB.busy():
+                raise HTTPException(409, "正在批量配音：等这批念完，或者先在「批量」里点「停下」")
         if self.busy():
             raise HTTPException(409, "上一段还在生成，等它好了或者先点「停下」")
         if self.aligning:
@@ -764,7 +768,7 @@ class TTS:
             if not tts_cloud.key():
                 raise HTTPException(400, "还没填百炼 API Key：到 设置 › 云端 填好再生成")
         elif not self.model_ok(v["kind"]) and not ((self._h or {}).get("models") or {}).get(v["kind"]):
-            raise HTTPException(400, f"{MODEL_INFO[v['kind']]}的模型还没下：到 设置 › 本地模型 点「安装配音」")
+            raise HTTPException(400, f"{MODEL_INFO[v['kind']]}的模型还没下：到 设置 › 整备 一键装好（或者 设置 › 本地模型 点「安装配音」）")
         gap = float(self.s.get("ttsGap", 0.35))
         segs = split(text, gap=1.0 if same else gap, para=1.2 if same else float(self.s.get("ttsParaGap", 0.7)))
         if cloud:
@@ -783,7 +787,7 @@ class TTS:
                     "audio_s": 0.0, "eta": None, "whole": whole, "chunks": 1, "chunk_t0": 0.0, "chunk_est": 0.0, "chunk_chars": 0,
                     "engine": "cloud" if cloud else "local", "est": est, "cny": 0.0, "bill": 0, "align": ""}
         self._task = asyncio.get_event_loop().create_task(self._run(self.job, text, segs))
-        if not same:                              # 记下这次用的音色（v3.0：Agent 自己配音时用同一个）
+        if not same and not req.get("_batch"):     # 记下这次用的音色（v3.0：Agent 自己配音时用同一个；批量的不记）
             db.kv_set("tts_last_req", {k: req.get(k) for k in ("mode", "speaker", "desc", "name", "tone", "lang", "seed", "voice", "rate", "pitch", "volume", "whole")
                                        if req.get(k) not in (None, "")} | {"engine": "cloud" if cloud else "local"})
         if cloud:
@@ -1068,7 +1072,8 @@ class TTS:
 
     async def realign(self):
         """试听的那段重新对一遍时间轴（v1.8.14）：用本地对齐模型，声音一点不动、不重新生成、不花钱；改 JSON 和 SRT。"""
-        if self.busy():
+        from .media_batch import TB
+        if self.busy() or TB.busy():
             raise HTTPException(409, "正在生成，等它好了再对齐")
         if self.aligning:
             raise HTTPException(409, "已经在对齐了")

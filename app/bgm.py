@@ -177,8 +177,9 @@ class Bgm:
     def _data(j):
         return j.get("data") if isinstance(j, dict) and "data" in j and "code" in j else j
 
-    async def generate(self, prompt, seconds=60, say=None, stopped=None):
-        """出一首纯音乐。返回 {path, name, duration, sec, prompt}。一次只出一首（排队）。"""
+    async def generate(self, prompt, seconds=60, say=None, stopped=None, dest=None):
+        """出一首纯音乐。返回 {id, path, name, duration, sec, prompt}。一次只出一首（排队）。
+        dest：存成哪个文件（批量用，v3.1：配乐输出\\日期_清单名\\名字.wav，同名的旧文件挪进「旧版」）；不给就存 配乐输出\\日期\\时分秒_描述.wav。"""
         prompt = str(prompt or "").strip()
         if not prompt:
             raise BgmError("写一句描述：风格、情绪、乐器、快慢")
@@ -193,7 +194,7 @@ class Bgm:
             job = self.job = {"id": int(time.time() * 1000), "st": "run", "prompt": prompt, "seconds": seconds, "t0": time.time(), "t1": 0.0, "msg": "准备中",
                               "stop": "", "err": "", "file": ""}
             try:
-                r = await self._gen(job, say, stopped)
+                r = await self._gen(job, say, stopped, dest)
                 job.update(st="done", t1=time.time(), msg=f"好了：{r['name']}", file=r["name"])
                 feed.add(f"配乐好了：{paths.show(Path(r['path']))}（{mediainfo.clock(r['duration'] or seconds)}，用了 {r['sec']:.0f} 秒）", "ok", job=JOBN)
                 feed.done(f"配乐 · {prompt[:20]} · {mediainfo.clock(r['duration'] or seconds)}", "本地 ACE-Step", r["sec"], "", "bgm")
@@ -205,7 +206,7 @@ class Bgm:
             finally:
                 self.last = time.time()
 
-    async def _gen(self, job, say, stopped):
+    async def _gen(self, job, say, stopped, dest=None):
         await self.ensure(lambda m: (job.update(msg=m), say(m)))
         fmt = "wav" if (self.s.get("bgmFormat") or "wav") not in ("mp3", "flac") else self.s["bgmFormat"]
         body = {"prompt": job["prompt"], "lyrics": "[Instrumental]", "audio_duration": job["seconds"], "audio_format": fmt, "batch_size": 1,
@@ -254,12 +255,19 @@ class Bgm:
                     break
         except httpx.HTTPError as e:
             raise BgmError(f"和 ACE-Step 的连接断了：{type(e).__name__}") from None
-        day = self.out_dir() / datetime.now().strftime("%Y-%m-%d")
-        day.mkdir(parents=True, exist_ok=True)
-        head = re.sub(r'[\\/:*?"<>|\r\n\t\s，。、；：！？,.;:!?]+', "", job["prompt"])[:14] or "配乐"
-        p, k = day / f"{datetime.now():%H%M%S}_{head}.{fmt}", 2
-        while p.exists():
-            p, k = day / f"{datetime.now():%H%M%S}_{head}_{k}.{fmt}", k + 1
+        if dest:
+            from .media_batch import keep_old
+            p = Path(dest).with_suffix("." + fmt)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            keep_old(p)
+            keep_old(p.with_suffix(".json"))
+        else:
+            day = self.out_dir() / datetime.now().strftime("%Y-%m-%d")
+            day.mkdir(parents=True, exist_ok=True)
+            head = re.sub(r'[\\/:*?"<>|\r\n\t\s，。、；：！？,.;:!?]+', "", job["prompt"])[:14] or "配乐"
+            p, k = day / f"{datetime.now():%H%M%S}_{head}.{fmt}", 2
+            while p.exists():
+                p, k = day / f"{datetime.now():%H%M%S}_{head}_{k}.{fmt}", k + 1
         tmp = p.with_name(p.name + ".part")
         tmp.write_bytes(a.content)
         tmp.replace(p)
@@ -313,8 +321,9 @@ async def bgm_status():
 @api.post("/api/bgm/gen")
 async def bgm_gen(body: dict = Body(...)):
     """开始出一首（马上返回，进度看 GET /api/bgm 的 job）。"""
-    if B.busy():
-        raise HTTPException(409, "上一首还在出，等它好了")
+    from .media_batch import MB
+    if B.busy() or MB.busy():
+        raise HTTPException(409, "正在批量配乐，等这批出完（或者先在「批量」里点「停下」）" if MB.busy() else "上一首还在出，等它好了")
     prompt, seconds = str(body.get("prompt") or "").strip(), body.get("seconds") or 60
     if not prompt:
         raise HTTPException(400, "写一句描述：风格、情绪、乐器、快慢")

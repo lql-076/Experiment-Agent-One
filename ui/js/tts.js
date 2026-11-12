@@ -5,6 +5,7 @@
    - 音色：本地是预设 / 描述；云端是 音色库（现成的 + 我造的，都能试听）/ 设计（写描述造一个）/ 复刻（传一段录音）/ 读音（读音词典）。
    - 表达：语气；云端还有语速、音调、音量、语言。
    - 波形：生成好的配音画成波形，每句一段；点哪听哪，空格键播放 / 暂停，下面的时间轴跟着走。
+   - 批量（v3.1，ui/js/mbatch.js）：「文案」顶上切到「批量」，一份配音清单一段存一个文件；「开始批量」在右边原来「生成配音」的位置。
    页面只整页画一次；之后每秒（生成中、音色审核中）/ 每 5 秒只刷新服务状态、「生成」、波形和音色列表，打字不会被打断。
    输入框里的内容存在这台电脑的浏览器里（只是方便，丢了也没事）。 */
 var TTS = { st: null, timer: null, n: 0, form: null, resVer: null, busy: false, tryAu: null, tryUrl: null, tryId: '', eng: '', drawn: '',
@@ -76,6 +77,7 @@ function ttsLoad() {
 function ttsRefresh() { if (S.view !== 'tts') return; if ($('#ttsGen') && TTS.drawn === TTS.st.engine) ttsSync(); else renderTTS(); }
 function ttsEnter() {
   ttsLoad().then(ttsRefresh).catch(function () { if (!TTS.st) { TTS.st = TTS_DEMO; renderTTS(); } });
+  mbEnter('tts');
   clearInterval(TTS.timer);
   TTS.timer = setInterval(function () {
     TTS.n++;
@@ -85,7 +87,7 @@ function ttsEnter() {
     ttsLoad().then(ttsRefresh).catch(function () {}).then(function () { TTS.busy = false; });
   }, 1000);
 }
-function ttsLeave() { clearInterval(TTS.timer); TTS.timer = null; if (TTS.tryAu) TTS.tryAu.pause(); var a = $('#ttsAudio'); if (a) a.pause(); }
+function ttsLeave() { mbLeave('tts'); clearInterval(TTS.timer); TTS.timer = null; if (TTS.tryAu) TTS.tryAu.pause(); var a = $('#ttsAudio'); if (a) a.pause(); }
 
 /* ---------- 整页 ---------- */
 function renderTTS() {
@@ -101,9 +103,12 @@ function renderTTS() {
       '<span class="sub">' + (cloud ? '阿里云百炼（北京）· 只把这页的文案和语气发过去 · 按字计费 · 生成的内容归你' : '在这台电脑上生成，不联网 · Apache 2.0，可以商用 · 不克隆任何真人的声音') + '</span>' +
       '<span class="tts-svc" id="ttsSvc"></span></div>' +
     '<div class="tts-grid">' +
-      '<section class="hc tts-text stag" style="--i:0"><div class="hc-h"><span class="label">文案</span><span class="cap num" id="ttsCount"></span></div>' +
+      '<section class="hc tts-text stag' + (f.batch ? ' is-batch' : '') + '" style="--i:0"><div class="hc-h"><span class="label">文案</span>' +
+        '<div class="seg tts-bm" role="group" aria-label="一段还是批量"><button data-ttsbm="0" aria-pressed="' + !f.batch + '">一段</button><button data-ttsbm="1" aria-pressed="' + !!f.batch + '" title="一份配音清单，一段存一个文件（v3.1）">批量</button></div>' +
+        '<span class="cap num" id="ttsCount"></span></div>' +
+        (f.batch ? '<div class="mb" data-mbk="tts"></div>' :
         (cloud ? '<div class="tts-tags" id="ttsTags"><span class="tts-lab">插标签</span>' + TTS_TAGS.map(function (t) { return '<button class="tts-tag" data-tag="' + t[0] + '" title="在光标处插 [' + t[0] + ']：从这里开始' + (/laughing|sighing|clears/.test(t[0]) ? '加一声' : '用这种语气') + '">' + t[1] + '</button>'; }).join('') + '</div>' : '') +
-        '<textarea class="inp" id="ttsText" spellcheck="false" placeholder="把要念的文案贴在这里。默认整段一次念完，语气前后连贯；空一行算换段，停得久一点。">' + esc(f.text) + '</textarea>' +
+        '<textarea class="inp" id="ttsText" spellcheck="false" placeholder="把要念的文案贴在这里。默认整段一次念完，语气前后连贯；空一行算换段，停得久一点。">' + esc(f.text) + '</textarea>') +
         '<div class="tts-gaps"><label>句子之间停<input class="inp num" type="number" id="ttsGap" min="0" max="3" step="0.05" value="' + (+s.gap || 0.35) + '">秒</label>' +
           '<label>换段停<input class="inp num" type="number" id="ttsPara" min="0" max="5" step="0.05" value="' + (+s.para || 0.7) + '">秒</label></div></section>' +
       '<section class="hc tts-voice stag" style="--i:1"><div class="hc-h"><span class="label">音色</span><span class="cap" id="ttsVcap"></span></div>' +
@@ -115,6 +120,7 @@ function renderTTS() {
     '</div></div>';
   TTS.resVer = null; TTS.vsig = '';
   ttsVoice(); ttsExpr(); ttsSync(); ttsCount();
+  if (f.batch) mbDraw('tts', true);
 }
 
 /* ---------- 音色 ---------- */
@@ -257,6 +263,7 @@ function ttsCVName() { var id = ttsCVoice(), cs = ttsCS(), v = (cs.voices || [])
 /* ---------- 字数和预估 ---------- */
 function ttsCount() {
   var el = $('#ttsCount'); if (!el) return;
+  if (ttsForm().batch) { el.textContent = ''; return; }
   var t = (ttsForm().text || '').replace(/\s+/g, ''), n = t.length;
   if (!n) { el.textContent = '还没有字'; ttsEstShow(); return; }
   var sec = n / 4.2, sp = TTS.st && TTS.st.speed;      // 中文大约一秒 4 个字
@@ -300,15 +307,19 @@ function ttsSyncLocal(s, j, run) {
     '<span>' + (ins.st === 'run' ? esc(ins.phase || ins.line || '准备中') + '。装好了这里自己变。' : '到 设置 › 本地模型 点「安装配音」：装配音环境，再从魔搭下两个模型（每个 4~5 GB）。') + '</span>' +
     '<span class="btnrow"><button class="btn" data-act="goinst">去 设置 › 本地模型</button></span></div>';
   else if (s.yield && !run) g += '<div class="tts-warn"><b>现在在让路</b><span>' + esc(s.yield) + '。配音要 5~6 GB 显存，游戏关了再生成（或者换「云端」，不用显卡）。</span></div>';
-  if (run) g += ttsProg(j);
+  var bm = ttsForm().batch;
+  if (run) g += (bm ? mbNowLine('tts') : '') + ttsProg(j);
+  else if (bm && mbRun('tts')) g += mbGoHTML('tts');
   else {
     var whole = s.whole !== false;
-    g += '<div class="tts-gorow"><button class="btn primary tts-go" data-act="gen"' + (miss || s.yield ? ' disabled' : '') + '>生成配音</button>' +
-      '<div class="seg" id="ttsWay" role="group" aria-label="怎么生成"><button data-way="1" aria-pressed="' + whole + '" title="一次念完，语气前后连贯；念完才出声音，进度是估的">整段一次生成</button>' +
-      '<button data-way="0" aria-pressed="' + !whole + '" title="一句一句念，进度准，但每句语气可能不一样">一句一句</button></div></div>' +
-      '<div class="cap tts-wayhint">' + (whole ? '整段一次念完，语气前后连贯；念完才出声音，进度是按上次的速度估的。' : '一句一句念，进度准，但每句是分开念的，语气可能不一样。') +
-      (s.speed ? ' 上次实测：生成 1 分钟音频要 ' + ttsDur(s.speed.per_min) + '。' : '') + '</div>';
-    if (j) g += '<div class="tts-msg' + (j.st === 'done' ? ' ok' : j.st === 'err' ? ' bad' : '') + '">' + esc(j.msg) + '</div>';
+    var way = '<div class="seg" id="ttsWay" role="group" aria-label="怎么生成"><button data-way="1" aria-pressed="' + whole + '" title="一次念完，语气前后连贯；念完才出声音，进度是估的">整段一次生成</button>' +
+      '<button data-way="0" aria-pressed="' + !whole + '" title="一句一句念，进度准，但每句语气可能不一样">一句一句</button></div>';
+    g += (bm ? mbGoHTML('tts', way, !!(miss || s.yield)) :
+      '<div class="tts-gorow"><button class="btn primary tts-go" data-act="gen"' + (miss || s.yield ? ' disabled' : '') + '>生成配音</button>' + way + '</div>') +
+      (bm ? '' : '<div class="cap tts-wayhint">' + (whole ? '整段一次念完，语气前后连贯；念完才出声音，进度是按上次的速度估的。' : '一句一句念，进度准，但每句是分开念的，语气可能不一样。') +
+      (s.speed ? ' 上次实测：生成 1 分钟音频要 ' + ttsDur(s.speed.per_min) + '。' : '') + '</div>');
+    if (bm) g += '<div class="cap tts-wayhint">批量：每段用中间选的音色和语气（清单里写了「音色：」的那段用它自己的），' + (whole ? '每段整段一次念完' : '每段一句一句念') + '，念好一段存一段，进这一批的文件夹。</div>';
+    else if (j) g += '<div class="tts-msg' + (j.st === 'done' ? ' ok' : j.st === 'err' ? ' bad' : '') + '">' + esc(j.msg) + '</div>';
   }
   $('#ttsGen').innerHTML = g;
 }
@@ -319,7 +330,10 @@ function ttsSyncCloud(s, j, run) {
   var g = '';
   if (!c.key && !s.demo) g += '<div class="tts-warn"><b>还没填百炼 API Key</b><span>到 设置 › 云端 填北京地域的 Key（加密保存在本机，不写日志、不进导出）。</span>' +
     '<span class="btnrow"><button class="btn" data-act="gokey">去 设置 › 云端</button></span></div>';
-  if (run) g += ttsProg(j);
+  var bm = ttsForm().batch;
+  if (run) g += (bm ? mbNowLine('tts') : '') + ttsProg(j);
+  else if (bm) g += mbGoHTML('tts', mbRun('tts') ? '' : '<span class="tts-using">默认用 <b>' + esc(ttsCVName()) + '</b> 念</span>') +
+    (mbRun('tts') ? '' : '<div class="cap tts-wayhint">批量：每段用这个音色和中间的语气、语速（清单里写了「音色：」的那段用它自己的）；按字计费，每段花多少写在那一段的时间轴里。</div>');
   else {
     g += '<div class="tts-gorow"><button class="btn primary tts-go" data-act="gen"' + (!c.key && !s.demo ? ' disabled' : '') + '>生成配音</button>' +
       '<span class="tts-using">用 <b>' + esc(ttsCVName()) + '</b> 念</span></div>' +
@@ -565,6 +579,7 @@ function ttsDictCollect() {
 $('#view-tts').addEventListener('click', function (ev) {
   var t = ev.target.closest('button'); if (!t || t.disabled) return;
   var f = ttsForm(), live = useLive();
+  if (t.dataset.ttsbm) { f.batch = t.dataset.ttsbm === '1'; ttsKeep(); renderTTS(); if (f.batch) mbFetch('tts'); return; }
   if (t.dataset.mode) { f.mode = t.dataset.mode; ttsKeep(); ttsVoice(); ttsSync(); return; }
   if (t.dataset.tab) { f.ctab = t.dataset.tab; ttsKeep(); ttsVoice(); return; }
   if (t.dataset.eng) {
