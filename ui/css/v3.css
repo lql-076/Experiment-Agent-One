@@ -585,5 +585,37 @@ html[data-orient="portrait"] .pb-empty{height:6.5rem}
 html[data-orient="portrait"] .pb-grow{flex:none;min-height:0}
 html[data-orient="portrait"] .pb-grow textarea{flex:none;height:4.5rem}
 html[data-orient="portrait"] .pb-form{gap:.7rem}
+/* v3.3 批量发布：左边那栏收起来，中间是这一批的列表 */
+.pb.bat{grid-template-columns:minmax(0,1fr) 26rem}
+.pb.bat .pb-vid,.pb.bat .pb-one,.pb:not(.bat) .pb-bat{display:none}
+.pb-one{display:contents}
+.pb-mode{align-self:center}
+.pb-mode button{padding:.3rem .85rem;font-size:.875rem}
+.pb-bat{flex:1;min-height:0;display:flex;flex-direction:column;gap:.75rem}
+.pb-bopt{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
+.pb-bopt .cap{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.smart-t[aria-pressed="true"]{color:var(--hud);border-color:color-mix(in srgb,var(--hud) 60%,transparent);background:color-mix(in srgb,var(--hud) 10%,transparent)}
+.smart-t[aria-pressed="true"]::before{content:"✓ "}
+.pb-bh{display:flex;align-items:baseline;gap:.7rem}
+.pb-bh b{font-weight:600;font-size:1.0625rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pb-bh .linkbtn{margin-left:auto}
+#pbBw .mb-warn{padding:.35rem 0 0}
+.pb-bl{flex:1;min-height:0;overflow:auto;border-top:1px solid var(--line)}
+.pb-bhelp{line-height:1.9;padding:1rem .25rem}
+.pb-bhelp b{color:var(--text);font-size:1rem}
+.pb-br{display:grid;grid-template-columns:2.25rem minmax(0,1fr) 5rem;gap:.7rem;align-items:start;padding:.7rem .5rem;border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent)}
+.pb-br .n{color:var(--text3);font-size:.875rem;padding-top:.1rem}
+.pb-br .x{display:flex;flex-direction:column;gap:.2rem;min-width:0}
+.pb-br .x b{font-weight:600;font-size:1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pb-br .x span{font-size:.84rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pb-br .x .tg{color:var(--hud)}
+.pb-br .x .bad,.pb-br .x em.bad{color:var(--bad);font-style:normal;white-space:normal}
+.pb-br .r{font-size:.875rem;text-align:right;color:var(--text2)}
+.pb-br.ok .r{color:var(--ok)}
+.pb-br.err .r{color:var(--bad)}
+.pb-br.run .r{color:var(--hot)}
+.pb-br.run{box-shadow:inset 3px 0 0 var(--hot)}
+.pb-bfoot{flex:none;display:flex;flex-direction:column}
+html[data-orient="portrait"] .pb.bat{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1.5fr) minmax(0,1fr)}
 @media (prefers-reduced-motion:reduce){.pb-spin{animation:none}}
 html[data-motion="off"] .pb-spin{animation:none}

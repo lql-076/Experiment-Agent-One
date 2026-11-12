@@ -188,7 +188,13 @@ async def dsc(r: Request):
             txt = f"（DeepSeek 联网）查到了：关于「{asked[:20]}」，最新版本是 1.2.3。"
             return {"model": "deepseek-v4.1-flash-1017", "choices": [{"message": {"role": "assistant", "content": txt}}], "usage": usage}
     if j.get("response_format"):
-        if "可选修法" in u:
+        sys0 = _txt(msgs[0].get("content")) if msgs and msgs[0].get("role") == "system" else ""
+        if "清单整理员" in sys0:                   # v3.3 批量清单：测试把想要的回答写在清单里「【JSON】」后面（去掉行号）
+            m = __import__("re").search(r"【JSON】(.+)", u)
+            txt = m.group(1).strip() if m else json.dumps({"items": []})
+            if "【坏JSON】" in u:
+                txt = "{不是 json"
+        elif "可选修法" in u:
             txt = json.dumps({"why": "要管理员权限" if "硬件监控" in u else "看着是网络超时", "fix": "manual" if "硬件监控" in u else "retry",
                               "tell": "在弹出的窗口里点「是」" if "硬件监控" in u else ""}, ensure_ascii=False)
         elif "labels" in u or "分流器" in u:

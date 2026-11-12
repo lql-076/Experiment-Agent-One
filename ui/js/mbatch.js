@@ -13,6 +13,25 @@ var MB_CFG = {
     ph: '# 第 5 期 · 配乐清单\n\n## bgm01_开场\n时长：30 秒\n描述：轻快的电子乐，明亮的合成器，节奏清晰\n\n## bgm02_讲解\n时长：1分30秒\n描述：安静的钢琴独奏，舒缓，留白多\n\n也能一行一首：bgm03_结尾 | 45 | 温暖的木吉他',
     help: '一首用「## 名字」开头，下面写「时长：30 秒」和描述（不写「描述：」就把这一节的字当描述）。也能一行一首「名字 | 时长 | 描述」，或者 Markdown 表格。' }
 };
+/* v3.3「DeepSeek 帮我认」：生图、配音、配乐、发布四个批量共用一个开关（默认开，存在浏览器里）。开着就先让 DeepSeek 把随便写的清单整理成标准格式 */
+var SMART_KEY = 'agentSmart.v1';
+function smartOn() { try { return localStorage.getItem(SMART_KEY) !== '0'; } catch (e) { return true; } }
+function smartBtn(cls) {
+  return '<button type="button" class="' + (cls || 'btn mini ghost') + ' smart-t" data-smart aria-pressed="' + smartOn() + '" title="开着：清单随便怎么写都行，先让 DeepSeek 从头到尾看一遍，认成标准格式（清单的文字会发给 DeepSeek，几分钱）。关着：按固定格式认，不联网">DeepSeek 帮我认</button>';
+}
+document.addEventListener('click', function (ev) {
+  var t = ev.target.closest && ev.target.closest('[data-smart]'); if (!t) return;
+  ev.stopPropagation(); var on = !smartOn();
+  try { localStorage.setItem(SMART_KEY, on ? '1' : '0'); } catch (e) { /* 存不了就算了 */ }
+  $$('[data-smart]').forEach(function (b) { b.setAttribute('aria-pressed', on); });
+  toast(on ? 'DeepSeek 帮你认：清单随便写，它先整理一遍（文字会发给 DeepSeek）' : '按固定格式认，不联网', 4000);
+}, true);
+function smartBody(k, o) {
+  if (!smartOn()) return o;
+  o.smart = true; if (k === 'tts') o.engine = ttsCloud() ? 'cloud' : 'local';
+  toast('DeepSeek 正在从头到尾看这份清单…（一般十几秒）', 15000);
+  return o;
+}
 var MBX = { tts: { st: null, open: '', sig: '', timer: null, n: 0, busy: false, text: '' }, bgm: { st: null, open: '', sig: '', timer: null, n: 0, busy: false, text: '' },
   au: null, playing: '' };
 function mbDemoItems(k) {
@@ -89,7 +108,7 @@ function mbHTML(k, withGo) {
   if (!b) return '<div class="mb-drop" data-mbdrop="' + k + '"><b>一份' + c.name + '，一' + c.unit + '存一个文件</b><p class="cap">' + esc(c.help) + '</p>' +
     '<textarea class="inp mb-paste" data-mbpaste="' + k + '" spellcheck="false" placeholder="' + esc(c.ph) + '">' + esc(MBX[k].text) + '</textarea>' +
     '<div class="btnrow"><button class="btn primary" data-mba="load"' + (live ? '' : ' disabled') + '>认清单</button><button class="btn" data-mba="pickfile"' + (live ? '' : ' disabled') + '>选文件…</button>' +
-    '<span class="cap">也能把 .md / .txt 拖进来</span></div><input type="file" data-mbfile="' + k + '" accept=".md,.markdown,.txt" multiple hidden></div>';
+    '<span class="cap">也能把 .md / .txt 拖进来</span>' + smartBtn() + '</div><input type="file" data-mbfile="' + k + '" accept=".md,.markdown,.txt" multiple hidden></div>';
   var its = b.items, ok = its.filter(function (x) { return x.st === 'ok'; }).length, fail = its.filter(function (x) { return x.st === 'err'; }).length;
   var tot = k === 'tts' ? its.reduce(function (a, x) { return a + (x.chars || 0); }, 0) + ' 字' : mbClock(its.reduce(function (a, x) { return a + (+x.seconds || 0); }, 0)) + ' 长';
   var h = '<div class="mb-head"><b title="' + esc(b.dir) + '">' + esc(b.title) + '</b><span class="cap num">' + its.length + ' ' + c.unit + ' · ' + tot + ' · 好了 ' + ok + (fail ? ' · 没成 ' + fail : '') + '</span>' +
@@ -144,7 +163,7 @@ function mbLoadFiles(k, files) {
   files = [].slice.call(files || []).filter(function (f) { return /\.(md|markdown|txt)$/i.test(f.name); });
   if (!files.length) { toast('要 .md 或 .txt 文件'); return; }
   Promise.all(files.map(function (f) { return f.text().then(function (t) { return { name: f.name, text: t }; }); }))
-    .then(function (fs) { return api('POST', MB_CFG[k].api + '/load', { files: fs }); })
+    .then(function (fs) { return api('POST', MB_CFG[k].api + '/load', smartBody(k, { files: fs }), 200000); })
     .then(function (j) { MBX[k].text = ''; mbSet(k, j); toast('认好了：' + j.board.items.length + ' ' + MB_CFG[k].unit); })
     .catch(function (e) { toast(e.message, 6000); });
 }
@@ -178,7 +197,7 @@ document.addEventListener('click', function (ev) {
   if (act === 'load') {
     var md = (MBX[k].text || '').trim(); if (!md) { toast('先把' + c.name + '贴进来，或者点「选文件…」'); var p = document.querySelector('[data-mbpaste="' + k + '"]'); if (p) p.focus(); return; }
     t.disabled = true;
-    api('POST', c.api + '/load', { md: md }).then(function (j) { MBX[k].text = ''; mbSet(k, j); toast('认好了：' + j.board.items.length + ' ' + c.unit + (j.board.warn.length ? '（' + j.board.warn.length + ' 处要看一下）' : '')); })
+    api('POST', c.api + '/load', smartBody(k, { md: md }), 200000).then(function (j) { MBX[k].text = ''; mbSet(k, j); toast('认好了：' + j.board.items.length + ' ' + c.unit + (j.board.warn.length ? '（' + j.board.warn.length + ' 处要看一下）' : '')); })
       .catch(function (e) { toast(e.message, 7000); t.disabled = false; });
   }
   else if (act === 'go') mbRunReq(k, {}, t);

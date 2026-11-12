@@ -10,6 +10,7 @@ import struct
 import sys
 import time
 import zlib
+from datetime import datetime, timedelta
 
 import httpx
 from playwright.sync_api import sync_playwright
@@ -114,6 +115,27 @@ with sync_playwright() as pw:
     p.wait_for_function("PUB.st && PUB.st.hist.length && PUB.st.hist[0].title === 'Agent 写的标题' && PUB.st.job.st !== 'run' && !PUB.st.pending.length", timeout=20000)
     p.wait_for_timeout(500)
     check("Agent" in p.inner_text("#pbHist .pb-hr >> nth=0"), "发了：记录里标着 Agent")
+    # 批量（v3.3）：切到「批量」→ 文件夹 → 认这一批 → 点两下全部定时发
+    when = (datetime.now() + timedelta(hours=4)).strftime("%Y-%m-%d %H:%M")
+    (WS / "第6期成片.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 2000)
+    (WS / "发布清单.md").write_text(f"# 第6期\n## 批量第一条\n视频：第5期成片.mp4\n话题：AI\n定时：{when}\n## 批量第二条\n视频：第6期成片\n定时：{when}\n", "utf-8")
+    p.click('[data-pbmode="bat"]')
+    check(p.is_hidden(".pb-vid") and p.is_visible("#pbDir"), "切到「批量」：左边那栏收起来，中间是文件夹和清单")
+    if p.get_attribute(".pb-bat [data-smart]", "aria-pressed") == "true":
+        p.click(".pb-bat [data-smart]")
+    check(p.get_attribute(".pb-bat [data-smart]", "aria-pressed") == "false", "「DeepSeek 帮我认」点一下关掉（按固定格式认）")
+    p.fill("#pbDir", "发布界面测试")
+    p.click('[data-pb="bload"]')
+    p.wait_for_selector(".pb-br", timeout=10000)
+    check(p.locator(".pb-br").count() == 2 and "第6期成片.mp4" in p.inner_text(".pb-br >> nth=1"), "认出 2 条：名字写得不全也配上了视频")
+    p.screenshot(path=f"{OUT}/publish-batch.png")
+    p.click('[data-pb="bgo"]')
+    check("再点一下" in p.inner_text('[data-pb="bgo"]'), "「全部定时发出去」点两下才发")
+    p.click('[data-pb="bgo"]')
+    p.wait_for_function("PUB.st && PUB.st.batch && !PUB.st.batch.running && PUB.st.batch.items.every(function (x) { return x.st === 'ok'; })", timeout=40000)
+    check("批量" in p.inner_text("#pbHist .pb-hr >> nth=0") and p.locator(".pb-br.ok").count() == 2, "两条都定时好了；记录里标着批量")
+    p.click('[data-pb="bclear"]')
+    p.click('[data-pbmode="one"]')
     p.close()
 
     # 下边栏、设置

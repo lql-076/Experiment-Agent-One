@@ -774,14 +774,23 @@ MB = BgmBatch()
 api = APIRouter()
 
 
-def _routes(b, pre):
+def _routes(b, pre, kind):
     @api.get(pre)
     def st():
         return b.status()
 
     @api.post(pre + "/load")
-    def load(body: dict = Body(...)):
-        b.load(body.get("md") or "", body.get("name") or "", body.get("files"))
+    async def load(body: dict = Body(...)):
+        if body.get("smart"):                          # 先让 DeepSeek 认一遍，整理成标准格式再认（app/smartlist.py）
+            from . import smartlist
+            if b.busy():
+                raise HTTPException(409, f"正在批量{b.WHAT}，等这批出完或者先点「停下」")
+            md, name, notes = await smartlist.media_md(kind, body)
+            b.load(md, "DeepSeek整理.md")
+            b.board.update(md_name=name, warn=notes + b.board["warn"], smart=True)
+            b._save()
+        else:
+            b.load(body.get("md") or "", body.get("name") or "", body.get("files"))
         return b.status()
 
     @api.patch(pre + "/item/{iid}")
@@ -825,5 +834,5 @@ def _routes(b, pre):
         return b.open()
 
 
-_routes(TB, "/api/tts/batch")
-_routes(MB, "/api/bgm/batch")
+_routes(TB, "/api/tts/batch", "tts")
+_routes(MB, "/api/bgm/batch", "bgm")

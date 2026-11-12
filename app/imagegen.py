@@ -1177,8 +1177,17 @@ async def img_models_refresh():
 
 
 @api.post("/api/img/load")
-def img_load(body: dict = Body(...)):
-    G.load(body.get("md") or "", body.get("name") or "")
+async def img_load(body: dict = Body(...)):
+    if body.get("smart"):                              # 先让 DeepSeek 认一遍（app/smartlist.py），整理成表格再认
+        from . import smartlist
+        if G.busy():
+            raise HTTPException(409, "正在出图，等这批出完或者先点「停下」")
+        md, name, notes = await smartlist.media_md("img", body)
+        G.load(md, "DeepSeek整理.md")
+        G.board.update(md_name=name, warn=notes + G.board["warn"], smart=True)
+        G._save()
+    else:
+        G.load(body.get("md") or "", body.get("name") or "")
     return G.status()
 
 

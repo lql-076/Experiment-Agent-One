@@ -13,7 +13,7 @@ from common import launch
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "dev/.run/shots"
 SCROLL_OK = {"prep", "remind", "models", "cloud", "agent", "voice", "bgm"}   # 整备、提醒列表、本地模型（v1.8.7 加了「安装配音」）、云端（v1.8.11 加了百炼 Key）：要动手操作的页，可以上下滚（v1.8.1 起）
-LISTS = "#chatLog, .hm-pop, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2, #ttsText, .tts-tl, .tts-vb, .fg-scroll, .bg-rows, .mb-list, .mb-paste, .pb-vl, .pb-hist, .pb-log"   # .tts-vb：配音页的音色面板（音色列表、设计、复刻表单，v1.8.12）；.fg-scroll：生图页里自己滚的几块（v1.8.16）
+LISTS = "#chatLog, .hm-pop, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2, #ttsText, .tts-tl, .tts-vb, .fg-scroll, .bg-rows, .mb-list, .mb-paste, .pb-vl, .pb-hist, .pb-log, .pb-bl"   # .tts-vb：配音页的音色面板（音色列表、设计、复刻表单，v1.8.12）；.fg-scroll：生图页里自己滚的几块（v1.8.16）
 JS = """(lists) => { const out = []; document.querySelectorAll('#content *, #content').forEach(el => {
   if (!el.offsetParent && el.id !== 'content') return;
   if (el.closest(lists)) return;
@@ -21,7 +21,7 @@ JS = """(lists) => { const out = []; document.querySelectorAll('#content *, #con
   if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 4 && el.clientHeight > 120)
     out.push((el.id ? '#' + el.id : el.className.toString().split(' ')[0]) + ' ' + el.clientHeight + '/' + el.scrollHeight); });
   return out; }"""
-TOOLS = [("view", v) for v in ("events", "monitor", "brains", "reports", "tts", "tts-cloud", "tts-batch", "img", "img-batch", "bgm", "bgm-batch", "publish")]
+TOOLS = [("view", v) for v in ("events", "monitor", "brains", "reports", "tts", "tts-cloud", "tts-batch", "img", "img-batch", "bgm", "bgm-batch", "publish", "publish-batch")]
 # 配音、配乐的批量（v3.1）：先认一份 8 段 / 6 首的清单，看排得下（清单那一列自己滚）
 BATCH_MD = {"tts": "# 第 5 期 · 配音清单\n" + "".join(f"## {i:02d}_{'橘页' if i % 2 else '紫苏'}_第{i}段\n音色：{'Serena' if i % 2 else 'Uncle_Fu'}\n这是第 {i} 段要念的字，一段一个文件。\n" for i in range(1, 9)),
             "bgm": "# 第 5 期 · 配乐清单\n" + "".join(f"## bgm{i:02d}_第{i}首\n时长：{20 + i * 5}\n描述：轻快的电子乐，第 {i} 首\n" for i in range(1, 7))}
@@ -99,6 +99,11 @@ with sync_playwright() as pw:
             if k.startswith("img"):                     # 生图的单张页、批量页都看（v2.1 撤掉了角色、模板）
                 p.wait_for_timeout(800)
                 p.evaluate("imgTab('" + ("batch" if k == "img-batch" else "single") + "', true)")
+            if k == "publish-batch":                   # 批量发布（v3.3）：塞一批 8 条看排得下不
+                p.wait_for_timeout(800)
+                p.evaluate("""var f = pubForm(); f.mode = 'bat'; PUB.st = Object.assign({}, PUB.st || PUB_DEMO, {batch: {title: '第5期', folder_show: 'F:\\视频\\第5期', warn: ['DeepSeek 帮你认的（¥0.004）：发之前看一眼每一条对不对'], running: false, halt: '',
+                  items: [1,2,3,4,5,6,7,8].map(function (i) { return {id: 'p' + i, title: '第 ' + i + ' 条：本周最火的 AI 项目', video_show: '0' + i + '_成片.mp4', cover_show: '0' + i + '_封面.png', schedule: '2026-11-1' + i + ' 20:00',
+                  tags: ['AI', '开源'], collection: 'AI周报', st: i == 3 ? 'err' : 'idle', err: i == 3 ? '定时发布要在 2 小时以后（抖音的规矩）' : '', msg: ''}; })}}); $('#view-publish').innerHTML = ''; renderPub()""")
             p.wait_for_timeout(900)
             look(p, w, h, "工具窗口 " + k, k)
             if k in ("img", "settings", "events"):

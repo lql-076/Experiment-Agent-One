@@ -55,6 +55,7 @@ def get(p, path):
 with sync_playwright() as pw:
     b = launch(pw)
     p = b.new_page(viewport={"width": 1680, "height": 1000})
+    p.add_init_script("try { localStorage.setItem('agentSmart.v1', '0') } catch (e) {}")   # 这里点的是固定格式；「DeepSeek 帮我认」在 dev/test_smart.py 测
     p.on("pageerror", lambda e: errs.append(str(e)))
     p.goto("http://127.0.0.1:8765/")
     p.wait_for_timeout(1500)

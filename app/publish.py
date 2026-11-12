@@ -464,7 +464,7 @@ def status():
     return {"ready": {"deps": deps_ok(), "browser": find_browser(), "vendor": (paths.ROOT / "vendor" / "social-auto-upload" / "uploader" / "douyin_uploader" / "main.py").exists()},
             "account": P.account(), "job": P.public(), "hist": (db.kv_get("pub_hist") or [])[:20],
             "pending": [{"id": x["id"], "ts": x["ts"], "eid": x.get("eid"), "item": show_item(x["item"])} for x in pending()],
-            "videos": recent_videos(), "decls": DECL,
+            "videos": recent_videos(), "decls": DECL, "batch": B.public(),
             "opts": {"headless": bool(settings.S.get("pubHeadless", True)), "decl": settings.S.get("pubDecl") or DECL[0]},
             "agent": {"on": bool(settings.S.get("agPublish", False)), "ask": bool(settings.S.get("agPublishAsk", True))}}
 
@@ -496,6 +496,294 @@ async def agent_publish(args, eid=None, say=None, stopped=None):
         if stopped and stopped():
             P.stop()
     return {"asked": False, "ok": job["st"] == "done", "msg": job["msg"], "title": item["title"], "sec": round(job["t1"] - job["t0"])}
+
+
+# ---------------- 批量发布（v3.3）：一个文件夹（视频、封面）+ 一份清单，一条一条定时发 ----------------
+LIST_EXT = {".md", ".markdown", ".txt"}
+FIELDS = {"标题": "title", "视频": "video", "文件": "video", "封面": "cover", "简介": "desc", "描述": "desc", "文案": "desc", "话题": "tags", "标签": "tags",
+          "定时": "schedule", "时间": "schedule", "发布时间": "schedule", "定时发布": "schedule", "合集": "collection", "声明": "declaration", "自主声明": "declaration"}
+
+
+def bat_folder(s):
+    s = str(s or "").strip().strip('"')
+    if not s:
+        raise HTTPException(400, "填放视频和封面的那个文件夹（完整路径，或者工作区里的）")
+    q = Path(s)
+    if not q.is_absolute():
+        try:
+            q = workspace.real(s, must_exist=True)
+        except workspace.Denied as e:
+            raise HTTPException(400, str(e)) from None
+    if not q.is_dir():
+        raise HTTPException(400, f"找不到这个文件夹：{s}")
+    return q
+
+
+def scan_folder(d):
+    """文件夹里的视频、图片、清单（往下一层的子文件夹也看；「旧版」不看）。"""
+    out = {"video": [], "img": [], "list": []}
+    subs = [d] + sorted(x for x in d.iterdir() if x.is_dir() and x.name != "旧版")[:30]
+    for sd in subs:
+        for p in sorted(sd.iterdir()):
+            e = p.suffix.lower()
+            k = "video" if e in VIDEO_EXT else "img" if e in IMG_EXT else "list" if e in LIST_EXT else ""
+            if k and p.is_file() and len(out[k]) < 300:
+                out[k].append(p)
+    return out
+
+
+def read_text(p):
+    raw = p.read_bytes()[:400_000]
+    for enc in ("utf-8-sig", "gb18030"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            pass
+    return raw.decode("utf-8", "replace")
+
+
+def _key(s):
+    return re.sub(r"[\s_\-—·.,，、()（）\[\]【】]+", "", Path(str(s)).stem).lower()
+
+
+def _num(s):
+    m = re.search(r"\d+", Path(str(s)).stem)
+    return int(m.group()) if m else None
+
+
+def match(name, pool, d):
+    """清单里写的名字 → 文件夹里的文件：一模一样 > 去掉扩展名、空格、下划线一样 > 只有一个包含它 > 只有一个同序号。"""
+    n = str(name or "").strip().strip('"').replace("\\", "/")
+    if not n:
+        return None
+    for p in pool:
+        if p.name.lower() == n.split("/")[-1].lower() or str(p.relative_to(d)).replace("\\", "/").lower() == n.lower():
+            return p
+    k = _key(n)
+    if not k:
+        return None
+    for p in pool:
+        if _key(p.name) == k:
+            return p
+    c = [p for p in pool if len(k) >= 2 and len(_key(p.name)) >= 2 and (k in _key(p.name) or _key(p.name) in k)]
+    if len(c) == 1:
+        return c[0]
+    num = _num(n)
+    c = [p for p in pool if num is not None and _num(p.name) == num]
+    return c[0] if len(c) == 1 else None
+
+
+def auto_cover(video, imgs):
+    """清单没写封面：找和视频同名（或者「同名_封面」）的图，再不行同序号、名字里有「封面」的。"""
+    k = _key(video.name)
+    c = [p for p in imgs if _key(p.name) == k or (_key(p.name).startswith(k) and "封面" in p.stem) or (_key(p.name) == k + "cover")]
+    if len(c) == 1:
+        return c[0]
+    num = _num(video.name)
+    c = [p for p in imgs if num is not None and _num(p.name) == num and ("封面" in p.stem or "cover" in p.stem.lower())]
+    return c[0] if len(c) == 1 else None
+
+
+def norm_when(s):
+    """「2026/11/14 20:00」「11月14日 20点」「2026-11-14T20:00:00」→ 2026-11-14 20:00（换不了就原样，检查时会说）。"""
+    s = str(s or "").strip()
+    m = re.search(r"(?:(\d{4})\s*[-/.年]\s*)?(\d{1,2})\s*[-/.月]\s*(\d{1,2})\s*[日号]?\s*[T\s]*\D{0,4}?(\d{1,2})\s*[:：点时](?:\s*(\d{1,2}))?", s)
+    if not m:
+        return s
+    now = datetime.now()
+    h = int(m.group(4))
+    if re.search(r"晚|下午|PM", s, re.I) and h < 12:
+        h += 12
+    try:
+        dt = datetime(int(m.group(1) or now.year), int(m.group(2)), int(m.group(3)), h, int(m.group(5) or 0))
+    except ValueError:
+        return s
+    if not m.group(1) and dt < now - timedelta(days=1):
+        dt = dt.replace(year=dt.year + 1)
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def parse_pub(text):
+    """不用 DeepSeek 时认的固定写法：每条「## 标题」开头，下面「视频：」「封面：」「简介：」「话题：」「定时：」「合集：」「声明：」。"""
+    items, cur, title, key = [], None, "", None
+    for raw in str(text or "").replace("\r\n", "\n").split("\n"):
+        x = raw.strip()
+        m = re.match(r"^(#{1,6})\s*(.+)$", x)
+        if m:
+            if len(m.group(1)) == 1 and cur is None:
+                title = m.group(2).strip()
+            else:
+                cur = {"title": m.group(2).strip(), "desc": ""}
+                items.append(cur)
+                key = None
+            continue
+        if cur is None or not x:
+            continue
+        m = re.match(r"^[-*·]?\s*([^\s：:]{1,6})\s*[：:]\s*(.*)$", x)
+        if m and m.group(1) in FIELDS:
+            key = FIELDS[m.group(1)]
+            v = m.group(2).strip()
+            cur[key] = (cur.get(key, "") + "\n" + v).strip() if key == "desc" else v
+        elif key == "desc":
+            cur["desc"] = (cur["desc"] + "\n" + x).strip()
+    return {"title": title, "items": items}
+
+
+class PubBatch:
+    def __init__(self):
+        self.board = db.kv_get("pub_batch") or None
+        self.running = False
+        self.halt = ""
+        if self.board:                                  # 上次半路关了：没发完的回到待发
+            for it in self.board["items"]:
+                if it["st"] in ("queue", "run"):
+                    it.update(st="idle", msg="")
+
+    def _save(self):
+        db.kv_set("pub_batch", self.board)
+
+    def public(self):
+        if not self.board:
+            return None
+        return dict(self.board, running=self.running, halt=self.halt)
+
+    def _body(self, it):
+        if not it.get("video"):
+            raise ValueError(f"文件夹里没找到视频「{it.get('video_raw') or '（清单没写）'}」")
+        if not str(it.get("schedule") or "").strip():
+            raise ValueError("没写定时发布的时间（批量的都定时发）")
+        return check_item({"file": it["video"], "title": it.get("title"), "desc": it.get("desc"), "tags": it.get("tags"), "schedule": it.get("schedule"),
+                           "cover": it.get("cover") or "", "collection": it.get("collection"), "declaration": it.get("declaration") or None})
+
+    def _recheck(self, it):
+        try:
+            self._body(it)
+            it.update(st="idle" if it["st"] != "ok" else "ok", err="")
+        except ValueError as e:
+            if it["st"] != "ok":
+                it.update(st="err", err=str(e))
+
+    async def load(self, body):
+        if self.running:
+            raise HTTPException(409, "正在一条一条发，先点「停下」")
+        d = bat_folder(body.get("folder"))
+        found = scan_folder(d)
+        files = [f for f in (body.get("files") or []) if str(f.get("text") or "").strip()]
+        if not files:
+            files = [{"name": p.name, "text": read_text(p)} for p in found["list"][:6]]
+        if not files:
+            raise HTTPException(400, "没有清单：选一份 .md / .txt，或者把它放进这个文件夹")
+        notes = []
+        if body.get("smart"):
+            from . import smartlist
+            rel = lambda p: str(p.relative_to(d)).replace("\\", "/")
+            ctx = ("文件夹里的文件：\n视频：" + "、".join(rel(p) for p in found["video"]) + "\n图片：" + "、".join(rel(p) for p in found["img"]))[:20000]
+            j, _, cny = await smartlist.ask("pub", files, ctx)
+            raws, title = j["items"], j.get("title") or ""
+            notes.append(f"DeepSeek 帮你认的（¥{cny:.3f}）：发之前看一眼每一条对不对")
+            notes += [str(x)[:200] for x in (j.get("notes") or []) if str(x).strip()][:8]
+        else:
+            raws, title = [], ""
+            for f in files:
+                p = parse_pub(f["text"])
+                raws += p["items"]
+                title = title or p["title"]
+            if not raws:
+                raise HTTPException(400, "没认出要发的：每条用「## 标题」开头，下面写 视频： 封面： 简介： 话题： 定时：（或者打开「DeepSeek 帮我认」）")
+        items = []
+        for i, r in enumerate(raws[:50], 1):
+            v = match(r.get("video") or r.get("file"), found["video"], d) or (match(r.get("title"), found["video"], d) if not r.get("video") else None)
+            c = match(r.get("cover"), found["img"], d) if r.get("cover") else (auto_cover(v, found["img"]) if v else None)
+            if r.get("cover") and not c:
+                notes.append(f"第 {i} 条的封面「{r['cover']}」文件夹里没找到，先不放封面")
+            it = {"id": f"p{i}", "title": re.sub(r"\s+", " ", str(r.get("title") or "")).strip(), "desc": str(r.get("desc") or "").strip(),
+                  "tags": parse_tags(r.get("tags")), "schedule": norm_when(r.get("schedule")), "collection": str(r.get("collection") or "").strip()[:40],
+                  "declaration": str(r.get("declaration") or "").strip(), "video_raw": str(r.get("video") or "")[:120],
+                  "video": str(v) if v else "", "cover": str(c) if c else "", "st": "idle", "err": "", "msg": ""}
+            it["video_show"] = v.name if v else ""
+            it["cover_show"] = c.name if c else ""
+            self._recheck(it)
+            items.append(it)
+        self.halt = ""
+        self.board = {"id": int(time.time() * 1000), "title": title or d.name, "folder": str(d), "folder_show": paths.show(str(d)), "warn": notes,
+                      "lists": [f.get("name") or "" for f in files], "smart": bool(body.get("smart")), "items": items,
+                      "nv": len(found["video"]), "ni": len(found["img"])}
+        self._save()
+        ok = sum(1 for x in items if x["st"] == "idle")
+        feed.add(f"认了一批要发的「{self.board['title']}」：{len(items)} 条，能发 {ok} 条", "info", job="发布", key="pubb")
+        return self.public()
+
+    def start(self):
+        if self.running:
+            raise HTTPException(409, "已经在发了")
+        if not self.board:
+            raise HTTPException(400, "先认一批")
+        if P.busy():
+            raise HTTPException(409, "「发布」那边正在做别的，等它好了")
+        if not COOKIE.exists():
+            raise HTTPException(400, "还没登录抖音：先在右边扫码登录")
+        for it in self.board["items"]:
+            self._recheck(it)
+        todo = [it for it in self.board["items"] if it["st"] == "idle"]
+        if not todo:
+            raise HTTPException(400, "没有能发的（标红的那几条看一下哪里不对）")
+        for it in todo:
+            it.update(st="queue", msg="")
+        self.running, self.halt = True, ""
+        self._save()
+        threading.Thread(target=self._loop, args=(todo,), daemon=True).start()
+        return self.public()
+
+    def _loop(self, todo):
+        n_ok = 0
+        try:
+            for it in todo:
+                if self.halt:
+                    it.update(st="idle", msg="")
+                    continue
+                try:
+                    item = self._body(it)
+                    it.update(st="run", msg="开始发")
+                    self._save()
+                    P.start("upload", item, by="batch")
+                except (ValueError, HTTPException) as e:
+                    it.update(st="err", err=str(getattr(e, "detail", e)))
+                    self._save()
+                    continue
+                job = P.job
+                while job["st"] == "run":
+                    time.sleep(1)
+                    it["msg"] = str(job.get("msg") or "")[:80]
+                if job["st"] == "done":
+                    it.update(st="ok", msg=job["msg"][:120], err="")
+                    n_ok += 1
+                else:
+                    it.update(st="idle" if job["st"] == "stop" else "err", err="" if job["st"] == "stop" else job["msg"][:200], msg="")
+                    if re.search(r"cookie|登录|失效", job["msg"]):
+                        self.halt = "抖音登录失效了：右边重新扫码，再点「接着发」"
+                self._save()
+                if not self.halt:
+                    time.sleep(3)
+        finally:
+            self.running = False
+            self._save()
+            left = sum(1 for x in todo if x["st"] != "ok")
+            feed.add(f"批量发抖音：发了 {n_ok} 条" + (f"，还有 {left} 条没发" if left else "") + (f"（{self.halt}）" if self.halt else ""), "ok" if not left else "warn", job="发布", key="pubb")
+
+    def stop(self):
+        if self.running:
+            self.halt = "停下了：没发的还在，点「接着发」继续"
+            if P.busy() and P.job.get("by") == "batch":
+                P.stop()
+
+    def clear(self):
+        if self.running:
+            raise HTTPException(409, "正在发，先点「停下」")
+        self.board = None
+        db.kv_set("pub_batch", None)
+
+
+B = PubBatch()
 
 
 # ---------------- 接口 ----------------
@@ -591,3 +879,27 @@ def pub_media(path: str):
     except ValueError as e:
         raise HTTPException(404, str(e)) from None
     return FileResponse(p, headers={"Cache-Control": "no-store"})
+
+
+@api.post("/api/publish/batch/load")
+async def pub_batch_load(body: dict = Body(...)):
+    await B.load(body)
+    return status()
+
+
+@api.post("/api/publish/batch/run")
+def pub_batch_run():
+    B.start()
+    return status()
+
+
+@api.post("/api/publish/batch/stop")
+def pub_batch_stop():
+    B.stop()
+    return status()
+
+
+@api.post("/api/publish/batch/clear")
+def pub_batch_clear():
+    B.clear()
+    return status()

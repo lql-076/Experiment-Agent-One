@@ -291,7 +291,7 @@ function imgQueue() {
       IMG.sig.ql = 'none'; IMG.sel = null; $('#fgEd').hidden = true;
       ql.innerHTML = '<div class="fg-drop"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></svg><b>把生图清单拖进来</b>' +
         '<span>视频窗口按《自媒体正本》出的 .md：视觉方向 + 每条的文件名、用在哪、比例、透明背景、提示词。认出来就一行一张排好，点「批量生成」一张一张出。</span>' +
-        '<span class="bt"><button class="fb pri" data-act="pickmd">选文件</button><button class="fb" data-act="paste">粘贴</button><button class="fb" data-act="diff" title="一张定稿图 → 闭嘴、张嘴、眨眼……几张只差一处的图（做会说话的角色用）">做差分</button></span></div>';
+        '<span class="bt"><button class="fb pri" data-act="pickmd">选文件</button><button class="fb" data-act="paste">粘贴</button><button class="fb" data-act="diff" title="一张定稿图 → 闭嘴、张嘴、眨眼……几张只差一处的图（做会说话的角色用）">做差分</button></span>' + smartBtn('fb sm') + '</div>';
     }
     return;
   }
@@ -361,7 +361,7 @@ function imgBatch(body) {
 }
 function imgLoadMd(md, name) {
   if (!useLive()) { toast('演示模式：连上后端才能认清单'); return; }
-  api('POST', '/api/img/load', { md: md, name: name || '' }, 20000).then(function (j) {
+  api('POST', '/api/img/load', smartBody('img', { md: md, name: name || '' }), 200000).then(function (j) {
     IMG.st = j; imgBoxClose(); IMG.sel = null;
     var b = j.board, ok = b.items.filter(function (it) { return it.st === 'ok'; }).length;
     imgLog('◆ 认出「' + esc(b.title) + '」' + b.items.length + ' 张' + (ok ? ' · 文件夹里已经有 ' + ok + ' 张' : '') + (b.warn.length ? ' · ' + b.warn.length + ' 处没认全' : ''), b.warn.length ? 'amb' : 'c');
@@ -497,7 +497,7 @@ function imgPaste() {
   IMG.box = { kind: 'paste' };
   imgBox('<h3>PASTE LIST<em>把生图清单粘贴进来</em></h3><span class="fg-cap">视频窗口出的那份 Markdown，整份复制过来就行</span>' +
     '<textarea class="fi fg-ta fg-ptx" id="fgPaste" spellcheck="false" placeholder="# 这期的生图清单&#10;&#10;## 这期的视觉方向&#10;……&#10;&#10;### img01_重点_地铁站.png（用在：本周重点）&#10;- 比例：16:9&#10;- 透明背景：不开&#10;- 提示词：……"></textarea>' +
-    '<div class="bt"><button class="fb" data-act="boxclose">取消</button><button class="fb pri" data-act="pasteok">认这份清单</button></div>', 'paste');
+    '<div class="bt">' + smartBtn('fb') + '<button class="fb" data-act="boxclose">取消</button><button class="fb pri" data-act="pasteok">认这份清单</button></div>', 'paste');
   setTimeout(function () { var t = $('#fgPaste'); if (t) t.focus(); }, 30);
 }
 
