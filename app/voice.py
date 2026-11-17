@@ -5,14 +5,17 @@ r"""语音对话（v3.0）：对着 Agent 说话，它用声音回你。
   模型和代码不进仓库、不进压缩包，他自己下（设置 › 语音 里有地址）。官方只写了 Linux，Windows 要用社区版或自己装——所以这里不装它，只连它的接口：
     python -m breeze_infer.api <模型文件夹> --host 127.0.0.1 --port 8093
     POST /v1/audio/speech（表单：text、instruction、cfg_scale、seed，或者 ref_audio + ref_text）→ 一边生成一边回 24 kHz 单声道 16 位 PCM
-  填了 breeze-tts 的文件夹（voiceDir）：用到才由 Agent 启动（不弹黑窗口，日志 data\logs\voice.log），闲置 voiceIdle 分钟关掉，打游戏让路时关掉。
-  官方说一次推理约 7.7 GB 显存：启动前先把底座卸了。不填文件夹：只连 voiceUrl（他自己开着的）。
+  填了 breeze-tts 的文件夹（voiceDir）：用到才由 Agent 启动（不弹黑窗口，日志 data\logs\voice.log）。
+  v3.5.2 显存：默认常驻；扣除 Breeze 自己后占用超过 80% 立刻卸载，低于 50% 连续 voiceIdle 分钟自动加载；
+  打游戏让路时也释放。官方说一次推理约 7.7 GB（我们的 CUDA Graph 模式约 10 GB）：启动前先把底座卸了。
+  不填文件夹：只连 voiceUrl（他自己开着的）。
 - 听写：Qwen3-ASR-0.6B（Apache 2.0），跑在配音服务里（tts-env 里本来就装着 qwen-asr 这个包，只差模型：设置 › 语音 点「下载听写模型」）。
 - 界面录的音只发给本机这两个服务；说的话变成字以后，和打字发的走同一条路（隐私的照旧只在本地）。
 - 念什么：回复去掉 Markdown、代码、链接，最多念 voiceMax 个字（后面的看屏幕）。
 """
 import asyncio
 import base64
+import os
 import re
 import shutil
 import time
@@ -25,7 +28,7 @@ from fastapi.responses import StreamingResponse
 from . import db, feed, paths, settings, tts
 from .models import M, Proc
 
-NEED_GB = 8.0
+NEED_GB = 10.5                       # CUDA Graph 兼容模式（SDPA + backbone/depth 图）实测约 10 GB；eager 约 8 GB
 SR = 24000
 VD = paths.DATA / "voice"
 REF = VD / "ref.wav"
@@ -37,21 +40,53 @@ CODE = paths.ROOT / "vendor" / "breeze-tts"            # 推理代码随包带�
 MODEL = paths.MODELS_TTS / "breeze-tts-2"               # 一键装好时把权重下到这里（scripts/install_tts.py --breeze）
 
 
+_OK_CACHE = {"ts": 0.0, "model": False, "installed": False}
+
+
 def model_ok(d=None):
     """权重下全了没有：config.json、.safetensors、它自带的声音编解码器（audio_tokenizer），根目录没有下到一半的文件。
-    `.cache` 里 HF 下载留下的半截文件不算（和 install_tts.py 的 breeze_done() 同一规则，v3.3.2）。"""
+    `.cache` 里 HF 下载留下的半截文件不算（和 install_tts.py 的 breeze_done() 同一规则，v3.3.2）。
+    `rglob` 在这 6.6GB 的模型目录上要扫一会儿；状态接口/每次朗读前缓存 30 秒。"""
+    if d is None and time.time() - _OK_CACHE["ts"] < 30:
+        return _OK_CACHE["model"]
     d = Path(d or MODEL)
-    return ((d / "config.json").exists() and any(d.glob("*.safetensors")) and (d / "audio_tokenizer" / "config.json").exists()
-            and not any(p for p in d.rglob("*.incomplete") if ".cache" not in p.parts))
+    ok = ((d / "config.json").exists() and any(d.glob("*.safetensors")) and (d / "audio_tokenizer" / "config.json").exists()
+          and not any(p for p in d.rglob("*.incomplete") if ".cache" not in p.parts))
+    if d is not None and Path(d) == MODEL:
+        _OK_CACHE.update(model=ok, ts=time.time())
+    return ok
 
 
 def installed():
-    """一键装好的那套能不能用：配音环境（tts-env）在、权重下全了、代码在。"""
-    return tts.T.env_ok() and model_ok() and (CODE / "breeze_infer" / "api.py").exists()
+    """一键装好的那套能不能用：配音环境（tts-env）在、权重下全了、代码在。缓存 30 秒（同上）。"""
+    if time.time() - _OK_CACHE["ts"] < 30:
+        return _OK_CACHE["installed"]
+    ok = bool(tts.T.env_ok() and model_ok() and (CODE / "breeze_infer" / "api.py").exists())
+    _OK_CACHE.update(installed=ok, ts=time.time())
+    return ok
 
 
 class VoiceError(RuntimeError):
     pass
+
+
+def vram_policy(used, total, breeze, alive, low_since, now=None, idle_s=600):
+    """v3.5.2 显存策略的纯函数，方便回归。
+    返回 (动作, 百分比)：keep / stop / wait / load / hold。
+    - Breeze 活着：扣除自己后占用 >=80% → stop；否则 keep。
+    - Breeze 没活：扣除自己（0）后 <50% → 计时，够 idle_s → load；50~80 → hold。
+    """
+    now = time.time() if now is None else float(now)
+    pressure = max(0.0, float(used) - float(breeze))
+    capacity = max(1.0, float(total) - float(breeze))
+    pct = pressure / capacity * 100.0
+    if alive:
+        return ("stop" if pct >= 80.0 else "keep"), pct
+    if pct >= 50.0:
+        return "hold", pct
+    if low_since is None:
+        return "wait", pct
+    return ("load" if now - float(low_since) >= float(idle_s) else "wait"), pct
 
 
 def speakable(text, cap=None) -> str:
@@ -82,7 +117,14 @@ class Voice:
         self.last = 0.0
         self.speaking = False
         self.sr_out = SR
+        self._fast_mode = None
+        self._last_fast = None
         self._lock = asyncio.Lock()
+        self._start_lock = asyncio.Lock()
+        self._warm_task = None
+        self._low_since = None
+        self._health_ok = False
+        self._health_ts = 0.0
 
     @property
     def s(self):
@@ -90,6 +132,30 @@ class Voice:
 
     def url(self, p=""):
         return (self.s.get("voiceUrl") or "http://127.0.0.1:8093").rstrip("/") + p
+
+    def fast_mode(self):
+        """v3.5.2：默认 graph（SDPA + CUDA Graph，不依赖 Triton），显存不够时退回 eager（只开 SDPA）。
+        AGENT_BREEZE_MODE 可强制 compile/all/eager/off；设置里的 voiceFast 也可以写 auto/graph/compile/eager/off/all。"""
+        env = os.environ.get("AGENT_BREEZE_MODE", "").strip().lower()
+        if env in ("compile", "all", "graph", "eager", "off"):
+            return env
+        want = str(self.s.get("voiceFast") or "auto").strip().lower()
+        if want in ("compile", "all", "graph", "eager", "off"):
+            return want
+        v = M.vram_info or {}
+        try:
+            total = float(v["total"])
+            free = total - float(v["used"])
+        except Exception:
+            total = free = None
+        if free is None:
+            return "graph"
+        # 刚停掉服务时显存可能还没释放完；按总显存和“底座可以卸”的余量判断，
+        # 不要因为这一两秒的空窗就退回 eager（eager 一进一出会让第一句又慢回去）。
+        base_can_free = 2.2 if M.server.alive() else 0.0
+        if total is not None and total >= NEED_GB + 4.0 and free + base_can_free >= NEED_GB:
+            return "graph"
+        return "eager"
 
     def folder(self):
         v = str(self.s.get("voiceDir") or "").strip().strip('"')
@@ -139,13 +205,18 @@ class Voice:
         d = self.folder()
         return d if d and d.is_dir() else CODE if CODE.is_dir() else paths.ROOT
 
-    async def health(self):
+    async def health(self, fresh=False):
+        # Breeze 只有一个推理 worker；生成时 /v1/model 可能排队。缓存 10 秒，
+        # 避免每次朗读前的 ensure、每次状态查询都多等一个 2 秒超时。
+        if not fresh and time.time() - self._health_ts < 10:
+            return self._health_ok
         try:
             async with httpx.AsyncClient(timeout=2) as c:
                 r = await c.get(self.url("/v1/model"))
             ok = r.status_code == 200
         except Exception:
             ok = False
+        self._health_ok, self._health_ts = ok, time.time()
         if ok:
             db.kv_set("voice_seen", time.time())
         return ok
@@ -153,8 +224,28 @@ class Voice:
     def configured(self):
         return bool(self.cmd()) or (not self.folder() and time.time() - float(db.kv_get("voice_seen") or 0) < 30 * 86400)
 
+    async def warm(self):
+        """v3.5.2：用户一开始说话/确定要朗读时，在后台把 Breeze 加载好；不常驻，闲置照旧关。"""
+        if await self.health():
+            return
+        if self._warm_task and not self._warm_task.done():
+            return
+
+        async def _run():
+            try:
+                await self.ensure()
+            except Exception:
+                pass
+
+        self._warm_task = asyncio.create_task(_run())
+
     async def ensure(self, timeout=600):
         t0 = time.time()
+        # 自己拉起的服务进程还活着、上次已经健康过：朗读前不再多打一次 /v1/model；
+        # Breeze 只有一个推理 worker，健康检查也会排队。
+        if self.proc.alive() and self._health_ok:
+            self.proc.mark_ready((time.time() - t0) * 1000, "语音服务")
+            return
         if await self.health():
             self.proc.mark_ready((time.time() - t0) * 1000, "语音服务")
             return
@@ -163,27 +254,44 @@ class Voice:
             raise VoiceError("说话的声音还没装：到 设置 › 整备 点「配音、语音、配乐」那张卡片的一键装好（或者只装 Breeze TTS 2 那一项）")
         if M.yielding:
             raise VoiceError(f"现在在让路（{M.yield_reason or '显存不够'}），先不开口")
-        if not self.proc.alive():
-            v = M.vram_info or {}
-            if v.get("total") and v.get("used") is not None and v["total"] - v["used"] < NEED_GB:
-                await M.unload("base")                      # 显存不够 7.7 GB：先把底座卸了（用到时它自己装回来）
-                if tts.T.proc.alive() and not tts.T.busy():
-                    tts.T.stop("给语音让显存")
-            env = M.env()
-            env.update(PYTHONUTF8="1")
-            self.proc.start(cmd, self.cwd(), env, "语音朗读")
-            self.last = time.time()
-            feed.add("语音（Breeze TTS 2）启动中：装模型要几十秒（日志 data\\logs\\voice.log）", "info", job=JOBN)
-        while time.time() - t0 < timeout:
-            await asyncio.sleep(1.5)
+        async with self._start_lock:
             if await self.health():
                 self.proc.mark_ready((time.time() - t0) * 1000, "语音服务")
                 return
             if not self.proc.alive():
-                raise VoiceError("语音服务没起来（看 data\\logs\\voice.log）：\n" + self.proc.tail(6))
+                mode = self.fast_mode()
+                if str(self.s.get("voiceFast") or "auto").strip().lower() == "auto" and self._last_fast and mode == "eager":
+                    mode = self._last_fast          # 刚停服务时的显存空窗，不要误退回 eager
+                self._fast_mode = self._last_fast = mode
+                need = NEED_GB if mode in ("graph", "compile", "all") else 8.0
+                v = M.vram_info or {}
+                if v.get("total") and v.get("used") is not None and v["total"] - v["used"] < need:
+                    await M.unload("base")                  # 显存不够：先把底座卸了（用到时它自己装回来）
+                    if tts.T.proc.alive() and not tts.T.busy():
+                        tts.T.stop("给语音让显存")
+                env = M.env()
+                env.update(PYTHONUTF8="1", AGENT_BREEZE_MODE=mode)
+                if mode == "all":
+                    env["TORCHINDUCTOR_USE_STATIC_CUDA_LAUNCHER"] = "0"
+                self.proc.start(cmd, self.cwd(), env, "语音朗读")
+                self.last = time.time()
+                feed.add(f"语音（Breeze TTS 2）启动中：{mode} 模式，模型+预热约二十秒（日志 data\\logs\\voice.log）", "info", job=JOBN)
+            while time.time() - t0 < timeout:
+                await asyncio.sleep(1.5)
+                if await self.health(fresh=True):
+                    self.proc.mark_ready((time.time() - t0) * 1000, "语音服务")
+                    return
+                if not self.proc.alive():
+                    raise VoiceError("语音服务没起来（看 data\\logs\\voice.log）：\n" + self.proc.tail(6))
         raise VoiceError("语音服务启动超时（看 data\\logs\\voice.log）")
 
     def stop(self, why=""):
+        self._fast_mode = None
+        self._low_since = None
+        self._health_ok, self._health_ts = False, 0.0
+        if self._warm_task and not self._warm_task.done():
+            self._warm_task.cancel()
+        self._warm_task = None
         if self.proc.alive():
             kids = []
             try:
@@ -199,15 +307,65 @@ class Voice:
                     pass
             feed.add(f"语音服务关了：{why}，显存还回去了" if why else "语音服务关了", "info", job=JOBN)
 
-    def tick(self):
+    def _breeze_gb(self):
+        """Breeze 自己现在占多少显存（GB）；读不到就按启动时估的 10.5。"""
         if not self.proc.alive():
+            return 0.0
+        try:
+            from . import hw
+            pids = {self.proc.p.pid}
+            try:
+                import psutil
+                pids.update(c.pid for c in psutil.Process(self.proc.p.pid).children(recursive=True))
+            except Exception:
+                pass
+            v = hw.vram_of(pids)
+            if v is not None:
+                return max(0.0, float(v))
+        except Exception:
+            pass
+        return NEED_GB
+
+    def tick(self):
+        """v3.5.2 显存策略（不按闲置分钟）：
+        - Breeze 常驻；**扣除 Breeze 自己后**，剩下的显存占用超过 80% 时立刻卸载；
+        - 卸载后，剩下的占用低于 50% 连续 voiceIdle 分钟（默认 10）就自动加载回来；
+        - 关掉语音、改用本地配音、打游戏让路时仍然释放。
+        用「除 Breeze 以外的可用显存」算：Breeze 自己就占约 10GB，用总占用会刚加载就超过 80% 自己卸自己。"""
+        if not self.s.get("voiceOn") or self.engine() == "local":
+            self._low_since = None
+            self.stop("语音关了或改用本地配音")
             return
         if M.yielding:
+            self._low_since = None
             self.stop(M.yield_reason or "显存让路")
             return
-        idle = float(self.s.get("voiceIdle") or 10) * 60
-        if not self.speaking and time.time() - (self.last or self.proc.started) > idle:
-            self.stop(f"闲置 {int(idle // 60)} 分钟")
+        v = M.vram_info or {}
+        total, used = v.get("total"), v.get("used")
+        if not total or used is None:
+            return
+        breeze = self._breeze_gb() if self.proc.alive() else 0.0
+        idle_s = float(self.s.get("voiceIdle") if self.s.get("voiceIdle") is not None else 10) * 60
+        action, pct = vram_policy(used, total, breeze, self.proc.alive(), self._low_since, idle_s=idle_s)
+        if action == "keep":
+            return
+        if action == "stop":
+            self._low_since = None
+            self.stop(f"显存占用 {pct:.0f}%（超过 80%）")
+            return
+        if action == "hold":
+            self._low_since = None
+            return
+        if action == "wait":
+            if self._low_since is None:
+                self._low_since = time.time()
+            return
+        if action == "load":
+            self._low_since = None
+            try:
+                asyncio.get_event_loop().create_task(self.warm())
+            except Exception:
+                pass
 
     def engine(self):
         """用谁出声：breeze（配好了）/ local（现有的本地配音，Breeze 没配好时的退路）/ none。"""
@@ -360,7 +518,7 @@ class Voice:
         return {"on": bool(self.s.get("voiceOn")), "engine": self.engine(), "want": self.s.get("voiceEngine") or "auto", "cmd": self.s.get("voiceCmd") or "",
                 "speaker": self.s.get("voiceSpeaker") or "Vivian", "up": up, "alive": self.proc.alive(), "configured": self.configured(), "url": self.url(),
                 "dir": str(d) if d else "", "dir_ok": bool(d and d.is_dir()), "python": paths.show(self.python()) if self.python() else "",
-                "model": self.model(), "can_start": bool(self.cmd()), "ref": REF.exists(), "ref_text": self.s.get("voiceRefText") or "",
+                "model": self.model(), "can_start": bool(self.cmd()), "fast": self._fast_mode or self.fast_mode(), "ref": REF.exists(), "ref_text": self.s.get("voiceRefText") or "",
                 "desc": self.s.get("voiceDesc") or "", "installed": installed(), "model_ok": model_ok(), "asr": self.asr_ok(), "asr_why": self.asr_why(), "tts_env": tts.T.env_ok(),
                 "yielding": M.yielding, "yield_reason": M.yield_reason, "auto": bool(self.s.get("voiceAuto", True)), "hands": bool(self.s.get("voiceHands", False)), "all": bool(self.s.get("voiceAll", False)),
                 "max": int(self.s.get("voiceMax") or 400), "sr": SR}
@@ -373,6 +531,15 @@ api = APIRouter()
 @api.get("/api/voice")
 async def voice_status():
     return await V.status()
+
+
+@api.post("/api/voice/warm")
+async def voice_warm():
+    """v3.5.2：用户开始说话/确定要朗读时，后台预热 Breeze；不常驻，闲置和让路照旧释放显存。"""
+    if not settings.S.get("voiceOn") or V.engine() != "breeze":
+        return {"ok": False, "msg": "现在不用 Breeze"}
+    await V.warm()
+    return {"ok": True, "fast": V.fast_mode(), "alive": V.proc.alive()}
 
 
 @api.post("/api/voice/speak")

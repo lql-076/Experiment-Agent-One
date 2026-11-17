@@ -21,7 +21,7 @@ from . import (agent, agentkit, agentstate, autostart, bgm, ccode, checks, db, d
 from .models import M
 from .qq import BOT
 
-VERSION = "3.5.1"
+VERSION = "3.5.2"
 PORT = 8765
 _bg = []
 
@@ -43,7 +43,7 @@ def _on_settings(ch):
         tts.T.stop("配音设置改了")
     if any(k in ch for k in ("bgmUrl", "bgmDir")):
         bgm.B.stop("配乐设置改了")
-    if any(k in ch for k in ("voiceUrl", "voiceDir", "voiceModel", "voicePython")):
+    if any(k in ch for k in ("voiceUrl", "voiceDir", "voiceModel", "voicePython", "voiceFast", "voiceEngine", "voiceOn")):
         voice.V.stop("语音设置改了")
     if "memDir" in ch or "useGit" in ch:
         memory.init()
@@ -66,6 +66,15 @@ def _watch(name, state, msgs):
         feed.add(text, kind, job=name)
 
 
+def _hw_sample_sync():
+    """硬件采样里有 Windows PDH/WMI 同步查询，慢的时候 3~5 秒；放到线程里跑，别卡住语音/接口。"""
+    return asyncio.run(hw.sample())
+
+
+async def _hw_sample_async():
+    return await asyncio.to_thread(_hw_sample_sync)
+
+
 async def housekeeping():
     n, last_try = 0, 0.0
     while True:
@@ -79,7 +88,7 @@ async def housekeeping():
             if n % 30 == 7 and settings.S["kevMode"] == "resident" and M.kev_installed() and not M.kevp.alive() and not M.yielding:
                 with contextlib.suppress(Exception):
                     M.start_kev()
-            data = await hw.sample()
+            data = await _hw_sample_async()
             M.tick(data)
             tts.T.tick()                          # 配音服务：让路时关掉、闲置久了关掉
             bgm.B.tick()                          # 配乐服务、语音服务（Breeze TTS 2）：一样的规矩
@@ -404,7 +413,7 @@ async def agent_restart(k: str):
 
 @app.get("/api/hw")
 async def get_hw():
-    return await hw.sample()
+    return await _hw_sample_async()
 
 
 @app.get("/api/hw/history")

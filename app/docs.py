@@ -137,6 +137,7 @@ ROUTES = {
     "/api/bgm/batch/open": "打开这一批的文件夹",
     "/api/voice": "语音的状态：听写装没装、用谁出声（Breeze TTS 2 / 本地配音顶着）、参考音频",
     "/api/voice/speak": "把一段话念出来：流式回 16 位单声道 PCM（采样率在 X-Sr 头里）；念之前去掉 Markdown、链接、代码",
+    "/api/voice/warm": "用户开始说话/确定要朗读时，后台预热 Breeze（v3.5.2）；不常驻，闲置和让路照旧释放显存",
     "/api/voice/asr": "听写：请求体是界面录的一段 WAV，回文字（本地 Qwen3-ASR，跑在配音服务里）",
     "/api/voice/ref": "说话声音的参考音频（POST 传一段 3~60 秒的 WAV、DELETE 去掉）：有它就照它的声音，没有就按音色描述造",
     "/api/voice/off": "关掉 Breeze 服务（腾显存；只停 Agent 自己开的）",

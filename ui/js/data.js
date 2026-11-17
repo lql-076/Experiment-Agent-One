@@ -190,6 +190,7 @@ var SECTIONS = [
     { k: 'voiceHands', l: '连着聊', t: 'toggle', d: false, h: '它念完自动接着听，不用再点。想停就点一下核心，或者按 Esc' },
     { k: 'voiceAll', l: '打字问的也念出来', t: 'toggle', d: false },
     { k: 'voiceEngine', l: '用什么出声', t: 'select', d: 'auto', o: [['auto', '自动（Breeze 配好了用它，没配好先用本地配音顶着）'], ['breeze', '只用 Breeze TTS 2'], ['local', '只用本地配音（Qwen3-TTS 预设音色）']] },
+    { k: 'voiceFast', l: 'Breeze 推理模式', t: 'select', d: 'auto', o: [['auto', '自动（显存够用 CUDA Graph，最快最稳）'], ['graph', 'CUDA Graph 兼容（快，约 10GB 显存）'], ['compile', '编译 + CUDA Graph（再快一点，启动约 1 分钟）'], ['eager', '兼容模式（慢，约 8GB 显存）'], ['off', '官方原样（最慢，只排查用）']], h: '改完会重启 Breeze 服务。auto 在显存不够时自动退回 eager' },
     { k: 'voiceDesc', l: '声音是什么样的（Breeze）', t: 'textarea', d: '二十岁出头的年轻女声，声音清亮温柔，语速自然，像朋友聊天', h: '没放参考音频时，Breeze 按这句描述造一个声音。放了参考音频就照参考音频来' },
     { k: 'voiceRefText', l: '参考音频里念的字', ph: '放了参考音频才用填：把那段音频里说的话原样写在这里' },
     { k: 'voiceSpeaker', l: '本地配音顶着的时候用哪个音色', t: 'select', d: 'Vivian', o: [['Vivian', 'Vivian（女声，明亮）'], ['Serena', 'Serena（女声，温柔）'], ['Uncle_Fu', 'Uncle_Fu（男声，低沉）'], ['Dylan', 'Dylan（男声，北京话）'], ['Eric', 'Eric（男声，四川话）'], ['Ryan', 'Ryan（男声，英文）']] },
@@ -197,7 +198,7 @@ var SECTIONS = [
     { k: 'voiceUrl', l: 'Breeze 服务的地址', d: 'http://127.0.0.1:8093', h: '一般不用改。在 设置 › 整备 一键装好以后，Agent 用到时自己在本机这个端口把它开起来（配音环境里跑，不用 WSL）' },
     { k: 'voiceCmd', l: '自己的启动命令（一般不用填）', ph: '不填 = 用整备里一键装好的那套', h: '只有你想用别处装的一份（比如 WSL 里的）才填，填了就按这条命令启动' },
     { k: 'hfToken', l: 'Hugging Face 令牌（一般不用填）', t: 'secret', h: '只有一键装 Breeze TTS 2 时提示「要登录才给下」才填：先在 huggingface.co 打开 BreezeBlue/breeze-tts-2 点同意许可证，再建一个 Read 令牌贴在这里。加密保存在本机，只在下载时用' },
-    { k: 'voiceIdle', l: 'Breeze 闲多久关掉', t: 'number', u: '分钟', d: 10, h: '只关 Agent 自己开的。Breeze 大约占 7.7GB 显存' }
+    { k: 'voiceIdle', l: '低于 50% 多久自动加载', t: 'number', u: '分钟', d: 10, h: 'Breeze 常驻；除 Breeze 以外的显存占用超过 80% 会立刻卸载，低于 50% 连续这么多分钟再自动加载回来。关掉语音、改用本地配音、打游戏让路也会释放' }
   ] },
   { id: 'bgm', name: '配乐', custom: 'bgm', desc: '本地的 Stable Audio 3 Medium 出纯音乐，不花钱、不出本机。在 设置 › 整备 一键装好就能用；左边「配乐」窗口里手动出（能批量），Agent 做视频时也会自己用。', fields: [
     { k: 'bgmDir', l: '自己转换好的 Stable Audio 3 模型文件夹（一般不用填）', ph: '不填 = 用整备里一键装好的那一份（models\\bgm\\stable-audio-3-medium）', h: '填了它，Agent 用到时自己把配乐服务开起来、闲着自己关、打游戏让路。不填就照下面的地址连（你自己开着）' },

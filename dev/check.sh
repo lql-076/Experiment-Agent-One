@@ -51,6 +51,7 @@ step "硬件读数、显存让路、硬盘、本地模型环境自检" "$PY" dev
 step "开机自检缓冲、后台重查、上次的子进程、意外退出记录" "$PY" dev/test_startup.py
 step "窗口生命周期、主题首帧、UI 状态增量合并" "$PY" dev/test_window.py
 step "行为遥测：按月分片、脱敏、筛选、前端批量上报" "$PY" dev/test_telemetry.py
+step "Breeze 显存策略：80% 卸载、50% 低 10 分钟重载" "$PY" dev/test_voice_policy.py
 step "日志归档：重要事项永久备份、180/365 天、压缩清理" "$PY" dev/test_archive.py
 step "游戏帧数统计" "$PY" dev/test_fps.py
 step "游戏内显示的逻辑" "$PY" dev/test_osd.py

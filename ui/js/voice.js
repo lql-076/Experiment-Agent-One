@@ -15,6 +15,12 @@ function voiceLoad(force) {
   VOICE.ts = Date.now();
   return api('GET', '/api/voice', null, 6000).then(function (j) { VOICE.st = j; voiceBarSync(); if (typeof coreSync === 'function') coreSync(); return j; }).catch(function () { return VOICE.st; });
 }
+function voiceWarm() {
+  // v3.5.2：用户一开始说话（或确定要朗读）就后台加载 Breeze，装模型的时间藏在说话/思考里；
+  // 不常驻：闲置 voiceIdle 分钟、显存让路时 Voice.tick 会关掉它。
+  if (!useLive() || !VOICE.st || !VOICE.st.on || VOICE.st.engine !== 'breeze') return;
+  try { fetchT('/api/voice/warm', { method: 'POST', headers: { 'X-Agent': '1' }, body: '{}' }, 3000).catch(function () {}); } catch (e) {}
+}
 function voiceOn() { return !!(useLive() && VOICE.st && VOICE.st.on); }                      // 以后端说的为准：设置是在另一个窗口里改的
 function voiceReady() { return voiceOn() && !!(VOICE.st && VOICE.st.asr); }
 function voiceWillSpeak() { return voiceOn() && VOICE.st.auto !== false && !!(VOICE.st.engine && VOICE.st.engine !== 'none'); }
@@ -48,6 +54,7 @@ function voiceToggle() {
 }
 function voiceStart() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast('这个窗口拿不到麦克风（需要 WebView2 / 浏览器允许）', 6000); return; }
+  voiceWarm();
   voiceHush();
   navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(function (stream) {
     var AC = window.AudioContext || window.webkitAudioContext, ac = new AC();
@@ -137,7 +144,8 @@ function voiceHush() {                                    // 别念了
   if (VOICE.mode === 'speak') voiceMode('');
 }
 /* 把一段话念出来：后端一块一块回 16 位 PCM，这边接一块排一块（不等整段）。
-   v3.5：留 180ms 预缓冲，后续每块至少提前 150ms 排期；记录 TTFA、断流次数/停顿、RTF，进遥测。 */
+   v3.5：留 180ms 预缓冲，后续每块至少提前 150ms 排期；记录 TTFA、断流次数/停顿、RTF，进遥测。
+   v3.5.2：Breeze 走 CUDA Graph 后 RTF 约 1，第一块到达后再留 1 秒预缓冲、每块提前 350ms 排期；本地配音仍是原来的短缓冲。 */
 function voiceSay(text, thenListen) {
   voiceHush();
   if (!useLive() || !String(text || '').trim()) return Promise.resolve(false);
@@ -153,7 +161,8 @@ function voiceSay(text, thenListen) {
     if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { throw new Error(j.detail || ('出错了 ' + r.status)); });
     var sr = +r.headers.get('X-Sr') || 24000, AC = window.AudioContext || window.webkitAudioContext, ctx = new AC();
     try { ctx.resume(); } catch (e) {}
-    var P = { ctx: ctx, at: ctx.currentTime + .18, left: null, an: ctx.createAnalyser(), n: 0, ended: false,
+    var pre = engine === 'breeze' ? 1.0 : .18, lead = engine === 'breeze' ? .35 : .15;
+    var P = { ctx: ctx, at: 0, left: null, an: ctx.createAnalyser(), n: 0, ended: false,
       t0: t0, firstAt: 0, chunks: 0, lastChunkAt: 0, maxChunkGap: 0, underruns: 0, stallMs: 0, maxSchedGap: 0,
       sr: sr, engine: engine, engineName: engineName, textLen: textLen, trace: tr, reported: false };
     VOICE.play = P;
@@ -186,6 +195,7 @@ function voiceSay(text, thenListen) {
       P.lastChunkAt = now; P.chunks += 1;
       if (!P.firstAt) {
         P.firstAt = now;
+        P.at = ctx.currentTime + pre;                   // v3.5.2：预缓冲从第一块到达后才开始算，不能把 TTFA 吃掉
         var ttfa = now - P.t0;
         try { if (typeof TEL !== 'undefined') TEL.event('voice', 'first_chunk', P.engineName, ttfa > 2500 ? 'warn' : 'ok', Math.round(ttfa),
           { ttfa_ms: Math.round(ttfa), text_len: P.textLen, engine: P.engine }, '首包 ' + Math.round(ttfa) + 'ms · ' + P.engineName, P.trace); } catch (e) {}
@@ -200,7 +210,7 @@ function voiceSay(text, thenListen) {
         var gap = (ct - P.at) * 1000;
         P.underruns += 1; P.stallMs += gap; P.maxSchedGap = Math.max(P.maxSchedGap, gap);
       }
-      P.at = Math.max(P.at, ct + .15);                      // v3.5：至少提前 150ms 排期，避免贴边导致断续
+      P.at = Math.max(P.at, ct + lead);                    // v3.5.2：Breeze 提前 350ms 排期，本地配音仍 150ms
       var src = ctx.createBufferSource(); src.buffer = buf; src.connect(P.an);
       src.start(P.at); P.at += buf.duration; P.n += n;
     };

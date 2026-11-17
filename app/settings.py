@@ -74,6 +74,7 @@ DEFAULTS = {
     "voiceDesc": "二十岁出头的年轻女声，声音清亮温柔，语速自然，像朋友聊天", "voiceCfg": 4.0, "voiceSeed": 20261111,
     "voiceRefText": "", "voiceMax": 400, "voiceAuto": True, "voiceHands": False, "voiceAll": False,   # Auto = 说着问的念出来；Hands = 念完接着听；All = 打字问的也念
     "voiceEngine": "auto", "voiceCmd": "", "voiceSpeaker": "Vivian",   # auto = Breeze 配好了用它，没配好用本地配音的预设音色顶着；voiceCmd = 自己写的启动命令（比如用 WSL）
+    "voiceFast": "auto",      # v3.5.2：Breeze 推理模式 auto/graph/all/eager/off；auto=显存够走 CUDA Graph 兼容模式
     # 分流旋钮
     "take": 60, "fresh": 40, "clLine": 50, "daily": 3, "quiet": False,
     "privLocal": True, "privWords": "", "voteEmbed": 50, "voteAuto": True,

@@ -511,6 +511,7 @@ function chatAsk(text, atts, undo, opt) {
   if (CHAT.force !== 'auto') body.force = CHAT.force;
   if (CHAT.engine !== 'auto' && ccOn()) body.engine = CHAT.engine;
   if (opt && opt.voice) { body.voice = true; CHAT.pending.voice = true; }
+  if (typeof voiceWarm === 'function' && (CHAT.pending.voice || (VOICE.st && VOICE.st.all))) voiceWarm();
   chatBarSync();
   NOW.sel = null; NOW.detail = false;
   api('POST', '/api/chat', body, 60000).then(function (j) { CHAT.pending.token = j.token; setTimeout(chatPoll, 300); })
