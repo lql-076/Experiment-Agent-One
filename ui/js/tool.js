@@ -123,7 +123,9 @@ function winCmd(s) {
   var c = null; try { c = typeof s === 'string' ? JSON.parse(s) : s; } catch (e) { return; }
   if (!c) return;
   if (c.theme && c.theme !== S.set.theme && hasTheme(c.theme)) {
-    S.set.theme = c.theme; root.dataset.theme = c.theme; save(); syncTone();
+    S.set.theme = c.theme; root.dataset.theme = c.theme;
+    try { localStorage.setItem('agent_theme', c.theme); } catch (e) {}
+    save(); if (typeof saveUI === 'function') saveUI({ theme: c.theme }); syncTone();
     if (typeof renderResident === 'function' && !TOOL) renderResident();
     $$('[data-theme-pick]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.themePick === c.theme); });
     $$('[data-tone]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.tone === (c.theme === 'light' ? 'light' : 'dark')); });

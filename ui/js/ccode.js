@@ -96,6 +96,7 @@ function ccToggle() {
   var on = !(CC.st && CC.st.on);
   api('PUT', '/api/ccode/switch', { on: on }).then(function (j) {
     if (CC.st) CC.st.on = on;
+    if (typeof saveUI === 'function') saveUI({ ccodeOn: on });
     toast(on ? 'Claude Code 开了：可以交任务了' : 'Claude Code 关了');
     ccodeLoad(true);
   }).catch(function (e) { toast('开关没改成：' + e.message, 5000); });

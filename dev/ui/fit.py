@@ -55,6 +55,11 @@ def start(p, url):
     p.wait_for_timeout(1500)
     p.wait_for_function("!S.checking", timeout=30000)
     p.evaluate("var b=document.getElementById('boot'); if (b.classList.contains('on')) b.click()")
+    # 等首页真实状态/进展先到：数据加载完再看「一屏不闪」，避免把一次正常的内容填充当成来回闪
+    try:
+        p.wait_for_function("typeof D !== 'undefined' && (D.state || S.set.demo)", timeout=15000)
+    except Exception:
+        pass
 
 
 with sync_playwright() as pw:

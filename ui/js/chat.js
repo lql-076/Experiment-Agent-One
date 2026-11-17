@@ -4,7 +4,9 @@
    点它，主页上面「现在」那块停在这条、打开「细节」（分数、为什么、每一步、来源、判错了、换它重做）。
    输入框右边「交给：自动」能指定这一条交给谁。发消息是异步的：先拿 token，每半秒问一次处理到哪了，主页「现在」跟着走。
    下面的 Agent 状态仪表盘（agentHTML 这些）v2.0 起主页不用了，主页的「Agent 状态」见 home.js；eventSideHTML 是主页「细节」的内容。 */
-var CHAT = { sel: null, tab: 'status', pending: null, more: null, dashMin: false, stick: true, sig: '', atts: [], force: 'auto', engine: 'auto', open: false, tall: false, caps: null, capsTs: 0, barSig: '' };
+var CHAT = { sel: null, tab: 'status', pending: null, more: null, dashMin: false, stick: true, sig: '', atts: [], force: (U.chatForce || 'auto'), engine: (U.chatEngine || 'auto'), open: false, tall: !!U.chatTall, caps: null, capsTs: 0, barSig: '' };
+if (['auto', 'local', 'ds', 'cl'].indexOf(CHAT.force) < 0) CHAT.force = 'auto';
+if (['auto', 'cc', 'ds'].indexOf(CHAT.engine) < 0) CHAT.engine = 'auto';
 var MIC_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/></svg>';
 var SPEAK_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3l4-3v11l-4-3H4z"/><path d="M15 8.5a5 5 0 0 1 0 7M17.5 6a8.5 8.5 0 0 1 0 12"/></svg>';
 var CODE_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"/><path d="M7 9.5l2.5 2L7 13.5M11.5 13.5H16"/></svg>';
@@ -687,7 +689,7 @@ function chatClick(ev) {
   }
   else if (t.id === 'chatClose') chatClose();
   else if (t.id === 'cOpen') chatToggle();
-  else if (t.id === 'chatTall') { CHAT.tall = !CHAT.tall; $('#view-chat').classList.toggle('tall', CHAT.tall); t.textContent = CHAT.tall ? '缩回一半' : '拉高'; t.setAttribute('aria-pressed', CHAT.tall); }
+  else if (t.id === 'chatTall') { CHAT.tall = !CHAT.tall; $('#view-chat').classList.toggle('tall', CHAT.tall); t.textContent = CHAT.tall ? '缩回一半' : '拉高'; t.setAttribute('aria-pressed', CHAT.tall); if (typeof saveUI === 'function') saveUI({ chatTall: CHAT.tall }); }
   else if (t.id === 'cStop') { var be = chatBusyEv(); if (be && be.id) evStop(be.id, null); else toast('刚发出去，稍等一下再停'); }
   else if (t.id === 'cMic') { if (typeof voiceToggle === 'function') voiceToggle(); }
   else if (t.id === 'cCC') { if (typeof openTool === 'function') openTool('ccode'); else toast('工作台只在桌面窗口里能开'); }
@@ -697,6 +699,7 @@ function chatClick(ev) {
       var on = !voiceAutoOn();
       return api('PUT', '/api/settings', { voiceAuto: on }).then(function () { return voiceLoad(true); }).then(function () {
         t.classList.toggle('on', voiceAutoOn()); t.setAttribute('aria-pressed', voiceAutoOn() ? 'true' : 'false');
+        if (typeof saveUI === 'function') saveUI({ voiceAuto: on });
         toast(voiceAutoOn() ? '回答好了会自动念' : '自动播报关了');
       });
     }).catch(function (e) { toast('改不了自动播报：' + e.message, 5000); });
@@ -711,12 +714,14 @@ function chatClick(ev) {
   }
   else if (t.dataset.engine) {
     CHAT.engine = t.dataset.engine;
+    if (typeof saveUI === 'function') saveUI({ chatEngine: CHAT.engine });
     $$('#cRoute [data-engine]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.engine === CHAT.engine); });
     var fe = $('#cForce'); if (fe) { fe.textContent = forceLabel(); fe.classList.toggle('set', CHAT.force !== 'auto' || CHAT.engine !== 'auto'); }
   }
   else if (t.id === 'cForce') { CHAT.routeOpen = !CHAT.routeOpen; var r = $('#cRoute'); if (r) r.hidden = !CHAT.routeOpen; t.setAttribute('aria-expanded', !!CHAT.routeOpen); }
   else if (t.dataset.force) {
     CHAT.force = t.dataset.force; CHAT.routeOpen = false;
+    if (typeof saveUI === 'function') saveUI({ chatForce: CHAT.force });
     $$('#cRoute [data-force]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.force === CHAT.force); });
     $('#cRoute').hidden = true; var f = $('#cForce'); if (f) { f.textContent = forceLabel(); f.setAttribute('aria-expanded', 'false'); f.classList.toggle('set', CHAT.force !== 'auto' || CHAT.engine !== 'auto'); }
   }

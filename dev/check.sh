@@ -18,6 +18,7 @@ step "界面 · 演示模式" "$PY" dev/ui_smoke.py dev/.run/shots-demo --demo
 step "重新自检窗口 · 演示模式" "$PY" dev/ui/recheck.py dev/.run/shots-demo --demo
 step "起测试环境" "$DEV/serve.sh" start
 step "界面 · 连后端" "$PY" dev/ui_smoke.py dev/.run/shots
+step "主题首帧、hydration lock、UI 状态持久化" "$PY" dev/ui/state.py
 step "说明页" "$PY" dev/ui/docs.py dev/.run/shots
 step "说明页树状图" "$PY" dev/ui/tree.py dev/.run/shots
 step "重新自检窗口 · 连后端" "$PY" dev/ui/recheck.py dev/.run/shots
@@ -48,6 +49,7 @@ step "一页一屏放下（不靠滚轮）" "$PY" dev/ui/fit.py dev/.run/shots
 step "Kev 权重在不在本机" "$PY" dev/test_kev.py
 step "硬件读数、显存让路、硬盘、本地模型环境自检" "$PY" dev/test_hw.py
 step "开机自检缓冲、后台重查、上次的子进程、意外退出记录" "$PY" dev/test_startup.py
+step "窗口生命周期、主题首帧、UI 状态增量合并" "$PY" dev/test_window.py
 step "行为遥测：按月分片、脱敏、筛选、前端批量上报" "$PY" dev/test_telemetry.py
 step "日志归档：重要事项永久备份、180/365 天、压缩清理" "$PY" dev/test_archive.py
 step "游戏帧数统计" "$PY" dev/test_fps.py

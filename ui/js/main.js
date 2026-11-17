@@ -28,12 +28,53 @@ function refreshChecks() {
     if ($('#setupCard')) setupPoll();
   }, function () {});
 }
+function applyUIState() {
+  /* 首次 GET 回来的 uiState 也要落到各页状态上：即使用户清过浏览器缓存，也能恢复上次的筛选/音色/标签。 */
+  if (SECTIONS.some(function (s) { return s.id === U.settingsSec; })) S.sec = U.settingsSec;
+  if (typeof MON !== 'undefined') {
+    if (typeof U.monitorTab === 'string' && U.monitorTab) MON.logName = U.monitorTab;
+    if (typeof U.monitorCat === 'string') MON.traceCat = U.monitorCat;
+    if (typeof U.monitorBad === 'boolean') MON.traceBad = U.monitorBad;
+    if (typeof U.monitorFollow === 'boolean') MON.follow = U.monitorFollow;
+  }
+  if (typeof CHAT !== 'undefined') {
+    if (['auto', 'local', 'ds', 'cl'].indexOf(U.chatForce) >= 0) CHAT.force = U.chatForce;
+    if (['auto', 'cc', 'ds'].indexOf(U.chatEngine) >= 0) CHAT.engine = U.chatEngine;
+    if (typeof U.chatTall === 'boolean') CHAT.tall = U.chatTall;
+  }
+  if (typeof IMG !== 'undefined') {
+    if (IMG_TABS.some(function (x) { return x[0] === U.imgTab; })) IMG.tab = U.imgTab;
+    if (typeof U.imgRatio === 'string' && U.imgRatio) IMG.ratio = U.imgRatio;
+    if ([1, 2, 3, 4].indexOf(+U.imgCount) >= 0) IMG.cnt = +U.imgCount;
+    if (typeof U.imgTrans === 'boolean') IMG.trans = U.imgTrans;
+  }
+  if (typeof TTS !== 'undefined' && TTS.form && U.tts && typeof U.tts === 'object') Object.assign(TTS.form, U.tts);
+  if (typeof BGM !== 'undefined') {
+    if (U.bgmMode === 'one' || U.bgmMode === 'batch') BGM.mode = U.bgmMode;
+    if (+U.bgmSeconds >= 10 && +U.bgmSeconds <= 240) BGM.seconds = +U.bgmSeconds;
+    if (typeof U.bgmPrompt === 'string') BGM.prompt = U.bgmPrompt.slice(0, 300);
+    if (typeof U.bgmPreset === 'number') BGM.preset = U.bgmPreset;
+  }
+  if (typeof DOCS !== 'undefined') {
+    if (typeof U.docsCur === 'string') DOCS.cur = U.docsCur;
+    if (U.docsMode === 'tree' || U.docsMode === 'text') DOCS.mode = U.docsMode;
+  }
+}
 function loadServer() {
   return api('GET', '/api/settings', null, 4000).then(function (j) {
     var keepDemo = S.set.demo && stored.liveSeen ? S.set.demo : false;
+    var localTheme = '';
+    try { localTheme = localStorage.getItem('agent_theme') || ''; } catch (e) {}
+    hydrateUI(j.settings && j.settings.uiState);
     S.set = Object.assign({}, DEFAULTS, j.settings, { demo: keepDemo });
+    if (localTheme === 'light' || localTheme === 'dark') S.set.theme = localTheme;   // 本地刚切的优先，避免后端慢半拍把浅色打回深色
+    S.set.uiState = U;
+    applyUIState();
     SECRETS = j.secrets || {}; PLACES = j.places || null; DS_MODELS = j.ds_models || null;
     var sf = j.safety || {}; S.safety = sf;
+    if (!hasTheme(S.set.theme)) S.set.theme = 'dark';
+    try { localStorage.setItem('agent_theme', S.set.theme); } catch (e) {}
+    markHydrated();                       // 首次 GET 成功之前，pushSet 只排队不写后端
     try { var st = loadStore(); st.liveSeen = true; st.set = S.set; localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {}
   });
 }
@@ -49,6 +90,7 @@ function start() {
   syncRouteNames();
   if (!hasTheme(S.set.theme)) S.set.theme = THEMES[0].id;
   root.dataset.theme = S.set.theme;
+  try { localStorage.setItem('agent_theme', S.set.theme); } catch (e) {}
   applyLook();
   applyOrient(false);
   syncFull();

@@ -283,8 +283,44 @@ var SECTIONS = [
   ] },
   { id: 'data', name: '数据', desc: '设置、记录、记忆都只在这台电脑上。', custom: 'data' }
 ];
-var DEFAULTS = { theme: 'dark', demo: true, osdItems: 'fps,low1,cpu,gpu,vram,power' };
+var DEFAULTS = { theme: 'dark', demo: true, osdItems: 'fps,low1,cpu,gpu,vram,power', uiState: {} };
 SECTIONS.forEach(function (sec) { (sec.fields || []).forEach(function (f) { if (f.k && f.t !== 'secret') DEFAULTS[f.k] = f.d === undefined ? '' : f.d; }); });
+
+/* ================= 界面操作状态（v3.5.1）=================
+   和 settings.json 里的业务设置分开：这里只放「上次看到哪、选了哪个」这类操作偏好，
+   不进聊天/文案/提醒原文。localStorage 先保住（关窗、断网都不丢），再防抖合并进 settings.uiState。 */
+var UI_KEY = 'agent_ui.v1';
+function loadUI() { try { var d = JSON.parse(localStorage.getItem(UI_KEY)); return d && typeof d === 'object' ? d : {}; } catch (e) { return {}; } }
+var U = loadUI();
+var uiPending = {}, uiT = null, HYDRATED = false;
+function uiMerge(base, patch) {
+  var out = {}, k;
+  base = base && typeof base === 'object' ? base : {};
+  for (k in base) if (Object.prototype.hasOwnProperty.call(base, k)) out[k] = base[k];
+  patch = patch && typeof patch === 'object' ? patch : {};
+  for (k in patch) {
+    if (!Object.prototype.hasOwnProperty.call(patch, k)) continue;
+    out[k] = patch[k] && typeof patch[k] === 'object' && !Array.isArray(patch[k])
+      ? uiMerge(out[k], patch[k]) : patch[k];
+  }
+  return out;
+}
+function flushUI() {
+  if (!Object.keys(uiPending).length) return;
+  var p = uiPending; uiPending = {}; clearTimeout(uiT); uiT = null;
+  try { localStorage.setItem(UI_KEY, JSON.stringify(U)); } catch (e) { /* 存不了就算了 */ }
+  if (typeof pushSet === 'function') pushSet({ uiState: p });
+  try { if (typeof TEL !== 'undefined') TEL.event('ui', 'state_save', '界面状态', 'ok', 0, { keys: Object.keys(p).slice(0, 10).join(',') }, '界面操作状态已保存'); } catch (e) {}
+}
+function saveUI(patch) {
+  if (!patch) return;
+  U = uiMerge(U, patch);
+  uiPending = uiMerge(uiPending, patch);
+  clearTimeout(uiT); uiT = setTimeout(flushUI, 300);
+}
+function hydrateUI(server) { if (server && typeof server === 'object') { U = uiMerge(server, U); } return U; }
+window.addEventListener('pagehide', flushUI);
+window.addEventListener('beforeunload', flushUI);
 
 /* ================= 状态 ================= */
 var KEY = 'agentShell.v3';
@@ -294,7 +330,7 @@ var S = {
   set: Object.assign({}, DEFAULTS, stored.set || {}),
   manual: stored.manual || {}, safety: stored.safety || {}, secret: {},
   check: {}, lastCheck: null, checking: false,
-  view: 'home', sec: 'prep', selId: null, filter: 'all', fix: {}, bsel: -1, done: {}, resetArm: false
+  view: 'home', sec: U.settingsSec || 'prep', selId: null, filter: 'all', fix: {}, bsel: -1, done: {}, resetArm: false
 };
 var LIVE = false, SECRETS = {};
 var D = { state: null, events: [], brains: null, report: null, reminders: [], sig: {} };

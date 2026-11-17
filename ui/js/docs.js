@@ -3,8 +3,9 @@
    - 架构图（docs/AI文档/架构）：默认只画树状图（每篇开头的 mermaid 段，tree.js 画），总览再加一张实时架构图；能切到文字版。
    - 操作手册、更新记录：照常显示文字。
    文档是后端从 docs 文件夹读的；AI文档/当前结构.md 每次启动按代码重写，不会过时。 */
-var DOCS = { list: null, cur: null, doc: null, mode: 'tree', timer: 0 };
-try { DOCS.cur = localStorage.getItem('agentDocs.cur') || null; DOCS.mode = localStorage.getItem('agentDocs.mode') || 'tree'; } catch (e) {}
+var DOCS = { list: null, cur: (U.docsCur || null), doc: null, mode: (U.docsMode || 'tree'), timer: 0 };
+try { if (!DOCS.cur) DOCS.cur = localStorage.getItem('agentDocs.cur') || null; if (!U.docsMode) DOCS.mode = localStorage.getItem('agentDocs.mode') || 'tree'; } catch (e) {}
+if (DOCS.mode !== 'tree' && DOCS.mode !== 'text') DOCS.mode = 'tree';
 function isArch(rel) { return /^AI文档\/架构\//.test(rel || ''); }
 
 /* ---------- 一个够用的 Markdown 渲染：标题、段落、列表、表格、代码、引用、链接、粗体 ---------- */
@@ -152,8 +153,8 @@ function renderDocs() {
       '<div class="hc" style="margin-top:1rem;min-height:0"><div class="hc-h"><span class="label">整体架构（演示）</span></div><div class="live-arch">' + archSVG([]) + '</div></div></div>';
     return;
   }
-  v.innerHTML = '<div class="settings docs"><nav class="snav" id="docNav">' + (DOCS.list ? docsNav() : '<div class="cap">读取中…</div>') + '</nav>' +
-    '<article class="sbody md" id="docBody">' + (DOCS.doc ? docBodyHTML() : '<div class="cap">读取中…</div>') + '</article></div>';
+  v.innerHTML = '<div class="settings docs"><nav class="snav" id="docNav">' + (DOCS.list ? docsNav() : '<div class="cap">正在读取目录……</div>') + '</nav>' +
+    '<article class="sbody md" id="docBody">' + (DOCS.doc ? docBodyHTML() : '<div class="cap">正在读取说明文档，稍等……<br>左边会出现操作手册、架构图和更新记录。</div>') + '</article></div>';
   if (DOCS.doc) { drawTrees($('#docBody')); fillLiveArch(); }
   if (!DOCS.timer) DOCS.timer = setInterval(docsLiveTick, 5000);
   api('GET', '/api/docs', null, 8000).then(function (j) {
@@ -178,6 +179,7 @@ function showDoc(scrollTop) {
 function openDoc(rel, hash) {
   if (!rel) return;
   DOCS.cur = rel; try { localStorage.setItem('agentDocs.cur', rel); } catch (e) {}
+  if (typeof saveUI === 'function') saveUI({ docsCur: rel });
   $$('#docNav [data-doc]').forEach(function (b) { b.setAttribute('aria-current', b.dataset.doc === rel ? 'page' : 'false'); });
   api('GET', '/api/docs/' + rel.split('/').map(encodeURIComponent).join('/'), null, 8000).then(function (d) {
     DOCS.doc = d;
@@ -190,7 +192,7 @@ $('#view-docs').addEventListener('click', function (ev) {
   var b = ev.target.closest('[data-doc]');
   if (b) { openDoc(b.dataset.doc); return; }
   var m = ev.target.closest('[data-doc-mode]');
-  if (m) { DOCS.mode = m.dataset.docMode; try { localStorage.setItem('agentDocs.mode', DOCS.mode); } catch (e) {} showDoc(true); return; }
+  if (m) { DOCS.mode = m.dataset.docMode; try { localStorage.setItem('agentDocs.mode', DOCS.mode); } catch (e) {} if (typeof saveUI === 'function') saveUI({ docsMode: DOCS.mode }); showDoc(true); return; }
   var g = ev.target.closest('[data-go-doc]');
   if (g) {
     var hit = (DOCS.list || []).filter(function (d) { return d.rel.indexOf('AI文档/架构/' + g.dataset.goDoc + '-') === 0; })[0];

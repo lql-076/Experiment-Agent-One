@@ -82,6 +82,9 @@ DEFAULTS = {
     "nightly": True, "synthetic": True, "realFloor": 25,
     # v3.5：日志保留周期（天）。到期先提炼重要事项永久备份，再压缩/清理原始日志；180=半年，365=一年
     "logRetainDays": 180,
+    # v3.5.1：界面操作状态（侧栏/筛选/引擎/音色等）。只存操作偏好，不存聊天、文案、提醒原文；
+    # 前端按字段防抖增量上报，后端只做一层合并，不会用默认值覆盖没改过的字段。
+    "uiState": {},
     # 送达
     "toastFallback": True, "resCard": True, "renotifyMin": 30, "renotifyMax": 2,
     # 硬件
@@ -113,6 +116,7 @@ def load():
         _FILE.rename(_FILE.with_suffix(".bad.json"))
         print("设置文件读不了，已改名保存，改用默认设置：", e)
     S.update(LOCKED)
+    S["uiState"] = _clean_ui_state(S.get("uiState"))
     if raw.get("imgMig") != 1816:      # v1.8.16：生图换成按次 $0.03 的 Sunburst VIP、高画质、2K、一张一张出（v1.8.15 默认的按量模型会多花钱）
         S.update(imgModel=DEFAULTS["imgModel"], imgQuality=DEFAULTS["imgQuality"], imgRes=DEFAULTS["imgRes"], imgConc=DEFAULTS["imgConc"], imgMig=1816)
         if raw:
@@ -138,6 +142,48 @@ def save():
         tmp.replace(_FILE)
 
 
+def _clean_ui_state(v) -> dict:
+    """界面状态只收一层小对象：键短、值是字符串/数字/布尔/一层子对象。
+    防止设置文件被超大内容、奇怪类型或敏感长文本撑坏；超限就整包丢弃，保留旧值。"""
+    if not isinstance(v, dict):
+        return {}
+    out = {}
+    for k, val in v.items():
+        if not isinstance(k, str) or not k or len(k) > 64:
+            continue
+        if isinstance(val, dict):
+            sub = {}
+            for kk, vv in val.items():
+                if not isinstance(kk, str) or not kk or len(kk) > 64:
+                    continue
+                if vv is None or isinstance(vv, (str, int, float, bool)):
+                    sub[kk] = vv[:500] if isinstance(vv, str) else vv
+            out[k] = sub
+        elif val is None or isinstance(val, (str, int, float, bool)):
+            out[k] = val[:500] if isinstance(val, str) else val
+    try:
+        if len(json.dumps(out, ensure_ascii=False)) > 32 * 1024:
+            return {}
+    except Exception:
+        return {}
+    return out
+
+
+def _merge_ui_state(base, patch) -> dict:
+    """字段级合并：只改这次带上来的键，子对象也逐键合并。"""
+    out = dict(base) if isinstance(base, dict) else {}
+    if not isinstance(patch, dict):
+        return out
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _merge_ui_state(out[k], v)
+        elif v is None:
+            out.pop(k, None)
+        else:
+            out[k] = v
+    return out
+
+
 def update(changes: dict) -> dict:
     """界面传来的改动。只接受已知的键，类型跟默认值对齐。"""
     applied = {}
@@ -152,6 +198,12 @@ def update(changes: dict) -> dict:
                 v = int(float(v)) if v != "" else d
             elif isinstance(d, float):
                 v = float(v) if v != "" else d
+            elif isinstance(d, dict):
+                if not isinstance(v, dict):
+                    continue
+                v = _clean_ui_state(_merge_ui_state(S.get(k), v))
+                if not v and changes[k] and not all(x is None for x in changes[k].values()):
+                    continue          # 超限/类型不对：整包丢掉，别把旧状态清空（显式传 null 是正常清除）
             elif isinstance(d, list):
                 continue              # 列表（能读的文件夹）有自己的接口，改它要过安全线
             else:
@@ -163,6 +215,13 @@ def update(changes: dict) -> dict:
             applied[k] = v
     if applied:
         save()
+        if "uiState" in applied:
+            try:
+                from . import telemetry
+                keys = sorted((applied.get("uiState") or {}).keys())[:12]
+                telemetry.log("ui", "state_save", "界面状态", "ok", 0, {"keys": keys}, "界面操作状态增量保存")
+            except Exception:
+                pass
         for fn in list(_listeners):
             try:
                 fn(applied)

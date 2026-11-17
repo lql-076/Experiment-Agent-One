@@ -22,6 +22,7 @@ import os
 import random
 import re
 import shutil
+import threading
 import time
 import wave
 from datetime import datetime
@@ -509,6 +510,7 @@ class TTS:
         self._task = None
         self._h, self._hts = None, 0.0
         self.aligning = False
+        self._sizes, self._sizes_ts = {}, 0.0     # v3.5.1：模型目录大小缓存，别每次打开配音页都扫几 GB
 
     @property
     def s(self):
@@ -535,12 +537,19 @@ class TTS:
         return (d / "config.json").exists() and any(d.glob("*.safetensors"))
 
     def model_size(self, kind):
-        """模型文件夹有多大（字节；下到一半的也算）。"""
+        """模型文件夹有多大（字节；下到一半的也算）。扫一次缓存 30 秒，避免打开配音页时反复扫几 GB。"""
+        now = time.time()
+        if kind in self._sizes and now - self._sizes_ts < 30:
+            return self._sizes[kind]
+        total = 0
         try:
             d = self.align_dir() if kind == "align" else self.model_dir(kind)
-            return sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+            total = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
         except OSError:
-            return 0
+            total = 0
+        self._sizes[kind] = total
+        self._sizes_ts = now
+        return total
 
     def out_dir(self):
         return paths.resolve(self.s.get("ttsOut", ""), paths.TTS_OUT)
@@ -1190,6 +1199,18 @@ class TTS:
 
 
 T = TTS()
+
+
+def _prewarm_sizes():
+    """后台先把四个模型目录的大小扫一遍；用户打开配音页时直接读缓存，不再等磁盘。"""
+    for _k in (*paths.TTS_MODELS, "align"):
+        try:
+            T.model_size(_k)
+        except Exception:
+            pass
+
+
+threading.Thread(target=_prewarm_sizes, daemon=True).start()
 
 # ---------------- 接口 ----------------
 api = APIRouter()

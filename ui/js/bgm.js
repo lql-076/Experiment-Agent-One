@@ -6,11 +6,13 @@
    - 右：最近出的，点一首就在中间听；每首能「放进工作区」（给 Agent 做视频用）、打开所在的文件夹。
    - 批量（v3.1，ui/js/mbatch.js）：左边顶上切到「批量」，一份配乐清单一首存一个文件（配乐输出\日期_清单名\名字.wav）；点一首出好的，中间就放它。
    Agent 自己做视频时也会用同一个服务（make_music 工具），出的也在这份历史里。 */
-var BGM = { st: null, sel: null, t: null, audio: null, peaks: {}, prompt: '', seconds: 60, sig: '', busyBtn: false, raf: 0, mode: 'one' };
-try { if (localStorage.getItem('agentBgm.mode') === 'batch') BGM.mode = 'batch'; } catch (e) {}
+var BGM = { st: null, sel: null, t: null, audio: null, peaks: {}, prompt: (U.bgmPrompt || ''), seconds: (+U.bgmSeconds || 60), sig: '', busyBtn: false, raf: 0, mode: (U.bgmMode === 'batch' ? 'batch' : 'one'), preset: (typeof U.bgmPreset === 'number' ? U.bgmPreset : -1) };
+try { if (!U.bgmMode && localStorage.getItem('agentBgm.mode') === 'batch') BGM.mode = 'batch'; } catch (e) {}
 var BGM_PRESET = [['轻快电子', '轻快的电子乐，明亮的合成器，节奏清晰，适合科技类视频开场'], ['安静钢琴', '安静的钢琴独奏，舒缓，留白多，适合讲解时垫在下面'],
   ['Lo-fi', 'lo-fi hip hop，松弛的鼓点，温暖的电钢琴，带一点黑胶底噪'], ['科技感', '冷色调的氛围电子，脉冲贝斯，未来感，中速'],
   ['悬疑', '低沉的弦乐铺底，缓慢推进，带一点紧张感'], ['热血', '史诗感管弦乐，鼓点有力，逐渐推向高潮'], ['8-bit', '8-bit 芯片音乐，欢快，像老游戏的关卡音乐'], ['温暖吉他', '木吉他指弹，温暖明亮，轻松的午后']];
+if (BGM.preset >= 0 && BGM_PRESET[BGM.preset] && !BGM.prompt) BGM.prompt = BGM_PRESET[BGM.preset][1];
+if (!(BGM.seconds >= 10 && BGM.seconds <= 240)) BGM.seconds = 60;
 var BGM_DEMO = { up: false, alive: false, configured: true, can_start: true, url: 'http://127.0.0.1:8001', out: 'F:\\Agent\\配乐输出', job: null, idle: 10,
   recent: [{ id: 3, ts: Date.now() / 1000 - 600, name: '143012_轻快的电子乐.wav', prompt: '轻快的电子乐，明亮的合成器，节奏清晰', seconds: 60, duration: 60, took: 21, exists: true },
     { id: 2, ts: Date.now() / 1000 - 4200, name: '131544_安静的钢琴独奏.wav', prompt: '安静的钢琴独奏，舒缓，留白多', seconds: 90, duration: 90, took: 30, exists: true },
@@ -125,16 +127,16 @@ function bgmPlay(id, at) {
   setTimeout(function () { BGM.sig = ''; renderBgm(); bgmTick(); }, 60);
 }
 $('#view-bgm').addEventListener('input', function (ev) {
-  if (ev.target.id === 'bgPrompt') BGM.prompt = ev.target.value;
-  if (ev.target.id === 'bgSec') { BGM.seconds = +ev.target.value; var o = $('#bgSecO'); if (o) o.textContent = bgmClock(BGM.seconds); }
+  if (ev.target.id === 'bgPrompt') { BGM.prompt = ev.target.value; BGM.preset = -1; if (typeof saveUI === 'function') saveUI({ bgmPrompt: BGM.prompt.slice(0, 300), bgmPreset: -1 }); }
+  if (ev.target.id === 'bgSec') { BGM.seconds = +ev.target.value; var o = $('#bgSecO'); if (o) o.textContent = bgmClock(BGM.seconds); if (typeof saveUI === 'function') saveUI({ bgmSeconds: BGM.seconds }); }
 });
 $('#view-bgm').addEventListener('click', function (ev) {
   var cv = ev.target.closest('#bgWave');
   if (cv) { var r = cv.getBoundingClientRect(); bgmPlay(+cv.dataset.id, Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width))); return; }
   var t = ev.target.closest('button'); if (!t) return;
   var d = t.dataset;
-  if (d.bgmMode) { BGM.mode = d.bgmMode; try { localStorage.setItem('agentBgm.mode', BGM.mode); } catch (e) {} BGM.sig = ''; renderBgm(); if (BGM.mode === 'batch') mbFetch('bgm'); return; }
-  if (d.bgmPre != null) { BGM.prompt = BGM_PRESET[+d.bgmPre][1]; BGM.sig = ''; renderBgm(); return; }
+  if (d.bgmMode) { BGM.mode = d.bgmMode; try { localStorage.setItem('agentBgm.mode', BGM.mode); } catch (e) {} if (typeof saveUI === 'function') saveUI({ bgmMode: BGM.mode }); BGM.sig = ''; renderBgm(); if (BGM.mode === 'batch') mbFetch('bgm'); return; }
+  if (d.bgmPre != null) { BGM.preset = +d.bgmPre; BGM.prompt = BGM_PRESET[BGM.preset][1]; if (typeof saveUI === 'function') saveUI({ bgmPreset: BGM.preset, bgmPrompt: BGM.prompt.slice(0, 300) }); BGM.sig = ''; renderBgm(); return; }
   if (d.bgmSel) { BGM.sel = +d.bgmSel; if (BGM.audio && BGM.playing !== BGM.sel) BGM.audio.pause(); renderBgm(); return; }
   if (d.bgmPlay) { bgmPlay(+d.bgmPlay); return; }
   if (d.goSec) { openSec(d.goSec); return; }

@@ -6,7 +6,8 @@
 <title>Agent</title>
 <!-- 界面拆成了几块：css/core.css 是公共样式；themes/ 里一个 .css 就是一套主题（v2.0 起是极简的深色、浅色两套）；js/ 里按页面分文件。
      地址带 ?tool=img 这种就是工具窗口：只显示那一个工具，自己的标题栏（v2.0）。 -->
-<script>try{var _s=JSON.parse(localStorage.getItem('agentShell.v3'));if(_s&&_s.set&&(_s.set.theme==='light'||_s.set.theme==='dark'))document.documentElement.dataset.theme=_s.set.theme;}catch(e){}
+<script>/* v3.5.1：第一帧之前先把主题定下来。新键 agent_theme 由所有窗口共用；旧键只用来迁一次，读完马上写新键。 */
+(function(){var t=document.documentElement.getAttribute('data-theme');if(t!=='light'&&t!=='dark')t='dark';try{var v=localStorage.getItem('agent_theme');if(v==='light'||v==='dark')t=v;else{var s=JSON.parse(localStorage.getItem('agentShell.v3'));if(s&&s.set&&(s.set.theme==='light'||s.set.theme==='dark'))t=s.set.theme;}localStorage.setItem('agent_theme',t);}catch(e){}document.documentElement.dataset.theme=t;})();
 try{var _t=new URLSearchParams(location.search).get('tool');if(_t&&/^[a-z]{2,12}$/.test(_t))document.documentElement.dataset.tool=_t;}catch(e){}</script>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/core.css">

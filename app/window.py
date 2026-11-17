@@ -20,6 +20,7 @@ import functools
 import json
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -38,10 +39,15 @@ ICON = paths.UI / "icon.ico"
 TOOLS = {k: (v, 1440, 880) for k, v in {"img": "生图", "tts": "配音", "bgm": "配乐", "publish": "发布", "events": "事件", "monitor": "后台", "brains": "大脑",
                                          "reports": "报告", "ccode": "Claude Code", "settings": "设置", "docs": "说明"}.items()}
 WINS = {}          # 开着的工具窗口：key → webview.Window
-MAIN = {}          # 主窗口（工具窗口里点「去对话」时拿到前面）
+MAIN = {}          # 主窗口（工具窗口里点「去对话」时拿到前面）；closing=True 表示正在级联关闭
 ROOT_ST = {}       # data/window.json 的全部内容（主窗口 + tools）
 WLOG = paths.LOGS / "window.log"
+WINDOW_PID = paths.DATA / "window.pid"       # v3.5.1：主窗口进程 PID，启动.bat 靠它认出卡死的旧窗口
+LAUNCH_MUTEX = "Local\\AgentWindowLaunch"   # 同一时间只让一个进程检查/拉起界面
+WINDOW_EXIT_GRACE = 0.9                     # 主窗口关闭后最多等这么久，进程必须退
 _LOG = {"fh": None}
+_CLOSE = {"on": False, "timer": None}
+_PROC_LOCK = threading.Lock()
 
 
 class _Tee:
@@ -146,6 +152,323 @@ def _setup_log():
     return fh
 
 
+def _log_line(msg):
+    """窗口进程和启动进程都可能写 window.log：短行、带 PID，方便把一次启动/关闭串起来。"""
+    try:
+        WLOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(WLOG, "a", encoding="utf-8", errors="replace") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  [窗口进程 {os.getpid()}]  {msg}\n")
+    except Exception:
+        pass
+
+
+def _tel(action, status="ok", dur_ms=None, metrics=None, msg=""):
+    """窗口生命周期也写遥测：启动.bat / 关主窗口 / 卡死重启都能在「后台 › 行为监控」查到。"""
+    try:
+        from . import telemetry
+        telemetry.log("proc", action, "桌面窗口", status, dur_ms, metrics or {}, msg)
+    except Exception:
+        pass
+
+
+def _u32():
+    import ctypes
+    return ctypes.windll.user32
+
+
+def _k32():
+    import ctypes
+    return ctypes.windll.kernel32
+
+
+def _find_main_hwnd() -> int:
+    if not paths.IS_WIN:
+        return 0
+    try:
+        u = _u32()
+        u.FindWindowW.restype = __import__("ctypes").c_void_p
+        return int(u.FindWindowW(None, TITLE) or 0)
+    except Exception:
+        return 0
+
+
+def probe_main_window(timeout_ms=2000) -> dict:
+    """看真正的顶层窗口句柄，而不是只看互斥体/进程在不在。
+    返回 exists / hwnd / pid / visible / iconic / responsive。"""
+    if not paths.IS_WIN:
+        return {"exists": False, "hwnd": 0, "pid": 0, "visible": False, "iconic": False, "responsive": False}
+    hwnd = _find_main_hwnd()
+    if not hwnd:
+        return {"exists": False, "hwnd": 0, "pid": 0, "visible": False, "iconic": False, "responsive": False}
+    import ctypes
+    u = _u32()
+    try:
+        pid = ctypes.c_ulong(0)
+        u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        res = ctypes.c_size_t(0)
+        # WM_NULL + SMTO_ABORTIFHUNG|SMTO_BLOCK：窗口线程卡死时不无限等
+        ok = u.SendMessageTimeoutW(hwnd, 0, 0, 0, 0x0002 | 0x0001, int(timeout_ms), ctypes.byref(res))
+        return {"exists": True, "hwnd": hwnd, "pid": int(pid.value),
+                "visible": bool(u.IsWindowVisible(hwnd)), "iconic": bool(u.IsIconic(hwnd)),
+                "responsive": bool(ok)}
+    except Exception:
+        return {"exists": True, "hwnd": hwnd, "pid": 0, "visible": False, "iconic": False, "responsive": False}
+
+
+def classify_window(p: dict) -> str:
+    """把探测结果分成 4 种：ok / hidden / hung / missing。纯函数，方便回归。"""
+    if not p or not p.get("exists"):
+        return "missing"
+    if not p.get("visible"):
+        return "hidden"
+    if not p.get("responsive"):
+        return "hung"
+    return "ok"
+
+
+def _restore_main(hwnd) -> bool:
+    if not hwnd or not paths.IS_WIN:
+        return False
+    try:
+        u = _u32()
+        u.ShowWindow(int(hwnd), 9)          # SW_RESTORE：最小化/隐藏都还原
+        u.ShowWindow(int(hwnd), 5)          # SW_SHOW
+        u.SetForegroundWindow(int(hwnd))
+        u.BringWindowToTop(int(hwnd))
+        return True
+    except Exception:
+        _log_line(f"恢复主窗口失败 hwnd={hwnd}")
+        return False
+
+
+def read_window_pid() -> int:
+    try:
+        d = json.loads(WINDOW_PID.read_text("utf-8"))
+        return int(d.get("pid") or 0)
+    except Exception:
+        return 0
+
+
+def _write_window_pid(hwnd=0):
+    try:
+        WINDOW_PID.parent.mkdir(parents=True, exist_ok=True)
+        WINDOW_PID.write_text(json.dumps({"pid": os.getpid(), "hwnd": int(hwnd or 0), "start": time.time()}), "utf-8")
+    except Exception:
+        pass
+
+
+def _clear_window_pid():
+    try:
+        if read_window_pid() in (0, os.getpid()):
+            WINDOW_PID.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _pid_alive(pid) -> bool:
+    if not pid:
+        return False
+    try:
+        import psutil
+        return bool(psutil.pid_exists(int(pid)))
+    except Exception:
+        try:
+            import ctypes
+            h = _k32().OpenProcess(0x1000, False, int(pid))   # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                return False
+            _k32().CloseHandle(h)
+            return True
+        except Exception:
+            return False
+
+
+def _kill_window_pid(pid, reason="清理旧窗口进程") -> bool:
+    """只按 PID 结束本项目自己的 app.window 进程；命令行对不上的一律不碰。"""
+    try:
+        pid = int(pid or 0)
+    except Exception:
+        return False
+    if not pid or pid == os.getpid() or not _pid_alive(pid):
+        return False
+    try:
+        import psutil
+        p = psutil.Process(pid)
+        name = (p.name() or "").lower()
+        cmd = " ".join(p.cmdline() or []).lower()
+        if "python" not in name or "app.window" not in cmd:
+            _log_line(f"不结束 PID {pid}：不是本项目的窗口进程")
+            return False
+        _log_line(f"{reason}：结束 PID {pid}")
+        p.terminate()
+        try:
+            p.wait(timeout=1.5)
+        except Exception:
+            p.kill()
+            p.wait(timeout=1.0)
+        return True
+    except Exception as e:
+        _log_line(f"{reason}失败 PID {pid}：{e}")
+        return False
+
+
+def _app_window_pids() -> set:
+    """枚举标题是「Agent 主控台」或「… · Agent」的顶层窗口，反查 PID；只用来清理没有主窗口的僵尸。"""
+    if not paths.IS_WIN:
+        return set()
+    import ctypes
+    from ctypes import wintypes
+    u = _u32()
+    out = set()
+    try:
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+        def cb(hwnd, _):
+            try:
+                n = u.GetWindowTextLengthW(hwnd)
+                if n:
+                    buf = ctypes.create_unicode_buffer(n + 1)
+                    u.GetWindowTextW(hwnd, buf, n + 1)
+                    title = buf.value
+                    if title == TITLE or title.endswith(" · Agent"):
+                        pid = ctypes.c_ulong(0)
+                        u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                        if pid.value and int(pid.value) != os.getpid():
+                            out.add(int(pid.value))
+            except Exception:
+                pass
+            return True
+        u.EnumWindows(cb, 0)
+    except Exception:
+        pass
+    return out
+
+
+def _wait_for_main(timeout=2.0, also_restore=True) -> bool:
+    """等主窗口变成可见且不卡死；最小化/隐藏的顺手还原。"""
+    end = time.time() + max(0.2, float(timeout))
+    while time.time() < end:
+        p = probe_main_window(timeout_ms=800)
+        st = classify_window(p)
+        if st == "ok":
+            if also_restore:
+                _restore_main(p["hwnd"])
+            return True
+        if st == "hidden":
+            if also_restore:
+                _restore_main(p["hwnd"])
+            time.sleep(0.15)
+            continue
+        if st == "hung":
+            return False
+        time.sleep(0.12)
+    return False
+
+
+def _spawn_window(env=None):
+    """用 pythonw 起一个窗口助手，不留黑窗口。"""
+    try:
+        from pathlib import Path
+        exe = Path(sys.executable)
+        pyw = exe.with_name("pythonw.exe")
+        e = dict(os.environ)
+        e.update(env or {})
+        return subprocess.Popen([str(pyw if pyw.exists() else exe), "-m", "app.window"],
+                                cwd=str(paths.ROOT), env=e,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as e:
+        _log_line(f"起窗口进程失败：{e}")
+        return None
+
+
+def _launch_lock():
+    """命名互斥体：两个 启动.bat 同时点时，只让一个负责检查/拉起，另一个等结果。"""
+    if not paths.IS_WIN:
+        return None, False
+    try:
+        k = _k32()
+        k.CreateMutexW.restype = __import__("ctypes").c_void_p
+        h = k.CreateMutexW(None, False, LAUNCH_MUTEX)
+        return h, k.GetLastError() == 183
+    except Exception:
+        return None, False
+
+
+def _release_lock(h):
+    try:
+        if h:
+            _k32().CloseHandle(h)
+    except Exception:
+        pass
+
+
+def ensure_main_window(env=None, target="启动.bat", wait=2.0) -> bool:
+    """v3.5.1：不管后端在不在，都确保有一个真正可见、能响应 Win32 消息的主窗口。
+    有就还原到前台；没有/隐藏/卡死就清掉旧窗口进程并重新拉起；2 秒还不出来再重试一次。"""
+    if not paths.IS_WIN:
+        return False
+    t0 = time.perf_counter()
+    lock, busy = _launch_lock()
+    if busy:
+        _log_line(f"{target}：另一个启动正在处理界面，等它")
+        ok = _wait_for_main(wait + 2.0)
+        _release_lock(lock)
+        _tel("launch_wait", "ok" if ok else "warn", (time.perf_counter() - t0) * 1000,
+             {"target": target, "waited": True}, f"{target}：等待另一个启动拉起界面")
+        return ok
+    try:
+        p = probe_main_window(timeout_ms=1200)
+        st = classify_window(p)
+        if st == "ok":
+            _restore_main(p["hwnd"])
+            _log_line(f"{target}：主窗口已在，拿到前面 hwnd={p['hwnd']} pid={p['pid']}")
+            _tel("launch_ok", "ok", (time.perf_counter() - t0) * 1000,
+                 {"target": target, "hwnd": p["hwnd"], "pid": p["pid"], "action": "restore"}, f"{target}：主窗口已在，已拿到前面")
+            return True
+        if st == "hidden":
+            _restore_main(p["hwnd"])
+            if _wait_for_main(0.8):
+                _log_line(f"{target}：主窗口原来隐藏/最小化，已还原")
+                _tel("launch_ok", "ok", (time.perf_counter() - t0) * 1000,
+                     {"target": target, "action": "restore_hidden"}, f"{target}：主窗口已还原")
+                return True
+            _kill_window_pid(p.get("pid"), "主窗口还原失败")
+        elif st == "hung":
+            _log_line(f"{target}：主窗口超过 2 秒不响应，结束 PID {p.get('pid')} 后重开")
+            _tel("launch_hung", "warn", 2000, {"target": target, "pid": p.get("pid")}, f"{target}：主窗口卡死，重启窗口")
+            _kill_window_pid(p.get("pid"), "主窗口卡死")
+        else:
+            # 没有主窗口：可能只剩工具窗口的旧进程，也可能 PID 文件过期
+            old = read_window_pid()
+            if old and _pid_alive(old):
+                if _wait_for_main(0.8):
+                    _log_line(f"{target}：等到了刚启动的主窗口")
+                    return True
+                _kill_window_pid(old, "没有主窗口的旧窗口进程")
+            for pid in list(_app_window_pids()):
+                _kill_window_pid(pid, "没有主窗口的旧窗口")
+            time.sleep(0.2)
+        # 起新的；两次机会（第一次 2 秒没出窗口就结束重来）
+        for attempt in (1, 2):
+            proc = _spawn_window(env)
+            if proc is None:
+                break
+            _log_line(f"{target}：已起窗口进程 PID {proc.pid}（第 {attempt} 次）")
+            if _wait_for_main(wait):
+                _log_line(f"{target}：主窗口已出现 PID {proc.pid}")
+                _tel("launch_ok", "ok", (time.perf_counter() - t0) * 1000,
+                     {"target": target, "pid": proc.pid, "attempt": attempt, "action": "spawn"}, f"{target}：已重新拉起主窗口")
+                return True
+            _log_line(f"{target}：第 {attempt} 次起的窗口 {wait:g} 秒内没出现，结束 PID {proc.pid}")
+            _kill_window_pid(proc.pid, "窗口没出现")
+            time.sleep(0.2)
+        _log_line(f"{target}：两次都没能把主窗口拉起来")
+        _tel("launch_fail", "err", (time.perf_counter() - t0) * 1000,
+             {"target": target, "attempts": 2}, f"{target}：主窗口没起来")
+        return False
+    finally:
+        _release_lock(lock)
+
+
 def _safe(fallback=None):
     """暴露给前端的 js_api 统一兜底：异常记进 window.log，返回安全结果，绝不让它穿过 pythonnet。"""
     def deco(fn):
@@ -171,6 +494,47 @@ def _destroy(w):
         _log_exc("关闭窗口出错")
 
 
+def _force_exit(reason):
+    """最后的保险：主窗口都关了，窗口进程还不退，就自己结束，绝不留 pythonw 僵尸。
+    只影响窗口助手进程，后端、提醒、QQ 是另一个进程，不受影响。"""
+    try:
+        _log_line(f"窗口进程 {WINDOW_EXIT_GRACE:g} 秒内没自己退，强制退出：{reason}")
+        _clear_window_pid()
+        _tel("window_force_exit", "warn", WINDOW_EXIT_GRACE * 1000, {"reason": reason}, "窗口进程强制退出")
+    finally:
+        os._exit(0)
+
+
+def _close_all(reason, include_main=True):
+    """主窗口关闭时把工具窗口全部带走，并保证窗口进程在 1 秒内退出。
+    destroy 必须在别的线程里调（winforms 的 Invoke 会等 GUI 线程），所以这里只发线程、不等待太久。"""
+    with _PROC_LOCK:
+        if _CLOSE["on"]:
+            return
+        _CLOSE["on"] = True
+    _log_line(f"开始级联关闭（{reason}）：工具窗口 {len(WINS)} 个")
+    _tel("close_cascade", "ok", 0, {"reason": reason, "tools": len(WINS)}, f"关闭主窗口：{reason}，一并关闭 {len(WINS)} 个工具窗口")
+    # 先定好强制退出时间：即使某个 WebView2 窗口卡住，也不会超过 1 秒
+    if _CLOSE["timer"] is None:
+        _CLOSE["timer"] = threading.Timer(WINDOW_EXIT_GRACE, _force_exit, args=(reason,))
+        _CLOSE["timer"].daemon = True
+        _CLOSE["timer"].start()
+    tools = []
+    for k, w in list(WINS.items()):
+        WINS.pop(k, None)
+        t = threading.Thread(target=_destroy, args=(w,), daemon=True)
+        t.start()
+        tools.append(t)
+    end = time.time() + 0.45
+    for t in tools:
+        t.join(max(0.0, end - time.time()))
+    if include_main:
+        w = MAIN.pop("w", None)
+        if w is not None:
+            _destroy(w)
+    _log_line(f"级联关闭已发出（{reason}）")
+
+
 def _load():
     try:
         return json.loads(STATE.read_text("utf-8"))
@@ -186,20 +550,31 @@ def _save(st):
 
 
 def _already_open() -> bool:
-    """已经开着一个：把它拿到前面，自己退出。"""
+    """已经开着一个就拿到前面；但互斥体还在、主窗口却没了/卡死时，不能直接退出——
+    那样 启动.bat 会“成功”地把用户晾在桌面上。v3.5.1：以真实可见 HWND 为准，清理旧窗口进程后自己当主窗口。"""
     if not paths.IS_WIN:
         return False
-    import ctypes
-    k32, u32 = ctypes.windll.kernel32, ctypes.windll.user32
-    k32.CreateMutexW.restype = ctypes.c_void_p
+    k32 = _k32()
+    k32.CreateMutexW.restype = __import__("ctypes").c_void_p
     _already_open.handle = k32.CreateMutexW(None, False, MUTEX)   # 进程结束前一直持有
     if k32.GetLastError() != 183:                                  # ERROR_ALREADY_EXISTS
         return False
-    hwnd = u32.FindWindowW(None, TITLE)
-    if hwnd:
-        u32.ShowWindow(hwnd, 9)                                    # SW_RESTORE
-        u32.SetForegroundWindow(hwnd)
-    return True
+    # 给刚开始启动的窗口 1 秒把 HWND 建出来，避免误杀
+    if _wait_for_main(1.0):
+        p = probe_main_window()
+        _log_line(f"已经开着一个主窗口，拿到前面 hwnd={p.get('hwnd')} pid={p.get('pid')}")
+        _tel("window_reuse", "ok", 0, {"hwnd": p.get("hwnd"), "pid": p.get("pid")}, "已有主窗口，拿到前面")
+        return True
+    p = probe_main_window(timeout_ms=2000)
+    st = classify_window(p)
+    _log_line(f"窗口互斥体还在，但主窗口状态是 {st}：准备清理旧窗口进程")
+    _tel("window_stale", "warn", 0, {"state": st, "pid": p.get("pid")}, f"主窗口不可用（{st}），清理旧窗口")
+    if p.get("pid"):
+        _kill_window_pid(p.get("pid"), "主窗口不可用")
+    for pid in list(_app_window_pids()):
+        _kill_window_pid(pid, "没有主窗口的旧窗口")
+    time.sleep(0.3)
+    return False
 
 
 def _backend_alive() -> bool:
@@ -352,10 +727,14 @@ class Api:
 
     @_safe(False)
     def close_window(self):
-        """只关窗口：后端还在跑（提醒、QQ 照常），再双击 启动.bat 就能打开。"""
+        """主窗口关掉 = 连同所有工具窗口一起关（v3.5.1）；工具窗口的 × 只关自己。
+        后端还在跑（提醒、QQ 照常），再双击 启动.bat 就能重新打开。"""
         if self._w is None:
             return False
-        threading.Thread(target=_destroy, args=(self._w,), daemon=True).start()
+        if self._key == "main":
+            threading.Thread(target=_close_all, args=("界面关闭按钮", True), daemon=True).start()
+        else:
+            threading.Thread(target=_destroy, args=(self._w,), daemon=True).start()
         return True
 
     @_safe(False)
@@ -393,6 +772,8 @@ class Api:
 
 def open_tool_window(key, arg=""):
     """新开一个工具窗口：地址是主界面加 ?tool=key，界面只显示这一个工具（自己的标题栏：拖动、置顶、收起、关掉）。"""
+    if MAIN.get("closing"):
+        return None
     import webview
     name, dw, dh = TOOLS[key]
     st = ROOT_ST.setdefault("tools", {}).setdefault(key, {})
@@ -414,7 +795,7 @@ def open_tool_window(key, arg=""):
     WINS[key] = win
     win.events.resized += api._on_resized
     win.events.moved += api._on_moved
-    win.events.closed += lambda: WINS.pop(key, None)
+    win.events.closed += lambda: (WINS.pop(key, None), _log_line(f"工具窗口已关闭：{key}"))
 
     def shown():
         try:
@@ -437,9 +818,7 @@ def _watch_backend(win):
         fails = 0 if _backend_alive() else fails + 1
         if fails >= 10:
             logging.getLogger("agent.window").warning("后端连续 %s 次连不上，关闭窗口", fails)
-            for w in list(WINS.values()):
-                _destroy(w)
-            _destroy(win)
+            _close_all("后端连续 %s 次连不上" % fails, include_main=True)
             return
 
 
@@ -468,6 +847,7 @@ def main():
     if _already_open():
         log.info("已经开着一个窗口，把已有的拿到前面")
         return 0
+    _write_window_pid()
     if paths.IS_WIN:
         from . import winframe
         winframe.per_monitor_dpi()          # 一定要在导入 pywebview 之前
@@ -476,6 +856,7 @@ def main():
         import webview
     except Exception:
         _log_exc("pywebview 用不了")
+        _clear_window_pid()
         return 3
     st = _load()
     ROOT_ST.clear()
@@ -490,11 +871,35 @@ def main():
     win = webview.create_window(**opts)
     api._w = win
     MAIN["w"] = win
+    MAIN["closing"] = False
     win.events.resized += api._on_resized
     win.events.moved += api._on_moved
 
+    def on_main_closing():
+        """原生关窗（Alt+F4 / 任务栏关闭 / close_window）也走同一条级联关闭。
+        这里在 GUI 线程里，不能同步 destroy 别的窗口（会等自己），只发后台线程。"""
+        MAIN["closing"] = True
+        _log_line("主窗口收到关闭事件，开始级联关闭工具窗口")
+        threading.Thread(target=_close_all, args=("主窗口关闭", False), daemon=True).start()
+        return True
+
+    def on_main_closed():
+        MAIN["closing"] = True
+        _log_line("主窗口已关闭")
+        _clear_window_pid()
+        _tel("window_closed", "ok", 0, {}, "主窗口已关闭，窗口进程准备退出")
+        # 正常情况下 webview.start 马上返回；极少数情况靠这个兜底
+        if _CLOSE["timer"] is None:
+            _CLOSE["timer"] = threading.Timer(WINDOW_EXIT_GRACE, _force_exit, args=("主窗口已关闭",))
+            _CLOSE["timer"].daemon = True
+            _CLOSE["timer"].start()
+
     def on_shown():
         try:
+            hwnd = int(win.native.Handle.ToInt64()) if paths.IS_WIN and win.native is not None else 0
+            _write_window_pid(hwnd)
+            _log_line(f"主窗口已显示 hwnd={hwnd}")
+            _tel("window_shown", "ok", 0, {"hwnd": hwnd}, "主窗口已显示")
             _native(api)
             # 上次是全屏 / 最大化：窗口出来以后再恢复
             if st.get("full"):
@@ -506,10 +911,16 @@ def main():
             _log_exc("主窗口显示时恢复状态出错")
         threading.Thread(target=_watch_backend, args=(win,), daemon=True).start()
 
+    win.events.closing += on_main_closing
+    win.events.closed += on_main_closed
     win.events.shown += on_shown
     paths.DATA.mkdir(parents=True, exist_ok=True)
     kw = {"icon": str(ICON)} if ICON.exists() else {}
-    webview.start(private_mode=False, storage_path=str(paths.DATA / "webview"), **kw)
+    try:
+        webview.start(private_mode=False, storage_path=str(paths.DATA / "webview"), **kw)
+    finally:
+        _log_line("窗口事件循环已退出")
+        _clear_window_pid()
     return 0
 
 
@@ -520,4 +931,5 @@ if __name__ == "__main__":
     except Exception:
         _log_exc("窗口出错")
         code = 3
+    _clear_window_pid()
     sys.exit(code)

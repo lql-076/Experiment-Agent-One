@@ -8,7 +8,7 @@ function syncBadges() {
 }
 function renderReports() {
   var v = $('#view-reports'), live = useLive();
-  if (live && !D.report) { v.innerHTML = '<div class="empty">正在读取…</div>'; return; }
+  if (live && !D.report) { v.innerHTML = '<div class="page"><div class="ph"><h1>本周报告</h1><span class="sub">正在汇总本周的分流、花费和待你决定的事……</span></div><div class="hc"><div class="hc-h"><span class="label">报告</span></div><p class="cap">正在从后端读取报告。加载完会自动显示，不用重新点。</p></div></div>'; return; }
   var R = live ? D.report : null;
   var split = live ? R.split : WEEK_SPLIT, wtot = ORDER.reduce(function (a, k) { return a + split[k]; }, 0);
   var changes = live ? R.changes : CHANGES, asks = live ? R.asks.filter(function (a) { return a.status === 'pending'; }) : ASKS;

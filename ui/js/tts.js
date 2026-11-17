@@ -46,10 +46,24 @@ function ttsForm() {
   var f = { mode: 'preset', speaker: 'Vivian', tone: '', desc: '', seed: ttsSeed(), name: '', lang: 'Chinese', text: '', cvoice: '', ctab: 'lib',
     rate: 1, pitch: 1, volume: 50, blang: '', dprompt: '', dname: '', dtext: '', dlang: 'zh', cname: '', clang: 'zh', csrc: 'upload', cden: false };
   try { Object.assign(f, JSON.parse(localStorage.getItem(TTS_KEY)) || {}); } catch (e) {}
+  if (typeof U !== 'undefined' && U.tts && typeof U.tts === 'object') Object.assign(f, U.tts);
   TTS.form = f; return f;
 }
-var ttsKeepT = null;
-function ttsKeep() { clearTimeout(ttsKeepT); ttsKeepT = setTimeout(function () { try { localStorage.setItem(TTS_KEY, JSON.stringify(TTS.form)); } catch (e) {} }, 300); }
+var ttsKeepT = null, ttsPrefSig = '';
+function ttsPrefs(f) {
+  f = f || ttsForm();
+  return { mode: f.mode, speaker: f.speaker, tone: f.tone, lang: f.lang, ctab: f.ctab, cvoice: f.cvoice,
+    rate: f.rate, pitch: f.pitch, volume: f.volume, blang: f.blang, dlang: f.dlang, csrc: f.csrc, cden: f.cden,
+    batch: f.batch, name: f.name, seed: f.seed, engine: (TTS.st && TTS.st.engine) || TTS.eng || '' };
+}
+function ttsKeep() {
+  clearTimeout(ttsKeepT);
+  ttsKeepT = setTimeout(function () {
+    try { localStorage.setItem(TTS_KEY, JSON.stringify(TTS.form)); } catch (e) {}
+    var p = ttsPrefs(), sig = JSON.stringify(p);
+    if (sig !== ttsPrefSig) { ttsPrefSig = sig; if (typeof saveUI === 'function') saveUI({ tts: p }); }
+  }, 300);
+}
 function ttsTime(t, ms) { t = Math.max(0, t || 0); var m = Math.floor(t / 60), s = t - m * 60; return pad(m) + ':' + (ms ? (s < 10 ? '0' : '') + s.toFixed(1) : pad(Math.floor(s))); }
 function ttsDur(sec) { sec = Math.round(sec || 0); return sec >= 60 ? Math.floor(sec / 60) + ' 分 ' + pad(sec % 60) + ' 秒' : sec + ' 秒'; }
 function ttsCloud() { return !!(TTS.st && TTS.st.engine === 'cloud'); }
@@ -76,6 +90,10 @@ function ttsLoad() {
 }
 function ttsRefresh() { if (S.view !== 'tts') return; if ($('#ttsGen') && TTS.drawn === TTS.st.engine) ttsSync(); else renderTTS(); }
 function ttsEnter() {
+  if (!TTS.st && $('#view-tts')) {
+    $('#view-tts').innerHTML = '<div class="page"><div class="ph"><h1>配音</h1><span class="sub">正在读取上次的引擎、音色和文案……</span></div>' +
+      '<div class="hc"><div class="hc-h"><span class="label">配音台</span></div><p class="cap">正在连本地配音服务 / 百炼云端，马上就好。上次的文案和音色也会一起恢复。</p></div></div>';
+  }
   ttsLoad().then(ttsRefresh).catch(function () { if (!TTS.st) { TTS.st = TTS_DEMO; renderTTS(); } });
   mbEnter('tts');
   clearInterval(TTS.timer);
@@ -587,6 +605,7 @@ $('#view-tts').addEventListener('click', function (ev) {
     if (TTS.st.job && TTS.st.job.st === 'run') { toast('正在生成，等它好了或者先点「停下」再换'); return; }
     var sw = $('#ttsEng'); if (sw) sw.dataset.on = t.dataset.eng;      // 先让滑块滑过去，再换整页
     TTS.st.engine = TTS.eng = t.dataset.eng; setVal('ttsEngine', t.dataset.eng);
+    if (typeof saveUI === 'function') saveUI({ tts: { engine: t.dataset.eng } });
     setTimeout(function () { if (S.view === 'tts') renderTTS(); }, 160);
     toast(t.dataset.eng === 'cloud' ? '换成云端：百炼，不用显卡，按字计费' : '换成本地 Qwen3-TTS：在这台电脑上生成，不联网'); return;
   }

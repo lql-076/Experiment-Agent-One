@@ -55,7 +55,8 @@ function autoScale() {
   var w = window.innerWidth, h = window.innerHeight, port = root.dataset.orient === 'portrait';
   if (TOOL) return Math.max(0.8, Math.min(2.4, port ? Math.min(w / 900, h / 1560) : Math.min(w / 1600, h / 975)));
   var s = port ? Math.min(w / 960, h / 1600) : Math.min(w / 1680, h / 1000);
-  return Math.max(1, Math.min(2.4, s));
+  // 小副屏/竖屏（比如 1080×1920 125% 缩放后逻辑 864×1536）也允许缩到 0.8，别让主窗口右侧被切掉
+  return Math.max(0.8, Math.min(2.4, s));
 }
 var lastFont = 0;
 function applyScale() {
@@ -78,9 +79,14 @@ function syncStatus() {
 }
 function themeName(id) { return THEMES.filter(function (t) { return t.id === id; })[0].name; }
 function setTheme(id, x, y) {
-  if (S.set.theme === id) return;
+  // 以真正显示出来的主题为准：agent_theme 可能比本地缓存 agentShell.v3 新（清缓存/多窗口切换后）
+  if (S.set.theme === id && root.dataset.theme === id) return;
   var apply = function () {
-    S.set.theme = id; root.dataset.theme = id; save(); pushSet({ theme: id }); if (typeof winSend === 'function') winSend({ theme: id });
+    S.set.theme = id; root.dataset.theme = id;
+    try { localStorage.setItem('agent_theme', id); } catch (e) {}
+    save(); pushSet({ theme: id }, true); if (typeof saveUI === 'function') saveUI({ theme: id });
+    if (typeof TEL !== 'undefined') TEL.event('ui', 'theme_change', '主题', 'ok', 0, { theme: id }, '切到' + (id === 'light' ? '浅色' : '深色'));
+    if (typeof winSend === 'function') winSend({ theme: id });
     renderResident(); placeInd(true); if (typeof syncTone === 'function') syncTone();
     if (root.dataset.mode === 'resident') { cancelAnims($$('#resident .rc-svg, #resident .rc-arc, #resident .rc-glow, #resident .rc-ticks, #rcSec')); }
     $$('[data-theme-pick]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.themePick === id); });
@@ -116,6 +122,7 @@ function goView(v) {
   var usingVT = moving();
   var t = vt(function () {
     S.view = v;
+    if (!TOOL && typeof saveUI === 'function') saveUI({ lastView: v });
     $$('.nav[data-view]').forEach(function (b) { if (b.dataset.view === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
     $$('.view').forEach(function (el) { el.classList.toggle('active', el.id === 'view-' + v); });
     if (v === 'home') { D.homeDirty = false; renderHome(true); }

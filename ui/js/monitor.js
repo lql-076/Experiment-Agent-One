@@ -2,8 +2,9 @@
 /* 「后台」页：现在在做什么、各个服务好不好、进展报告和实时日志。
    打开这一页时：任务和服务每 2 秒刷新，进展报告 / 日志每 1.5 秒刷新。
    上次拿到的数据一直留着，再打开这一页时先显示它，不会先闪一下空白。 */
-var MON = { data: null, feed: null, feedVer: -1, logName: '@feed', follow: true, timer: null, logTimer: null, jump: false,
-  trace: null, traceCat: '', traceQ: '', traceBad: false, traceSeq: 0 };
+var MON = { data: null, feed: null, feedVer: -1, logName: (U.monitorTab || '@feed'), follow: true, timer: null, logTimer: null, jump: false,
+  trace: null, traceCat: (U.monitorCat || ''), traceQ: '', traceBad: !!U.monitorBad, traceSeq: 0 };
+if (typeof U !== 'undefined' && U.monitorFollow === false) MON.follow = false;
 var MON_ST = { ok: '正常', warn: '进行中', bad: '出错', off: '没在运行' };
 var FEED_ICON = { head: '▶', step: '●', ok: '✓', warn: '!', err: '✗', ds: 'D', info: '·', prog: '↓' };
 
@@ -109,6 +110,7 @@ function renderMonitor() {
     '<div class="tabbody"><div class="feed" id="feedBox"></div><pre class="logbox" id="logBox" hidden>读取中…</pre><div class="trace" id="traceBox" hidden></div></div>' +
     '<div class="log-f"><label class="cap"><input type="checkbox" id="logFollow"' + (MON.follow ? ' checked' : '') + '> 自动滚到最新</label><span class="cap log-path" id="logPath"></span><button class="linkbtn" id="logCopy">复制路径</button></div></div></div></div>';
   showLogBody();
+  if (MON.logName === '@trace') renderTrace();     // 上次停在行为监控：先把筛选条和空状态画出来，别留一块空白
   if (MON.feed) { MON.jump = true; setTimeout(renderFeed, 0); } else $('#feedBox').innerHTML = '<div class="fr-empty">读取中…</div>';   // 进展报告稍后再填，切页不卡
   fetchLog();
 }
@@ -190,14 +192,15 @@ $('#view-monitor').addEventListener('click', function (ev) {
   var t = ev.target.closest('button'); if (!t) return;
   if (t.dataset.log) {
     MON.logName = t.dataset.log; MON.jump = true;
+    if (typeof saveUI === 'function') saveUI({ monitorTab: MON.logName });
     var tb = $('#logTabs'); if (tb) tb.innerHTML = monTabs();
     showLogBody();
     if (MON.logName === '@feed') { renderFeed(); fetchFeed(); }
     else if (MON.logName === '@trace') { MON.traceSeq++; renderTrace(); fetchTrace(); }
     else { var b = $('#logBox'); if (b) b.textContent = '读取中…'; fetchLog(); }
   }
-  else if (t.dataset.tcat !== undefined) { MON.traceCat = t.dataset.tcat; MON.traceBad = false; MON.traceSeq++; renderTrace(); fetchTrace(); }
-  else if (t.dataset.tbad) { MON.traceBad = true; MON.traceCat = ''; MON.traceSeq++; renderTrace(); fetchTrace(); }
+  else if (t.dataset.tcat !== undefined) { MON.traceCat = t.dataset.tcat; MON.traceBad = false; MON.traceSeq++; if (typeof saveUI === 'function') saveUI({ monitorCat: MON.traceCat, monitorBad: false }); renderTrace(); fetchTrace(); }
+  else if (t.dataset.tbad) { MON.traceBad = true; MON.traceCat = ''; MON.traceSeq++; if (typeof saveUI === 'function') saveUI({ monitorCat: '', monitorBad: true }); renderTrace(); fetchTrace(); }
   else if (t.dataset.goSec) openSec(t.dataset.goSec);
   else if (t.id === 'logCopy') {
     var path = MON.logName === '@feed' ? ((MON.data && MON.data.root) || '') + '\\data\\logs\\report.jsonl' : ($('#logPath') || {}).textContent;
@@ -207,6 +210,7 @@ $('#view-monitor').addEventListener('click', function (ev) {
 $('#view-monitor').addEventListener('change', function (ev) {
   if (ev.target.id !== 'logFollow') return;
   MON.follow = ev.target.checked;
+  if (typeof saveUI === 'function') saveUI({ monitorFollow: MON.follow });
   if (MON.follow) { var b = MON.logName === '@feed' ? $('#feedBox') : $('#logBox'); if (b) b.scrollTop = b.scrollHeight; }
 });
 (function () { var b = document.querySelector('.nav[data-view="monitor"]'); if (b) b.addEventListener('pointerenter', function () { if (!MON.data || Date.now() - (MON.data.ts || 0) * 1000 > 5000) prefetchMonitor(); }); })();

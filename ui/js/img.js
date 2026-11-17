@@ -6,10 +6,17 @@
    - 历史：出过的每一张，能再来一张、当参考图、打开文件夹
    模型在右上角换（按厂商分好的列表，能用 Key 向 API易 拉最新的）。出图时：中间的球转快、进度环走、粒子拼成画面；
    图回来了就用真图的颜色把粒子染上，图浮出来、缩小、沿线飞进右边的格子。动效「关闭」时只画一帧不动。 */
-var IMG = { st: null, timer: null, n: 0, busy: false, tab: null, sel: null, prompt: '', refs: [], ratio: '1:1', cnt: 1, trans: false,
+var IMG = { st: null, timer: null, n: 0, busy: false, tab: (U.imgTab || null), sel: null, prompt: '', refs: [], ratio: (U.imgRatio || '1:1'), cnt: (U.imgCount || 1), trans: !!U.imgTrans,
   hist: null, hq: '', hsel: null, cat: null, vend: null, log: [], wait: {}, mine: null, booted: false, box: null, sig: {} };
 var IMG_RNAME = { '16:9': '横', '9:16': '竖', '1:1': '方', '4:3': '横', '3:4': '竖', '3:2': '横', '2:3': '竖', '5:4': '横', '4:5': '竖', '21:9': '宽' };
 var IMG_TABS = [['single', 'SINGLE', '单张'], ['batch', 'BATCH', '批量'], ['hist', 'HISTORY', '历史']];
+if (IMG.tab && !IMG_TABS.some(function (x) { return x[0] === IMG.tab; })) IMG.tab = null;
+IMG.cnt = [1, 2, 3, 4].indexOf(+IMG.cnt) >= 0 ? +IMG.cnt : 1;
+var imgUiSig = '';
+function imgRemember() {
+  var p = { imgTab: IMG.tab, imgRatio: IMG.ratio, imgCount: IMG.cnt, imgTrans: !!IMG.trans }, s = JSON.stringify(p);
+  if (s !== imgUiSig) { imgUiSig = s; if (typeof saveUI === 'function') saveUI(p); }
+}
 var IMG_DEMO = (function () {
   var R = ['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9'];
   var Z = { '1k': [[1280, 720], [720, 1280], [1280, 1280], [1280, 960], [960, 1280], [1280, 848], [848, 1280], [1280, 1024], [1024, 1280], [1280, 544]],
@@ -48,6 +55,10 @@ function imgLoad() {
   return api('GET', '/api/img', null, 8000).then(function (j) { IMG.st = j; return j; });
 }
 function imgEnter() {
+  if (!IMG.st && $('#view-img')) {
+    $('#view-img').innerHTML = '<div class="page"><div class="ph"><h1>生图</h1><span class="sub">正在读取渲染舱状态……</span></div>' +
+      '<div class="hc"><div class="hc-h"><span class="label">渲染舱</span></div><p class="cap">正在连后端加载模型、清单和上次的设置；加载完会自动接上，不用重新点。</p></div></div>';
+  }
   imgLoad().then(function () { if (!$('#fg')) renderImg(); else imgSync(); }).catch(function () { if (!IMG.st) { IMG.st = IMG_DEMO; renderImg(); } });
   clearInterval(IMG.timer);
   IMG.timer = setInterval(function () {
@@ -115,6 +126,7 @@ function renderImg() {
   var v = $('#view-img'), s = IMG.st;
   if (!s) { v.innerHTML = '<div class="empty">正在读取…</div>'; return; }
   if (!IMG.tab) { var t0 = null; try { t0 = localStorage.getItem('igTab'); } catch (e) { /* 没有就算了 */ } IMG.tab = IMG_TABS.some(function (x) { return x[0] === t0; }) ? t0 : (s.board ? 'batch' : 'single'); }
+  imgRemember();
   if (s.demo && IMG.tab === 'single' && !IMG.prompt) IMG.prompt = '一只发光的水母漂在深蓝的海里，触须像光纤，电影感的冷光。';
   var tab = IMG.tab, host = (s.cfg.base || '').replace(/^https?:\/\//, '').split('/')[0];
   var main;
@@ -592,6 +604,7 @@ function imgUseModel(id) {
 function imgTab(t, force) {
   if (IMG.tab === t && !force) return;
   IMG.tab = t; try { localStorage.setItem('igTab', t); } catch (e) { /* 存不了就算了 */ }
+  imgRemember();
   if (t === 'hist') IMG.hist = null;
   renderImg();
 }
@@ -1064,9 +1077,9 @@ $('#view-img').addEventListener('click', function (ev) {
   if (t.dataset.tier) { imgSet('imgRes', t.dataset.tier); return; }
   if (t.dataset.q) { imgSet('imgQuality', t.dataset.q); return; }
   if (t.dataset.cfg) { imgSet(t.dataset.cfg === 'withdir' ? 'imgWithDir' : 'imgNoText', t.getAttribute('aria-pressed') !== 'true'); return; }
-  if (t.dataset.ratio) { IMG.ratio = t.dataset.ratio; imgCmp(); imgGo(); return; }
-  if (t.dataset.cnt) { IMG.cnt = +t.dataset.cnt; imgCmp(); imgGo(); return; }
-  if (t.id === 'fgTr') { IMG.trans = !IMG.trans; imgCmp(); return; }
+  if (t.dataset.ratio) { IMG.ratio = t.dataset.ratio; imgRemember(); imgCmp(); imgGo(); return; }
+  if (t.dataset.cnt) { IMG.cnt = +t.dataset.cnt; imgRemember(); imgCmp(); imgGo(); return; }
+  if (t.id === 'fgTr') { IMG.trans = !IMG.trans; imgRemember(); imgCmp(); return; }
   if (t.id === 'fgEdT') { var it0 = imgCur(); if (it0) imgEdit(it0.id, { transparent: !it0.transparent }, true); return; }
   if (act === 'tab') imgTab(t.dataset.tab);
   else if (act === 'pick') imgPick();

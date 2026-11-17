@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import (agent, agentkit, agentstate, autostart, bgm, ccode, checks, db, deepseek, docs, events, exam, feed, files, growth, hw, hwctl, imagegen, log_archive, media_batch, memory,
@@ -21,7 +21,7 @@ from . import (agent, agentkit, agentstate, autostart, bgm, ccode, checks, db, d
 from .models import M
 from .qq import BOT
 
-VERSION = "3.5.0"
+VERSION = "3.5.1"
 PORT = 8765
 _bg = []
 
@@ -226,7 +226,11 @@ async def telemetry_middleware(request, call_next):
 
 @app.get("/")
 def index():
-    return FileResponse(paths.UI / "index.html", headers={"Cache-Control": "no-store"})
+    """界面骨架。把当前主题直接写进 <html data-theme>：新开的窗口、清过浏览器缓存时也不会先闪一下深色。"""
+    html = (paths.UI / "index.html").read_text("utf-8")
+    theme = settings.S.get("theme") if settings.S.get("theme") in ("light", "dark") else "dark"
+    html = html.replace('data-theme="dark"', f'data-theme="{theme}"', 1)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 # ---------------- 主题：ui/themes 里一个 .css 就是一套 ----------------
@@ -1083,24 +1087,14 @@ def open_ui():
     设置 › 外观 › 打开方式 可以改成一直用 Edge。"""
     url = f"http://127.0.0.1:{PORT}"
     if paths.IS_WIN:
-        import subprocess
-        import sys
-        from pathlib import Path
         shell = settings.S.get("uiShell", "desk")
         if shell in ("desk", "desk-basic"):
-            exe = Path(sys.executable)
-            pyw = exe.with_name("pythonw.exe")
-            env = dict(os.environ, AGENT_NATIVE_FRAME="0" if shell == "desk-basic" else "1")
             try:
-                p = subprocess.Popen([str(pyw if pyw.exists() else exe), "-m", "app.window"], cwd=str(paths.ROOT), env=env,
-                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                for _ in range(16):          # 8 秒内退出了（退出码 3 = pywebview 用不了）就改用 Edge
-                    time.sleep(0.5)
-                    if p.poll() is not None:
-                        break
-                if p.poll() is None or p.returncode == 0:
+                from . import window as win
+                env = {"AGENT_NATIVE_FRAME": "0" if shell == "desk-basic" else "1"}
+                if win.ensure_main_window(env=env, target="后端拉起界面"):
                     return
-                print("桌面窗口没打开（退出码 %s），改用 Edge 应用模式。" % p.returncode)
+                print("桌面窗口 2 秒内没出现，改用 Edge 应用模式。")
             except Exception as e:
                 print("桌面窗口没打开：", e)
         if _open_edge(url):
@@ -1119,6 +1113,19 @@ def _busy(port):
     with socket.socket() as sk:
         sk.settimeout(0.5)
         return sk.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _backend_ping(timeout=2.0):
+    """端口开着不等于后端还活着：刚点「退出 Agent」时端口会多占一会儿。
+    只有 /api/ping 真的回 200 才算在线，避免 启动.bat 把正在退出的旧后端当成「已运行」然后自己退出。"""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/ping", timeout=timeout) as r:
+            if r.status == 200:
+                return json.loads(r.read().decode("utf-8"))
+    except Exception:
+        pass
+    return None
 
 
 def _replace_old():
@@ -1149,11 +1156,32 @@ def run():
     import uvicorn
     monitor.tee_console()                 # 从一开始就写进 data\logs\backend.log（pythonw 没有黑窗口，出错原因全靠它）
     if _busy(PORT) and not _replace_old():
-        print("Agent 已经在运行了，直接打开界面。")
-        if os.environ.get("AGENT_OPEN_UI") == "1":
-            settings.load()
-            open_ui()
-        return 10
+        j = _backend_ping()
+        if not j:
+            # v3.5.1：端口还被占着，但后端已经不在响应（一般是刚点「退出 Agent」还在收尾）。
+            # 等它退完再自己起，不能当成「已经运行」直接退出。
+            print("端口还被占着，但旧后端已经不在响应：等它退出再启动。")
+            for _ in range(40):
+                time.sleep(0.5)
+                if not _busy(PORT):
+                    break
+                j = _backend_ping(0.8)
+                if j:
+                    break
+        if j:
+            print("Agent 已经在运行了，直接打开界面。")
+            if os.environ.get("AGENT_OPEN_UI") == "1":
+                settings.load()
+                open_ui()
+            if _backend_ping(1.2):
+                return 10
+            print("刚才的后端刚好在退出，继续启动一个新的。")
+            for _ in range(20):
+                if not _busy(PORT):
+                    break
+                time.sleep(0.5)
+        if _busy(PORT):
+            print("端口还被别的程序占着（不是活着的 Agent），尝试启动会失败。")
     monitor.start_guard()                 # 崩溃记录 + 看看上次是不是正常退出的
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning", use_colors=False)
     monitor.clean_exit()

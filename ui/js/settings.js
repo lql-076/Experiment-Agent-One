@@ -203,6 +203,7 @@ function searchHTML() {
     '<div class="btnrow"><button class="btn" id="searchTest"' + (useLive() ? '' : ' disabled') + '>测试一下</button></div></div>';
 }
 function renderSettings() {
+  if (typeof SECTIONS !== 'undefined' && !SECTIONS.some(function (s) { return s.id === S.sec; })) S.sec = 'prep';
   $('#view-settings').innerHTML = '<div class="settings"><nav class="snav" aria-label="设置分类">' +
     otherPagesHTML() +
     SECTIONS.map(function (s) { return '<button class="sitem" data-sec="' + s.id + '" aria-current="' + (s.id === S.sec) + '">' + s.name + (s.id === 'prep' ? '<em class="num" id="prepMini">' + readyCount() + '/' + LIVE_CHECKS.length + '</em>' : '') + '</button>'; }).join('') +
@@ -226,6 +227,7 @@ function secOpened(id) { if (id === 'models') ttsInstLoad(); if (id === 'auto') 
 function goSec(id) {
   if (S.sec === id) return;
   S.sec = id; S.resetArm = false;
+  if (typeof saveUI === 'function') saveUI({ settingsSec: id });
   $$('.sitem').forEach(function (b) { b.setAttribute('aria-current', b.dataset.sec === id); });
   var b = $('#sbody');
   var fill = function () { b.innerHTML = sectionBody(secById(id)); b.scrollTop = 0; if (id === 'remind') fetchReminders(); if (id === 'prep') setupPoll(); if (id === 'osd') requestAnimationFrame(osdFitPrev); secOpened(id); };
@@ -234,10 +236,34 @@ function goSec(id) {
   setTimeout(function () { fill(); replay(b); b.style.opacity = ''; }, 140);
 }
 var pending = {}, pendT = null;
-function pushSet(ch) {
-  if (!LIVE) return;
-  Object.assign(pending, ch); clearTimeout(pendT);
-  pendT = setTimeout(function () { var c = pending; pending = {}; api('PUT', '/api/settings', c).catch(function (e) { toast('设置没存上：' + e.message); }); }, 400);
+function mergePending(ch) {
+  Object.keys(ch || {}).forEach(function (k) {
+    if (k === 'uiState' && ch[k] && typeof ch[k] === 'object') pending.uiState = uiMerge(pending.uiState || {}, ch[k]);
+    else pending[k] = ch[k];
+  });
+}
+function flushSet() {
+  if (!LIVE || !HYDRATED || !Object.keys(pending).length) return;
+  var c = pending; pending = {}; clearTimeout(pendT); pendT = null;
+  api('PUT', '/api/settings', c).catch(function (e) { toast('设置没存上：' + e.message); });
+}
+function pushSet(ch, now) {
+  mergePending(ch || {});
+  if (!LIVE || !HYDRATED) return;       // 首次 GET 成功前绝不写后端；成功后再合并发送
+  clearTimeout(pendT);
+  if (now) flushSet();
+  else pendT = setTimeout(flushSet, 400);
+}
+function markHydrated() {
+  HYDRATED = true;
+  if (Object.keys(pending).length) {
+    Object.keys(pending).forEach(function (k) {
+      if (k === 'uiState') S.set.uiState = uiMerge(S.set.uiState || {}, pending[k]);
+      else S.set[k] = pending[k];
+    });
+    clearTimeout(pendT); pendT = setTimeout(flushSet, 30);
+  }
+  if (typeof flushUI === 'function') flushUI();
 }
 function setVal(k, val) {
   S.set[k] = val; save();
@@ -592,7 +618,7 @@ sv.addEventListener('click', function (ev) {
       S.resetArm = false; var keepDemo = LIVE ? false : true;
       S.set = Object.assign({}, DEFAULTS, { demo: keepDemo }); S.manual = {}; S.safety = {}; save();
       if (LIVE) { var c2 = Object.assign({}, DEFAULTS); delete c2.demo; api('PUT', '/api/settings', c2); ['brain', 'skill', 'cron', 'prompt'].forEach(function (g) { api('POST', '/api/safety', { group: g, value: 'auto' }); }); }
-      root.dataset.theme = S.set.theme; applyLook(); applyOrient(true); renderAll(); startHW(); toast('已恢复默认');
+      root.dataset.theme = S.set.theme; try { localStorage.setItem('agent_theme', S.set.theme); } catch (e) {} applyLook(); applyOrient(true); renderAll(); startHW(); toast('已恢复默认');
     }
   }
 });
@@ -618,7 +644,7 @@ sv.addEventListener('change', function (ev) {
         var d = JSON.parse(r.result); if (!d || d.app !== 'agent-shell') throw new Error('bad');
         if (LIVE) { api('POST', '/api/import', d).then(function () { return loadServer(); }).then(function () { renderAll(); toast('已导入'); }).catch(function (e) { toast(e.message); }); return; }
         S.set = Object.assign({}, DEFAULTS, d.set || {}); S.manual = d.manual || {}; S.safety = d.safety || {}; save();
-        root.dataset.theme = S.set.theme; applyLook(); applyOrient(true); renderAll(); startHW(); toast('已导入');
+        root.dataset.theme = S.set.theme; try { localStorage.setItem('agent_theme', S.set.theme); } catch (e) {} applyLook(); applyOrient(true); renderAll(); startHW(); toast('已导入');
       } catch (e) { toast('这个文件不是本界面导出的设置'); }
     };
     r.readAsText(t.files[0]);

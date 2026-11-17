@@ -4,7 +4,7 @@ function brainList() { return useLive() ? (D.brains || []) : BRAINS; }
 function actLabel(a) { return typeof a === 'string' ? a : a.label; }
 function renderBrains() {
   var v = $('#view-brains'), list = brainList();
-  if (useLive() && !D.brains) { v.innerHTML = '<div class="empty">正在读取…</div>'; return; }
+  if (useLive() && !D.brains) { v.innerHTML = '<div class="page"><div class="ph"><h1>大脑</h1><span class="sub">正在读取各块大脑的成长记录……</span></div><div class="hc"><div class="hc-h"><span class="label">大脑</span></div><p class="cap">正在从后端读取语义路由、技能和记忆的成长数据，加载完会自动显示。</p></div></div>'; return; }
   v.innerHTML = '<div class="page fill"><div class="ph"><h1>大脑</h1><span class="sub">点一块，放大看它的成长记录</span></div><div class="bgrid">' +
     list.map(function (b, i) {
       return '<button class="bcard stag" data-b="' + i + '" style="--c:' + b.c + ';--i:' + i + '"><div class="dwrap bring">' + donutHTML(82, 12, 1) + '<div class="dc"><b class="num' + (String(b.ring[1]).length + String(b.ring[2]).length > 4 ? ' long' : '') + '">' + esc(b.ring[1]) + '<small>' + esc(b.ring[2]) + '</small></b><span>' + esc(b.ring[3]) + '</span></div></div>' +

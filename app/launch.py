@@ -47,6 +47,14 @@ def autostart():
     return False
 
 
+def _log(msg):
+    try:
+        from app import window
+        window._log_line(msg)
+    except Exception:
+        pass
+
+
 def main():
     if "--autostart" in sys.argv and autostart():
         return 0
@@ -54,6 +62,8 @@ def main():
         sys.stdout = open(os.devnull, "w", encoding="utf-8")
     if sys.stderr is None:
         sys.stderr = sys.stdout
+    t0 = time.time()
+    _log("启动.bat：开始启动/检查 Agent 界面")
     try:
         from app import main as backend
         code = backend.run()
@@ -67,9 +77,25 @@ def main():
                 f.write(f"\n{time.strftime('%m-%d %H:%M:%S')}  启动出错：\n{err}\n")
         except Exception:
             pass
+        _log("启动.bat：启动出错，已写 backend.log")
         _box("Agent 没起来", "Agent 启动时出错了：\n\n" + err.strip().splitlines()[-1][:300] +
              f"\n\n完整原因在：{LOG}\n\n常见原因：依赖没装全（再双击一次 启动.bat）；或者想看黑窗口里的输出：在 Agent 文件夹打开命令行，运行「启动.bat 看日志」。")
         return 1
+    # v3.5.1：后端在线（run 返回 10）时，open_ui 已经检查过；这里再以真实 HWND 复检一次。
+    # 万一刚才窗口进程刚好在关闭/卡死，不能“退出码 10”就悄悄结束，必须把界面拉出来或说清楚。
+    if code == 10 and os.environ.get("AGENT_OPEN_UI") == "1":
+        try:
+            from app import window
+            ok = window.ensure_main_window(target="启动.bat 复检")
+            _log("启动.bat：后端已在线，界面复检" + ("成功" if ok else "失败"))
+        except Exception as e:
+            _log(f"启动.bat：界面复检出错：{e}")
+    try:
+        from app import window
+        window._tel("launch_done", "ok" if code in (0, 10, 11, None) else "err",
+                    (time.time() - t0) * 1000, {"code": code}, f"启动.bat 结束，退出码 {code}")
+    except Exception:
+        pass
     if code not in (0, 10, 11, None):
         _box("Agent 停了", f"Agent 没起来或者停了（退出码 {code}）。日志最后几行：\n\n{_tail()}\n\n完整日志：{LOG}")
     return code or 0
