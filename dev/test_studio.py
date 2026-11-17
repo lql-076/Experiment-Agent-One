@@ -336,15 +336,44 @@ def test_image_params():
         cd = imagegen.card("gpt-image-2.6-sunburst")
         imgs, _, _ = asyncio.run(imagegen.call_images(None, "http://x", "sk-x", cd, "p", "9:16", "2k", "high", True, [],
                                                       n=2, custom_w=720, custom_h=1280, complexity="high",
-                                                      gif_frames=8, gif_delay_ms=150))
+                                                      gif_frames=8, gif_delay_ms=150, output_type="gif", output_format="gif"))
     finally:
         imagegen._post = old
     f = seen.get("json") or {}
     check(len(imgs) == 2, "一次回 2 张")
     check(f.get("size") == "720x1280", "自定义宽高透传")
-    check(f.get("n") == 2 and f.get("background") == "transparent", "n / 透明背景")
+    check(f.get("n") == 2, "n 数量")
     check(f.get("output_format") == "gif" and f.get("gif_frames") == 8 and f.get("gif_delay_ms") == 150, "GIF 帧参数")
     check(f.get("complexity") == "high", "规划复杂度")
+    check(f.get("quality") == "high", "质量档透传")
+    check(imagegen.validate_size(512, 512) != "", "512×512 被总像素规则拦下")
+    check(imagegen.validate_size(1024, 1024) == "", "1024×1024 合法")
+    check(imagegen.validate_size(1024, 600) != "", "非 16 倍数被拦下")
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="48"><rect width="64" height="48"/></svg>'
+    check(imagegen.png_info(svg)["fmt"] == "svg" and imagegen.png_info(svg)["w"] == 64, "SVG 文件头识别")
+
+
+def test_default_nodes():
+    print("\n空项目默认节点 / 手动增删")
+    S = studio.Studio()
+    st = S.new_project({"topic": "空项目", "voice_id": "local:preset:Vivian"})
+    p = st["project"]
+    check(len(p["shots"]) == 1 and p.get("placeholder"), "空项目自带 1 个可测分镜/台词节点")
+    check(p["shots"][0]["text"] and p["shots"][0]["image_prompt"], "默认节点有台词和画面提示词")
+    q = S.add_shot({"pid": p["id"]})
+    check(len(q["shots"]) == 2, "手动加一个节点")
+    q = S.del_shot({"pid": p["id"], "id": q["shots"][-1]["id"]})
+    check(len(q["shots"]) == 1, "手动删掉一个节点")
+    q = S.del_shot({"pid": p["id"], "id": q["shots"][-1]["id"]})
+    check(len(q["shots"]) == 0, "删掉最后一个节点")
+    q = S.add_shot({"pid": p["id"]})
+    check(len(q["shots"]) == 1, "删空后还能再加")
+    bad = False
+    try:
+        S.update({"pid": p["id"], "shots": [{"id": q["shots"][0]["id"], "img_resolution": "custom", "img_custom_w": 512, "img_custom_h": 512}]})
+    except Exception:
+        bad = True
+    check(bad, "后端拦下 512×512 自定义尺寸")
 
 
 def test_cache_scheduler():
@@ -446,6 +475,10 @@ def test_render_tracks():
     check((d / "render" / "web_s1.mp4").is_file(), "网页动效轨出来了")
     check((d / "render" / "ppt_s2.png").is_file(), "PPT 卡片图出来了")
     check((d / "output" / "卡片.pptx").is_file(), "自动生成 .pptx")
+    check(p["shots"][0].get("render_cache_hit") is False and p["shots"][1].get("render_cache_hit") is False, "第一次网页/PPT 不是缓存")
+    render_web.render_all(d, p, say=lambda _m: None)
+    render_ppt.render_all(d, p, say=lambda _m: None)
+    check(p["shots"][0].get("render_cache_hit") is True and p["shots"][1].get("render_cache_hit") is True, "第二次网页/PPT 轨道缓存命中")
     video_maker.save_project(p)
     r = video_maker.compose_video(d, srt=True, bgm_volume=.18, progress=lambda _x: None)
     check(Path(r["path"]).is_file() and r["duration"] > 2, "双轨 + 配音 + 字幕合成成片")
@@ -484,11 +517,14 @@ def main():
     shutil.rmtree(RUN, ignore_errors=True)
     RUN.mkdir(parents=True, exist_ok=True)
     old_ws = settings.S.get("wsDir")
+    from app import db
+    old_active = db.kv_get("studio_active")
     settings.S["wsDir"] = str(RUN / "ws")
     try:
         test_parse()
         test_project()
         test_plan_project()
+        test_default_nodes()
         test_style_models()
         test_dual_role_voice()
         test_gemini_pack()

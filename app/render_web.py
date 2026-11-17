@@ -1,4 +1,4 @@
-r"""网页动效渲染轨道（v3.8，R08）。
+r"""网页动效渲染轨道（v3.8 起，v3.8.1 加轨道缓存）。
 
 用 Playwright 无头 Chromium 把一条分镜渲染成短视频轨：
 - 深色毛玻璃底板、缓慢粒子 / 光影、按 timeline 高亮的字幕；
@@ -131,6 +131,23 @@ window.seek = function(t) {{
 </script></body></html>"""
 
 
+def rasterize_svg(svg_path, png_path, W, H):
+    """把 SVG 贴纸/图标渲染成 PNG，给 FFmpeg 当静态画面（最终视频不直接吃 SVG）。"""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise RenderWebError("没装 Playwright，SVG 不能转成画面") from None
+    svg_path, png_path = Path(svg_path), Path(png_path)
+    with sync_playwright() as pw:
+        br = _open_browser(pw)
+        page = br.new_page(viewport={"width": W, "height": H}, device_scale_factor=1)
+        page.goto(svg_path.resolve().as_uri(), wait_until="load")
+        page.wait_for_timeout(200)
+        page.screenshot(path=str(png_path), type="png")
+        br.close()
+    return png_path
+
+
 def _ffmpeg():
     from .video_maker import ffmpeg_exe
     return ffmpeg_exe()
@@ -201,7 +218,8 @@ def render_shot(project_dir, shot, settings, out_path, W, H, fps=24, stopped=Non
 
 
 def render_all(project_dir, project, say=None, stopped=None) -> dict:
-    """渲染所有 render=web 的分镜；返回 {shot_id: 相对路径}。"""
+    """渲染所有 render=web 的分镜；返回 {shot_id: 相对路径}。命中内容寻址缓存直接复用。"""
+    from . import studio_cache as cache
     say = say or (lambda _m: None)
     d = Path(project_dir)
     settings = project.get("settings") or {}
@@ -209,12 +227,27 @@ def render_all(project_dir, project, say=None, stopped=None) -> dict:
     fps = int(settings.get("web_fps") or 24)
     out = {}
     shots = [s for s in (project.get("shots") or []) if s.get("render") == "web"]
+    cfg = {k: settings.get(k) for k in ("web_bg", "web_sub_pos", "web_sub_size", "web_sub_color", "web_gif_scale", "web_motion", "web_fps")}
     for i, s in enumerate(shots):
         if stopped and stopped():
             raise RenderWebError("停下了")
         say(f"网页动效渲染 {i + 1}/{len(shots)}：第 {s.get('n') or s.get('id')} 镜")
         p = d / "render" / f"web_{s['id']}.mp4"
+        src = s.get("gif") or s.get("render_image") or s.get("image") or ""
+        sp = (d / src) if src and not Path(str(src)).is_absolute() else Path(str(src or ""))
+        src_sha = cache.sha_file(sp) if sp.is_file() else ""
+        fp = cache.fingerprint("track_web", {"image_sha": src_sha, "text": s.get("text") or "", "role": s.get("role") or "",
+                                             "tone": s.get("tone") or "", "duration": float(s.get("duration") or 5),
+                                             "start": float(s.get("start") or 0), "end": float(s.get("end") or 0),
+                                             "w": W, "h": H, "fps": fps, "cfg": cfg})
+        if cache.hit_to(fp, p, "tracks"):
+            s["render_cache_hit"] = True
+            s["render_clip"] = f"render/{p.name}"
+            out[s["id"]] = s["render_clip"]
+            continue
+        s["render_cache_hit"] = False
         render_shot(d, s, settings, p, W, H, fps, stopped)
+        cache.put(fp, p, "tracks", {"type": "web", "w": W, "h": H, "fps": fps})
         s["render_clip"] = f"render/{p.name}"
         out[s["id"]] = s["render_clip"]
     return out

@@ -235,6 +235,14 @@ def compose_video(project_dir, srt=True, bgm_volume=0.18, kenburns=True, stopped
             q = s.get("render_image") or s.get("image") or ""
             if q and _abs(d, q).exists():
                 v = {"kind": "video" if str(q).lower().endswith(".gif") else "image", "path": _abs(d, q)}
+        if v and v["kind"] == "image" and v["path"].suffix.lower() == ".svg":
+            png = v["path"].with_name(v["path"].stem + "_raster.png")
+            try:
+                from . import render_web
+                render_web.rasterize_svg(v["path"], png, W, H)
+            except Exception as e:
+                raise MakerError(f"SVG 贴纸转画面失败：{str(e)[:160]}") from None
+            v = {"kind": "image", "path": png}
         visuals.append(v)
     have = [x for x in visuals if x]
     if not have:

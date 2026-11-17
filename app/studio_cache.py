@@ -1,4 +1,4 @@
-r"""视频工坊 · 内容寻址缓存（v3.8，R08）。
+r"""视频工坊 · 内容寻址缓存（v3.8 起，v3.8.1 加网页/PPT 轨道缓存）。
 
 目标：同一条生图/配音/配乐参数，不管在哪个项目、哪次重跑，只要指纹完全一样，就直接复用文件，
 不再调用付费 API / 本地模型。
@@ -84,7 +84,10 @@ def put(fp: str, src, kind: str, meta=None) -> Path:
     if not src.is_file():
         raise FileNotFoundError(src)
     ext = src.suffix.lower() or ".bin"
-    d = cache_root() / kind / fp[:2]
+    if kind in ("tracks", "track"):
+        d = cache_root() / "tracks"
+    else:
+        d = cache_root() / kind / fp[:2]
     d.mkdir(parents=True, exist_ok=True)
     dest = d / (fp + ext)
     with _LOCK:

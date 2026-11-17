@@ -1,4 +1,4 @@
-r"""自媒体视频工坊（v3.8，R08）：动态子工作流 + 内容寻址缓存 + 三路并行 DAG + 双轨渲染。
+r"""自媒体视频工坊（v3.8.1，R09）：默认可测子节点 + 全参数生图 + 内容寻址缓存 + 三路并行 DAG + 双轨缓存渲染。
 
 八个顶层节点 + 动态子工作流：
   ① 剧本与策划：主题 / 完整口播；导出 Gemini 策划包；导入 Gemini .md/.json；DeepSeek 一键拆解。
@@ -424,6 +424,7 @@ def image_models() -> list:
             out.append({"id": m.get("id"), "name": m.get("name") or m.get("id"), "vendor": g.get("name") or "",
                         "price": m.get("price"), "route": m.get("route") or "", "d": m.get("d") or "",
                         "listed": m.get("listed"), "known": m.get("known"), "gif": bool(m.get("gif")),
+                        "svg": bool(m.get("svg")), "max_refs": int(m.get("max_refs") or 0),
                         "tiers": m.get("tiers") or []})
     return out
 
@@ -444,9 +445,11 @@ def _init_role_voices(p, voice=None):
     st.setdefault("img_model", settings.S.get("imgModel") or imagegen.DEFAULT_MODEL)
     st.setdefault("img_resolution", settings.S.get("imgRes") or "2k")
     st.setdefault("img_quality", settings.S.get("imgQuality") or "high")
-    st.setdefault("img_complexity", "")
+    st.setdefault("img_complexity", "medium")
     st.setdefault("img_transparent", False)
     st.setdefault("img_gif", False)
+    st.setdefault("img_output", "normal")
+    st.setdefault("img_format", "png")
     st.setdefault("gif_frames", 8)
     st.setdefault("gif_delay_ms", 150)
     st.setdefault("img_n", 1)
@@ -476,12 +479,23 @@ def _shot_voice(p, s) -> dict:
     rv = (p.get("settings") or {}).get("role_voices") or {}
     vid = str(s.get("speaker") or rv.get(s.get("role") or "") or (p.get("settings", {}).get("voice") or {}).get("id") or "").strip()
     try:
-        return voice_config(vid)
+        cfg = voice_config(vid)
     except HTTPException:
-        try:
-            return voice_config(str((p.get("settings", {}).get("voice") or {}).get("id") or "local:preset:Vivian"))
-        except HTTPException:
-            return {"engine": "local", "mode": "preset", "speaker": "Vivian", "label": "Vivian", "id": "local:preset:Vivian"}
+        cfg = None
+    eng = str(s.get("tts_engine") or "auto")
+    if cfg and eng in ("local", "cloud") and cfg.get("engine") != eng:
+        pool = [v for v in voice_options() if v.get("engine") == eng]
+        if pool:
+            try:
+                cfg = voice_config(pool[0]["id"])
+            except HTTPException:
+                pass
+    if cfg:
+        return cfg
+    try:
+        return voice_config(str((p.get("settings", {}).get("voice") or {}).get("id") or "local:preset:Vivian"))
+    except HTTPException:
+        return {"engine": "local", "mode": "preset", "speaker": "Vivian", "label": "Vivian", "id": "local:preset:Vivian"}
 
 
 def _img_cfg(p, s) -> dict:
@@ -495,9 +509,11 @@ def _img_cfg(p, s) -> dict:
         "ratio": pick("img_ratio", p.get("ratio") or "9:16"),
         "resolution": pick("img_resolution", st.get("img_resolution") or settings.S.get("imgRes") or "2k"),
         "quality": pick("img_quality", st.get("img_quality") or settings.S.get("imgQuality") or "high"),
-        "complexity": pick("img_complexity", st.get("img_complexity") or ""),
+        "complexity": pick("img_complexity", st.get("img_complexity") or "medium"),
         "transparent": bool(pick("img_transparent", st.get("img_transparent", False))),
-        "gif": bool(pick("img_gif", st.get("img_gif", False))),
+        "output": pick("img_output", st.get("img_output", "gif" if st.get("img_gif") else "normal")),
+        "format": pick("img_format", st.get("img_format", "png")),
+        "gif": False,
         "gif_frames": int(pick("gif_frames", st.get("gif_frames", 8)) or 8),
         "gif_delay_ms": int(pick("gif_delay_ms", st.get("gif_delay_ms", 150)) or 150),
         "n": max(1, min(4, int(pick("img_n", st.get("img_n", 1)) or 1))),
@@ -506,8 +522,23 @@ def _img_cfg(p, s) -> dict:
     }
     if cfg["ratio"] not in imagegen.RATIOS:
         cfg["ratio"] = p.get("ratio") if p.get("ratio") in imagegen.RATIOS else "9:16"
-    if cfg["resolution"] not in imagegen.TIERS:
+    if cfg["resolution"] not in (*imagegen.TIERS, "custom"):
         cfg["resolution"] = "2k"
+    if cfg["resolution"] == "custom":
+        if not cfg["custom_w"] or not cfg["custom_h"]:
+            raise StudioError("自定义分辨率要同时填宽和高")
+        err = imagegen.validate_size(cfg["custom_w"], cfg["custom_h"])
+        if err:
+            raise StudioError("自定义尺寸不合规：" + err)
+    if cfg["output"] not in ("normal", "gif", "svg"):
+        cfg["output"] = "normal"
+    cfg["gif"] = cfg["output"] == "gif"
+    cfg["gif_frames"] = max(2, min(16, cfg["gif_frames"]))
+    cfg["gif_delay_ms"] = max(20, min(2000, cfg["gif_delay_ms"]))
+    if cfg["custom_w"] or cfg["custom_h"]:
+        err = imagegen.validate_size(cfg["custom_w"], cfg["custom_h"])
+        if err:
+            raise StudioError("自定义尺寸不合规：" + err)
     return cfg
 
 
@@ -534,7 +565,7 @@ def _ref_paths(p, s):
         path = Path(q)
         if not path.is_absolute():
             path = d / q
-        if path.is_file() and path.stat().st_size <= 10 << 20:
+        if path.is_file() and path.stat().st_size <= 20 << 20 and len(out) < 16:
             out.append(path)
     return out
 
@@ -556,7 +587,8 @@ def _image_fps(p, s, cfg=None):
     ref_sha = [cache.sha_file(x) for x in refs]
     base = {"model": cfg["model"], "prompt": prompt, "aspect_ratio": cfg["ratio"], "resolution": cfg["resolution"],
             "quality": cfg["quality"], "complexity": cfg["complexity"], "custom_w": cfg["custom_w"], "custom_h": cfg["custom_h"],
-            "transparent": bool(cfg["transparent"]), "gif_frames": cfg["gif_frames"], "gif_delay_ms": cfg["gif_delay_ms"],
+            "transparent": bool(cfg["transparent"]), "output_type": cfg["output"], "output_format": cfg["format"],
+            "gif_frames": cfg["gif_frames"], "gif_delay_ms": cfg["gif_delay_ms"],
             "ref_image_sha256": ref_sha, "n": cfg["n"]}
     return [cache.fingerprint("image", dict(base, variant=i)) for i in range(cfg["n"])], prompt, cd, refs
 
@@ -598,24 +630,28 @@ def _bgm_fp(p):
 
 
 IMG_SETTING_KEYS = ("img_model", "img_resolution", "img_quality", "img_complexity", "img_transparent",
-                    "img_gif", "gif_frames", "gif_delay_ms", "img_n", "img_custom_w", "img_custom_h")
+                    "img_gif", "img_output", "img_format", "gif_frames", "gif_delay_ms", "img_n", "img_custom_w", "img_custom_h")
 
 
 def _norm_img_setting(k, v, cur):
     if k == "img_model":
         return str(v or "").strip()[:120]
     if k == "img_resolution":
-        return v if v in imagegen.TIERS else (cur or "2k")
+        return v if v in (*imagegen.TIERS, "custom") else (cur or "2k")
     if k in ("img_quality", "img_complexity"):
         return str(v or "").strip()[:30]
     if k in ("img_transparent", "img_gif"):
         return bool(v)
+    if k == "img_output":
+        return v if v in ("normal", "gif", "svg") else "normal"
+    if k == "img_format":
+        return v if v in ("png", "jpeg", "webp") else "png"
     if k == "img_n":
         return max(1, min(4, int(v or 1)))
     if k == "gif_frames":
-        return max(2, min(60, int(v or 8)))
+        return max(2, min(16, int(v or 8)))
     if k == "gif_delay_ms":
-        return max(40, min(2000, int(v or 150)))
+        return max(20, min(2000, int(v or 150)))
     if k in ("img_custom_w", "img_custom_h"):
         return max(0, min(4096, int(v or 0)))
     return v
@@ -632,6 +668,31 @@ def _stale_images(p, msg):
 def _stale_track(p, track, msg):
     _mark(p, track, "stale", msg)
     _mark(p, "video", "stale", msg)
+
+
+def _default_shot(p, n=1):
+    _init_role_voices(p)
+    role = ROLES[(n - 1) % 2]
+    rv = (p.get("settings") or {}).get("role_voices") or {}
+    return {"id": f"s{n}", "text": f"这是第 {n} 句测试台词，可以直接改成你要念的内容。",
+            "role": role, "speaker": str(rv.get(role) or _default_voice(p).get("id") or ""),
+            "tone": "轻松调侃" if role == "紫苏" else "冷静吐槽",
+            "image_prompt": f"第 {n} 个测试画面：简洁、清晰、适合竖屏短视频，主体居中偏上。",
+            "seconds_hint": 4.0, "image": "", "tts": "", "duration": 0.0, "start": 0.0, "end": 0.0,
+            "image_st": "idle", "tts_st": "idle", "image_err": "", "tts_err": "", "image_ver": 0, "tts_ver": 0,
+            "img_variants": [], "img_selected": 0, "img_fps": [], "image_cache_hit": False, "tts_cache_hit": False,
+            "img_output": "normal", "img_format": "png", "tts_engine": "auto",
+            "render": "static", "render_clip": "", "render_image": "", "ppt_points": [], "img_refs": []}
+
+
+def ensure_default_shots(p):
+    """空项目开箱可测：没有分镜、且用户没把最后一个删掉时，自动放 1 个可独立运行的测试分镜。"""
+    if p.get("shots") or p.get("no_auto_shot"):
+        return False
+    p["shots"] = [_default_shot(p, 1)]
+    p["placeholder"] = True
+    video_maker.save_project(p)
+    return True
 
 
 def _render_mode(s):
@@ -727,6 +788,7 @@ class Studio:
                 "target_seconds": p.get("target_seconds") or 75, "topic": p.get("topic") or "",
                 "source_text": p.get("source_text") or "", "bgm_prompt": p.get("bgm_prompt") or "",
                 "settings": p.get("settings") or {}, "node_layout": p.get("node_layout") or {},
+                "placeholder": bool(p.get("placeholder")), "no_auto_shot": bool(p.get("no_auto_shot")),
                 "steps": steps, "files": files, "shots": shots, "bgm_cache_hit": bool(p.get("bgm_cache_hit")),
                 "total_seconds": round(total or 0, 2), "duration": round(float(p.get("duration") or 0), 2),
                 "resolution": p.get("resolution") or "", "st": p.get("st") or "idle", "error": p.get("error") or "",
@@ -745,6 +807,7 @@ class Studio:
                 self._recover(p)
                 _init_role_voices(p)
                 p["settings"].setdefault("img_model", settings.S.get("imgModel") or imagegen.DEFAULT_MODEL)
+                ensure_default_shots(p)
                 db.kv_set("studio_active", active)
             except video_maker.MakerError:
                 p = None
@@ -758,6 +821,8 @@ class Studio:
     def select(self, pid):
         p = video_maker.load_project(pid)
         self._recover(p)
+        _init_role_voices(p)
+        ensure_default_shots(p)
         db.kv_set("studio_active", p["id"])
         return self.state(p["id"])
 
@@ -808,6 +873,8 @@ class Studio:
         p["settings"]["voice"] = voice
         p["settings"]["img_model"] = body.get("img_model") or settings.S.get("imgModel") or imagegen.DEFAULT_MODEL
         _init_role_voices(p, voice)
+        p["shots"] = [_default_shot(p, 1)]
+        p["placeholder"] = True
         video_maker.save_project(p)
         db.kv_set("studio_active", p["id"])
         return self.state(p["id"])
@@ -844,6 +911,8 @@ class Studio:
         rv = (p.get("settings") or {}).get("role_voices") or {}
         p["style"] = STYLE_TAG
         p.setdefault("node_layout", {})
+        p["placeholder"] = False
+        p["no_auto_shot"] = False
         p["shots"] = []
         for i, s in enumerate(j["shots"]):
             role = s.get("role") if s.get("role") in ROLES else ROLES[i % 2]
@@ -857,7 +926,8 @@ class Studio:
                                "image_st": "idle", "tts_st": "idle", "image_err": "", "tts_err": "",
                                "image_ver": 0, "tts_ver": 0, "img_variants": [], "img_selected": 0,
                                "img_fps": [], "image_cache_hit": False, "tts_cache_hit": False,
-                               "render": render, "render_clip": "", "render_image": "", "ppt_points": []})
+                               "img_output": "normal", "img_format": "png", "tts_engine": "auto",
+                               "render": render, "render_clip": "", "render_image": "", "ppt_points": [], "img_refs": []})
         if had:
             for k in ("voice", "srt", "timeline", "bgm", "video", "cover"):
                 p.get("files", {}).pop(k, None)
@@ -955,7 +1025,7 @@ class Studio:
                 refs = st.get("img_refs")
                 if isinstance(refs, str):
                     refs = [x.strip() for x in re.split(r"[\n,，;；]+", refs) if x.strip()]
-                p["settings"]["img_refs"] = [str(x)[:300] for x in (refs or [])][:8] if isinstance(refs, list) else []
+                p["settings"]["img_refs"] = [str(x)[:300] for x in (refs or [])][:16] if isinstance(refs, list) else []
                 changed_img = True
             if changed_img:
                 _stale_images(p, "生图参数改了：要按新参数重出")
@@ -1061,7 +1131,7 @@ class Studio:
                     refs = q.get("img_refs")
                     if isinstance(refs, str):
                         refs = [x.strip() for x in re.split(r"[\n,，;；]+", refs) if x.strip()]
-                    s["img_refs"] = [str(x)[:300] for x in (refs or [])][:8] if isinstance(refs, list) else []
+                    s["img_refs"] = [str(x)[:300] for x in (refs or [])][:16] if isinstance(refs, list) else []
                     changed_img = True
                 if "img_selected" in q and s.get("img_variants"):
                     try:
@@ -1095,6 +1165,14 @@ class Studio:
                     if pts != (s.get("ppt_points") or []):
                         s["ppt_points"] = pts
                         _stale_track(p, "ppt", "PPT 卡片要点改了：要重新渲染")
+                if "tts_engine" in q:
+                    eng = str(q.get("tts_engine") or "auto")
+                    eng = eng if eng in ("auto", "local", "cloud") else "auto"
+                    if eng != (s.get("tts_engine") or "auto"):
+                        s["tts_engine"] = eng
+                        s["tts_st"] = "stale"
+                        _mark(p, "tts", "stale", "配音引擎改了：要重配")
+                        _mark(p, "video", "stale", "配音引擎改了：要重新合成")
                 if "role" in q and str(q["role"]).strip() != (s.get("role") or ""):
                     role = str(q["role"]).strip()[:12]
                     if role not in ROLES:
@@ -1129,6 +1207,13 @@ class Studio:
                     s["image_st"] = "stale"
                     _mark(p, "images", "stale", "画面提示词改了：要重出这一张")
                     _mark(p, "video", "stale", "画面改了：要重新合成")
+        # 自定义尺寸刚性校验（项目默认 + 每个分镜覆盖）
+        scopes = [p.get("settings") or {}] + list(p.get("shots") or [])
+        for sc in scopes:
+            if sc.get("img_resolution") == "custom" or sc.get("img_custom_w") or sc.get("img_custom_h"):
+                err = imagegen.validate_size(sc.get("img_custom_w") or 0, sc.get("img_custom_h") or 0)
+                if err:
+                    raise HTTPException(400, "自定义尺寸不合规：" + err + "（宽高 16 倍数、长边≤3840、比例≤3:1、像素 655,360–8,294,400）")
         video_maker.save_project(p)
         return self.project_view(p)
 
@@ -1153,6 +1238,8 @@ class Studio:
             p["settings"]["voice"] = voice
             p["settings"]["img_model"] = body.get("img_model") or settings.S.get("imgModel") or imagegen.DEFAULT_MODEL
             _init_role_voices(p, voice)
+            p["shots"] = [_default_shot(p, 1)]
+            p["placeholder"] = True
             p["source_text"] = text
             video_maker.save_project(p)
         else:
@@ -1248,7 +1335,7 @@ class Studio:
             self._task = None
 
     async def _all(self, p):
-        if not p.get("shots"):
+        if (not p.get("shots")) or (p.get("placeholder") and (p.get("topic") or p.get("source_text"))):
             self.job.update(stage=1, msg="第一步：拆解分镜", pct=2)
             j, cny = await _ask_plan(p.get("topic") or "", p.get("source_text") or "", p.get("ratio"), p.get("target_seconds"))
             p["title"], p["desc"], p["tags"], p["bgm_prompt"] = j["title"], j["desc"], j["tags"], j["bgm_prompt"]
@@ -1290,7 +1377,8 @@ class Studio:
             self._span = (55, 10)
             try:
                 await asyncio.to_thread(render_web.render_all, p["dir"], p, lambda m: self._progress(30, m), self._stop.is_set)
-                _mark(p, "web", "ok", f"{len(web)} 镜网页动效好了", 100)
+                hits = sum(1 for s in web if s.get("render_cache_hit"))
+                _mark(p, "web", "ok", f"{len(web)} 镜网页动效好了" + (f"（{hits} 镜缓存命中）" if hits else ""), 100)
             except Exception as e:
                 if self._stop.is_set():
                     raise StopRequested()
@@ -1304,7 +1392,8 @@ class Studio:
             self._span = (60, 12)
             try:
                 await asyncio.to_thread(render_ppt.render_all, p["dir"], p, lambda m: self._progress(40, m), self._stop.is_set)
-                _mark(p, "ppt", "ok", f"{len(ppt)} 镜 PPT 卡片好了", 100)
+                hits = sum(1 for s in ppt if s.get("render_cache_hit"))
+                _mark(p, "ppt", "ok", f"{len(ppt)} 镜 PPT 卡片好了" + (f"（{hits} 镜缓存命中）" if hits else ""), 100)
             except Exception as e:
                 if self._stop.is_set():
                     raise StopRequested()
@@ -1386,6 +1475,10 @@ class Studio:
     async def _image_one(self, p, s):
         cfg = _img_cfg(p, s)
         fps, prompt, cd, refs = _image_fps(p, s, cfg)
+        if cfg["output"] == "gif" and not cd.get("gif"):
+            raise StudioError(f"{cd.get('name') or cfg['model']} 不支持 GIF：换 GPT Image 2.6 Sunburst 或普通/ SVG 模式")
+        if cfg["output"] == "svg" and not cd.get("svg"):
+            raise StudioError(f"{cd.get('name') or cfg['model']} 不支持 SVG：换 GPT Image 2.6 Sunburst 或普通/ GIF 模式")
         sid = s["id"]
         variants, all_hit, hit_any = [], True, False
         for i, fp in enumerate(fps):
@@ -1425,7 +1518,8 @@ class Studio:
                     c, base, key, cd, prompt, cfg["ratio"], cfg["resolution"], cfg["quality"], bool(cfg["transparent"]),
                     [x.read_bytes() for x in refs], n=cfg["n"], custom_w=cfg["custom_w"] or None,
                     custom_h=cfg["custom_h"] or None, complexity=cfg["complexity"] or None,
-                    gif_frames=cfg["gif_frames"] if cfg["gif"] else None, gif_delay_ms=cfg["gif_delay_ms"] if cfg["gif"] else None)
+                    gif_frames=cfg["gif_frames"] if cfg["gif"] else None, gif_delay_ms=cfg["gif_delay_ms"] if cfg["gif"] else None,
+                    output_type=cfg["output"], output_format=cfg["format"])
         if not imgs:
             raise imagegen.ImgError("没返回图片")
         variants, fps2 = [], []
@@ -1809,12 +1903,56 @@ class Studio:
                 pass
 
     # ---------- 发布 ----------
+    def add_shot(self, body) -> dict:
+        pid = str(body.get("pid") or db.kv_get("studio_active") or "")
+        p = video_maker.load_project(pid)
+        _init_role_voices(p)
+        used = {str(s.get("id")) for s in p.get("shots") or []}
+        n = len(p.get("shots") or []) + 1
+        while f"s{n}" in used:
+            n += 1
+        s = _default_shot(p, n)
+        for k in ("text", "image_prompt", "tone"):
+            if body.get(k):
+                s[k] = str(body[k])[:500]
+        if body.get("role") in ROLES:
+            s["role"] = body["role"]
+            rv = (p.get("settings") or {}).get("role_voices") or {}
+            s["speaker"] = rv.get(s["role"]) or s["speaker"]
+        p.setdefault("shots", []).append(s)
+        p["placeholder"] = False
+        p["no_auto_shot"] = False
+        _mark(p, "images", "stale", "手动添加了分镜：要生图")
+        _mark(p, "tts", "stale", "手动添加了分镜：要配音")
+        _mark(p, "video", "stale", "分镜变了：要重新合成")
+        video_maker.save_project(p)
+        return self.project_view(p)
+
+    def del_shot(self, body) -> dict:
+        pid = str(body.get("pid") or db.kv_get("studio_active") or "")
+        sid = str(body.get("id") or "")
+        p = video_maker.load_project(pid)
+        before = len(p.get("shots") or [])
+        p["shots"] = [s for s in (p.get("shots") or []) if str(s.get("id")) != sid]
+        if len(p["shots"]) == before:
+            raise HTTPException(404, "没有这个分镜")
+        p["placeholder"] = False
+        if not p["shots"]:
+            p["no_auto_shot"] = True
+        _mark(p, "images", "stale", "删了分镜：要重出/重新合成")
+        _mark(p, "tts", "stale", "删了分镜：要重配")
+        _mark(p, "video", "stale", "删了分镜：要重新合成")
+        video_maker.save_project(p)
+        return self.project_view(p)
+
     def add_ref(self, body) -> dict:
         pid = str(body.get("pid") or db.kv_get("studio_active") or "")
         p = video_maker.load_project(pid)
         b = imagegen.read_uri(body.get("data") or "")
         pi = imagegen.png_info(b)
-        ext = pi["fmt"] if pi["fmt"] in ("png", "jpg", "webp", "gif") else "png"
+        if pi["fmt"] not in ("png", "jpg"):
+            raise HTTPException(400, "参考图只收 JPG / PNG（单张 ≤20MB，最多 16 张）")
+        ext = pi["fmt"]
         d = Path(p["dir"]) / "refs"
         d.mkdir(parents=True, exist_ok=True)
         h = cache.sha_file_bytes(b)[:12] if hasattr(cache, "sha_file_bytes") else __import__("hashlib").sha256(b).hexdigest()[:12]
@@ -2034,6 +2172,26 @@ def studio_media(pid: str, path: str, v: int = 0):
     if d.resolve() not in q.parents or q.suffix.lower() not in MEDIA_EXT or not q.is_file():
         raise HTTPException(404, "没有这个文件")
     return FileResponse(q, headers={"Cache-Control": "private, max-age=31536000"})
+
+
+@api.post("/api/studio/shot_add")
+def studio_shot_add(body: dict = Body(default={})):
+    try:
+        return {"project": S.add_shot(body)}
+    except HTTPException:
+        raise
+    except video_maker.MakerError as e:
+        raise HTTPException(404, str(e)) from None
+
+
+@api.post("/api/studio/shot_delete")
+def studio_shot_delete(body: dict = Body(...)):
+    try:
+        return {"project": S.del_shot(body)}
+    except HTTPException:
+        raise
+    except video_maker.MakerError as e:
+        raise HTTPException(404, str(e)) from None
 
 
 @api.post("/api/studio/ref")

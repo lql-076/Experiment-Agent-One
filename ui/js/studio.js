@@ -243,20 +243,30 @@ function stRatioOptions(cur) {
   rs.forEach(function (r) { out.push('<option' + (r === cur ? ' selected' : '') + '>' + r + '</option>'); });
   return out.join('');
 }
+function stOutType(s, sid) {
+  var cur = s.img_output || (s.img_gif ? 'gif' : 'normal');
+  return '<div class="seg st-outtype" role="group" aria-label="出图类型">' +
+    [['normal', '普通'], ['gif', 'GIF'], ['svg', 'SVG']].map(function (x) {
+      return '<button data-out="' + esc(sid) + ':' + x[0] + '" aria-pressed="' + (cur === x[0]) + '">' + x[1] + '</button>';
+    }).join('') + '</div>';
+}
 function stShotImgHTML(p, s) {
+  var st = (p && p.settings) || {};
   var cfgModel = s.img_model || (p && p.img_model) || STUDIO.pref.imgModel || (studioSt() && studioSt().default_model) || '';
   var ratio = s.img_ratio || (p && p.ratio) || '9:16';
-  var res = s.img_resolution || ((p && p.settings && p.settings.img_resolution) || '2k');
-  var n = s.img_n || ((p && p.settings && p.settings.img_n) || 1);
-  var q = s.img_quality || ((p && p.settings && p.settings.img_quality) || 'high');
-  var cx = s.img_complexity || ((p && p.settings && p.settings.img_complexity) || '');
-  var tr = s.img_transparent !== undefined ? !!s.img_transparent : !!((p && p.settings && p.settings.img_transparent));
-  var gf = s.img_gif !== undefined ? !!s.img_gif : !!((p && p.settings && p.settings.img_gif));
-  var frames = s.gif_frames || ((p && p.settings && p.settings.gif_frames) || 8);
-  var delay = s.gif_delay_ms || ((p && p.settings && p.settings.gif_delay_ms) || 150);
-  var cw = s.img_custom_w || ((p && p.settings && p.settings.img_custom_w) || 0);
-  var ch = s.img_custom_h || ((p && p.settings && p.settings.img_custom_h) || 0);
-  var refs = (s.img_refs || []).join(' ');
+  var res = s.img_resolution || st.img_resolution || '2k';
+  if (['1k', '2k', '4k', 'custom'].indexOf(res) < 0) res = '2k';
+  var n = s.img_n || st.img_n || 1;
+  var q = s.img_quality || st.img_quality || 'high';
+  var cx = s.img_complexity || st.img_complexity || 'medium';
+  var out = s.img_output || (s.img_gif ? 'gif' : (st.img_output || 'normal'));
+  var fmt = s.img_format || st.img_format || 'png';
+  var tr = s.img_transparent !== undefined ? !!s.img_transparent : !!st.img_transparent;
+  var frames = s.gif_frames || st.gif_frames || 8;
+  var delay = s.gif_delay_ms || st.gif_delay_ms || 150;
+  var cw = s.img_custom_w || st.img_custom_w || 1024;
+  var ch = s.img_custom_h || st.img_custom_h || 1024;
+  var refs = s.img_refs || [];
   var render = s.render || 'static';
   var urls = s.img_variant_urls || [], rels = s.img_variants || [];
   if (!urls.length && s.image_url) { urls = [s.image_url]; rels = [s.image]; }
@@ -264,42 +274,60 @@ function stShotImgHTML(p, s) {
   var thumbs = urls.length ? urls.map(function (u, i) {
     return '<button class="st-thumb-pick' + (i === sel ? ' on' : '') + '" data-pick="' + esc(s.id) + ':' + i + '" title="选这张"><img src="' + esc(u) + '" alt=""></button>';
   }).join('') : '<span class="st-nohint">还没有图</span>';
+  var refHtml = refs.length ? refs.map(function (r, i) {
+    var u = String(r).indexOf('shot:') === 0 ? '' : stMediaUrl(p.id, r, 0);
+    return '<span class="st-ref" title="' + esc(r) + '">' + (u ? '<img src="' + esc(u) + '" alt="">' : '<b>' + esc(r) + '</b>') +
+      '<button data-refdel="' + esc(s.id) + ':' + i + '" title="移除">×</button></span>';
+  }).join('') : '';
+  var gifCalc = Math.round(+frames * +delay / 100) / 10;
+  var sizeMsg = '';
+  var typeHtml = out === 'gif'
+    ? '<div class="st-subrow"><label class="st-lab">帧数</label><input class="inp st-num2" data-f="gif_frames" type="number" min="2" max="16" value="' + frames + '"><label class="st-lab">每帧 ms</label><input class="inp st-num2" data-f="gif_delay_ms" type="number" min="20" max="2000" value="' + delay + '"><span class="st-hint" data-gifcalc="' + esc(s.id) + '">共 ' + frames + ' 帧，约 ' + gifCalc + ' 秒</span></div>'
+    : out === 'svg'
+      ? '<div class="st-hint">SVG 矢量图：适合图标/贴纸素材，背景透明。</div>'
+      : '<div class="st-subrow"><label class="st-lab">格式</label><select data-f="img_format"><option value="png"' + (fmt === 'png' ? ' selected' : '') + '>PNG 无损</option><option value="jpeg"' + (fmt === 'jpeg' ? ' selected' : '') + '>JPEG 高效</option><option value="webp"' + (fmt === 'webp' ? ' selected' : '') + '>WebP 更小</option></select>' +
+        '<label class="st-chk"><input type="checkbox" data-f="img_transparent"' + (tr ? ' checked' : '') + '>透明 alpha</label></div>';
   return '<div class="st-sub" data-sid="' + esc(s.id) + '" data-kind="img">' +
     '<div class="st-sub-h"><b>' + pad(s.n) + ' · ' + esc(s.role || '') + '</b>' + stSubLamp('img', s) +
     '<em class="st-tag ' + (s.image_cache_hit ? 'ok' : '') + '">' + (s.image_cache_hit ? '缓存命中' : (s.image_ok ? '已出图' : '待出图')) + '</em><span class="sp"></span>' +
-    '<button class="st-subrun" data-subrun="images:' + esc(s.id) + '">▶</button></div>' +
+    '<button class="linkbtn" data-del-shot="' + esc(s.id) + '">删除</button><button class="st-subrun" data-subrun="images:' + esc(s.id) + '" data-autoplay="0">▶ 单独生成</button></div>' +
+    stOutType(s, s.id) +
     '<div class="st-thumbs">' + thumbs + '</div>' +
     '<div class="st-subrow"><select data-f="img_model">' + stModelOptions(cfgModel) + '</select><select data-f="img_ratio">' + stRatioOptions(ratio) + '</select></div>' +
-    '<div class="st-subrow"><select data-f="img_resolution"><option' + (res === '1k' ? ' selected' : '') + '>1k</option><option' + (res === '2k' ? ' selected' : '') + '>2k</option><option' + (res === '4k' ? ' selected' : '') + '>4k</option></select>' +
+    '<div class="st-subrow"><select data-f="img_resolution"><option value="1k"' + (res === '1k' ? ' selected' : '') + '>1K 标准</option><option value="2k"' + (res === '2k' ? ' selected' : '') + '>2K 高清</option><option value="4k"' + (res === '4k' ? ' selected' : '') + '>4K 超清</option><option value="custom"' + (res === 'custom' ? ' selected' : '') + '>自定义</option></select>' +
     '<select data-f="img_n">' + [1, 2, 3, 4].map(function (x) { return '<option' + (+n === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>' +
-    '<select data-f="img_quality">' + ['auto', 'low', 'medium', 'high', 'xhigh', 'max'].map(function (x) { return '<option' + (q === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>' +
-    '<select data-f="img_complexity">' + [['', '复杂度自动'], ['low', '低'], ['medium', '中'], ['high', '高']].map(function (x) { return '<option value="' + x[0] + '"' + (cx === x[0] ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select></div>' +
-    '<div class="st-subrow"><label class="st-chk"><input type="checkbox" data-f="img_transparent"' + (tr ? ' checked' : '') + '>透明</label><label class="st-chk"><input type="checkbox" data-f="img_gif"' + (gf ? ' checked' : '') + '>GIF</label>' +
-    '<input class="inp st-num2" data-f="gif_frames" type="number" min="2" max="60" value="' + frames + '" title="帧数"><input class="inp st-num2" data-f="gif_delay_ms" type="number" min="40" max="2000" value="' + delay + '" title="每帧毫秒"></div>' +
-    '<div class="st-subrow"><input class="inp" data-f="img_custom_w" type="number" min="0" max="4096" value="' + cw + '" placeholder="宽 px"><input class="inp" data-f="img_custom_h" type="number" min="0" max="4096" value="' + ch + '" placeholder="高 px"><select data-f="render"><option value="static"' + (render === 'static' ? ' selected' : '') + '>静态降级</option><option value="web"' + (render === 'web' ? ' selected' : '') + '>网页动效</option><option value="ppt"' + (render === 'ppt' ? ' selected' : '') + '>PPT 卡片</option></select></div>' +
-    '<input class="inp" data-f="img_refs" value="' + esc(refs) + '" placeholder="参考图：refs/x.png 或 shot:s1">' +
+    '<select data-f="img_quality">' + [['auto', 'quality auto'], ['low', 'low 草图'], ['medium', 'medium 均衡'], ['high', 'high 精细'], ['xhigh', 'xhigh 更精细'], ['max', 'max 最高']].map(function (x) { return '<option value="' + x[0] + '"' + (q === x[0] ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select>' +
+    '<select data-f="img_complexity">' + [['low', 'complexity low 简单'], ['medium', 'medium 常规'], ['high', 'high 复杂']].map(function (x) { return '<option value="' + x[0] + '"' + (cx === x[0] ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select></div>' +
+    (res === 'custom' ? '<div class="st-subrow"><label class="st-lab">宽</label><input class="inp st-num2" data-f="img_custom_w" type="number" min="16" max="3840" step="16" value="' + cw + '"><label class="st-lab">高</label><input class="inp st-num2" data-f="img_custom_h" type="number" min="16" max="3840" step="16" value="' + ch + '"><span class="st-hint" data-sizeerr="' + esc(s.id) + '"></span></div>' : '') +
+    typeHtml +
+    '<div class="st-subrow"><label class="st-lab">画面轨道</label><select data-f="render"><option value="static"' + (render === 'static' ? ' selected' : '') + '>静态 Ken Burns</option><option value="web"' + (render === 'web' ? ' selected' : '') + '>网页动效</option><option value="ppt"' + (render === 'ppt' ? ' selected' : '') + '>PPT 卡片</option></select></div>' +
+    '<div class="st-refs">' + refHtml + '<label class="btn mini ghost st-file">+ 参考图<input type="file" accept="image/png,image/jpeg" multiple data-ref-file="' + esc(s.id) + '" hidden></label></div>' +
+    '<input class="inp" data-f="img_refs" value="' + esc(refs.join(' ')) + '" placeholder="参考图：refs/x.png 或 shot:s1（最多 16 张）">' +
     '<input class="inp" data-f="image_prompt" value="' + esc(s.image_prompt || '') + '" placeholder="这一镜的画面提示词">' +
-    '<div class="st-subrow"><label class="btn mini ghost st-file">上传参考图<input type="file" accept="image/*" data-ref-file="' + esc(s.id) + '" hidden></label><span class="sp"></span><button class="linkbtn" data-subrun="images:' + esc(s.id) + '">重出这张</button></div>' +
     '</div>';
 }
 function node2HTML(p) {
   var ss = (p && p.shots) || [];
   var body = '<div class="st-group-bar"><span>每个分镜一个独立生图节点 · ' + ss.length + ' 个</span><span class="sp"></span>' +
-    '<button class="btn mini" data-act="imgs">生成缺的图</button><button class="linkbtn" data-act="imgsAll">全部重出</button></div>' +
-    '<div class="st-sublist">' + (ss.length ? ss.map(function (s) { return stShotImgHTML(p, s); }).join('') : '<div class="st-nohint">先在节点 1 拆解或导入剧本</div>') + '</div>';
+    '<button class="btn mini primary" data-act="addShot">+ 添加分镜节点</button><button class="btn mini" data-act="imgs">生成缺的图</button><button class="linkbtn" data-act="imgsAll">全部重出</button></div>' +
+    '<div class="st-sublist">' + (ss.length ? ss.map(function (s) { return stShotImgHTML(p, s); }).join('') : '<div class="st-nohint">还没有分镜节点：点上面「+ 添加分镜节点」就能单独测生图。</div>') + '</div>';
   return nodeWrap(2, '分镜生图 · 子工作流', body, 'st-n2 st-group');
 }
 
 /* ---------- 节点 3：角色配音（动态子节点） ---------- */
 function stShotTTSHTML(p, s) {
   var ok = s.tts_ok;
+  var eng = s.tts_engine || 'auto';
   return '<div class="st-sub" data-sid="' + esc(s.id) + '" data-kind="tts">' +
     '<div class="st-sub-h"><b>' + pad(s.n) + ' · ' + esc(s.role || '') + '</b>' + stSubLamp('tts', s) +
     '<em class="st-tag ' + (s.tts_cache_hit ? 'ok' : '') + '">' + (s.tts_cache_hit ? '缓存命中' : (ok ? '已配音' : '待配')) + '</em><span class="sp"></span>' +
-    '<button class="linkbtn" data-play="' + esc(s.id) + '"' + (ok ? '' : ' disabled') + '>听</button><button class="st-subrun" data-subrun="tts:' + esc(s.id) + '">▶</button></div>' +
+    '<button class="linkbtn" data-del-shot="' + esc(s.id) + '">删除</button><button class="linkbtn" data-play="' + esc(s.id) + '"' + (ok ? '' : ' disabled') + '>听</button>' +
+    '<button class="st-subrun" data-subrun="tts:' + esc(s.id) + '" data-autoplay="1">▶ 合成并试听</button></div>' +
     '<textarea class="inp st-vtext" data-f="text" rows="1" spellcheck="false">' + esc(s.text || '') + '</textarea>' +
-    '<div class="st-subrow"><select data-f="role">' + stRoleOptions(s.role) + '</select><select data-f="speaker">' + stVoiceOptions(s.speaker || '') + '</select></div>' +
-    '<div class="st-subrow"><input class="inp" data-f="tone" value="' + esc(s.tone || '') + '" placeholder="语气：冷静吐槽"><button class="linkbtn" data-subrun="tts:' + esc(s.id) + '">重配</button></div>' +
+    '<div class="st-subrow"><select data-f="tts_engine"><option value="auto"' + (eng === 'auto' ? ' selected' : '') + '>自动选引擎</option><option value="local"' + (eng === 'local' ? ' selected' : '') + '>本地 Qwen3-TTS</option><option value="cloud"' + (eng === 'cloud' ? ' selected' : '') + '>百炼云端</option></select>' +
+    '<select data-f="role">' + stRoleOptions(s.role) + '</select></div>' +
+    '<div class="st-subrow"><select data-f="speaker">' + stVoiceOptions(s.speaker || '') + '</select></div>' +
+    '<div class="st-subrow"><input class="inp" data-f="tone" value="' + esc(s.tone || '') + '" placeholder="语气：冷静吐槽 / 轻松调侃"></div>' +
     '</div>';
 }
 function node3HTML(p) {
@@ -308,8 +336,8 @@ function node3HTML(p) {
   var body = '<div class="st-rv">' + ST_ROLES.map(function (r) {
     return '<label><span>' + esc(r) + '</span><select class="inp" data-role-voice="' + esc(r) + '">' + stVoiceOptions(rv[r] || '') + '</select></label>';
   }).join('') + '</div>' +
-    '<div class="st-group-bar"><span>每句一个独立配音节点 · ' + ss.length + ' 句</span><span class="sp"></span><button class="btn mini" data-act="tts">全部重配</button></div>' +
-    '<div class="st-sublist">' + (ss.length ? ss.map(function (s) { return stShotTTSHTML(p, s); }).join('') : '<div class="st-nohint">还没有台词</div>') + '</div>';
+    '<div class="st-group-bar"><span>每句一个独立配音节点 · ' + ss.length + ' 句</span><span class="sp"></span><button class="btn mini primary" data-act="addShot">+ 添加台词节点</button><button class="btn mini" data-act="tts">全部重配</button></div>' +
+    '<div class="st-sublist">' + (ss.length ? ss.map(function (s) { return stShotTTSHTML(p, s); }).join('') : '<div class="st-nohint">还没有配音节点：点上面「+ 添加台词节点」就能单独试配音。</div>') + '</div>';
   return nodeWrap(3, '角色配音 · 子工作流', body, 'st-n3 st-group');
 }
 
@@ -338,7 +366,8 @@ function node5HTML(p) {
     '<label class="st-f"><span class="st-lab">GIF 缩放</span><input class="inp" id="stWebGifScale" type="number" min="0.4" max="2.2" step="0.1" value="' + (+st.web_gif_scale || 1) + '"></label></div>' +
     '<div class="st-row2"><label class="st-f"><span class="st-lab">动效强度</span><input class="inp" id="stWebMotion" type="number" min="0" max="2" step="0.1" value="' + (+st.web_motion || 1) + '"></label>' +
     '<button class="btn mini" data-act="web">渲染网页动效</button></div>' +
-    '<div class="st-hint">用 ' + esc(String((p && p.shots && p.shots.filter(function (s) { return (s.render || 'static') === 'web'; }).length) || 0)) + ' 镜；Q 版 GIF 会叠加白边圆角贴纸位移动画。</div>';
+    '<div class="st-hint">用 ' + esc(String((p && p.shots && p.shots.filter(function (s) { return (s.render || 'static') === 'web'; }).length) || 0)) + ' 镜' +
+    ((p && p.shots) ? ' · 缓存命中 ' + p.shots.filter(function (s) { return (s.render || 'static') === 'web' && s.render_cache_hit; }).length + ' 镜' : '') + '；Q 版 GIF 会叠加白边圆角贴纸位移动画。</div>';
   return nodeWrap(5, '网页动效渲染', body, 'st-n5');
 }
 
@@ -353,7 +382,8 @@ function node6HTML(p) {
         '<button class="linkbtn" data-setrender="' + esc(s.id) + ':ppt">用 PPT</button><button class="linkbtn" data-setrender="' + esc(s.id) + ':static">改静态</button>' +
         '<em class="st-tag ' + (r === 'ppt' ? 'ok' : '') + '">' + (r === 'ppt' ? 'PPT' : r === 'web' ? '网页' : '静态') + '</em></div>';
     }).join('') : '<div class="st-nohint">还没有分镜</div>') + '</div>' +
-    '<div class="st-hint">知识科普算账/对比页用 PPT；搞笑反转用网页动效 + GIF。</div>';
+    '<div class="st-hint">知识科普算账/对比页用 PPT；搞笑反转用网页动效 + GIF。' +
+    ((p && p.shots) ? ' 已缓存 ' + p.shots.filter(function (s) { return (s.render || 'static') === 'ppt' && s.render_cache_hit; }).length + ' 镜。' : '') + '</div>';
   return nodeWrap(6, 'PPT / OnlyOffice 卡片', body, 'st-n6');
 }
 
@@ -451,6 +481,7 @@ function renderStCanvas() {
   var w = $('#stWorld'); if (!w) return;
   w.innerHTML = html;
   observeNodes();
+  $$('[data-sizeerr]').forEach(function (el) { var sid = el.getAttribute('data-sizeerr'); if (sid) stUpdateSizeHint(sid); });
   applyCanvas();
 }
 function applyCanvas() {
@@ -619,6 +650,70 @@ function studioUploadRef(file, sid) {
   };
   reader.readAsDataURL(file);
 }
+function studioAddShot() {
+  var p = studioProj(); if (!p) { toast('还没有项目'); return; }
+  api('POST', '/api/studio/shot_add', { pid: p.id }, 20000).then(function (j) {
+    if (STUDIO.st && j.project) STUDIO.st.project = j.project;
+    STUDIO.sig = {}; renderStudio(true); toast('加了一个可以单独测的分镜/台词节点');
+  }).catch(function (e) { toast(e.message, 7000); });
+}
+function studioDelShot(sid) {
+  var p = studioProj(); if (!p) return;
+  if (!confirm('删除分镜 ' + sid + '？图片/配音文件会留在缓存里，项目里先不用它。')) return;
+  api('POST', '/api/studio/shot_delete', { pid: p.id, id: sid }, 20000).then(function (j) {
+    if (STUDIO.st && j.project) STUDIO.st.project = j.project;
+    STUDIO.sig = {}; renderStudio(true); toast('删掉了这个节点');
+  }).catch(function (e) { toast(e.message, 7000); });
+}
+function studioRemoveRef(sid, i) {
+  var p = studioProj(), s = ((p && p.shots) || []).filter(function (x) { return x.id === sid; })[0];
+  if (!s) return;
+  var refs = (s.img_refs || []).slice(); refs.splice(i, 1);
+  studioPatch({ shots: [{ id: sid, img_refs: refs }] }).then(function () { studioFetch(); }).catch(function () {});
+}
+function studioSetOut(sid, out) {
+  studioPatch({ shots: [{ id: sid, img_output: out }] }).then(function () { studioFetch(); }).catch(function () {});
+}
+function stSizeCheck(w, h) {
+  w = +w; h = +h;
+  if (!w || !h) return '宽和高都要填';
+  if (w % 16 || h % 16) return '宽高必须是 16 的倍数';
+  if (Math.max(w, h) > 3840) return '长边不能超过 3840';
+  if (Math.max(w, h) / Math.min(w, h) > 3) return '长宽比不能超过 3:1';
+  var px = w * h;
+  if (px < 655360 || px > 8294400) return '总像素要在 655,360 – 8,294,400 之间（现在 ' + px.toLocaleString() + '）';
+  return '';
+}
+function stUpdateSizeHint(sid) {
+  var row = document.querySelector('.st-sub[data-sid="' + sid + '"]'); if (!row) return;
+  var w = row.querySelector('[data-f="img_custom_w"]'), h = row.querySelector('[data-f="img_custom_h"]');
+  var msg = w && h ? stSizeCheck(w.value, h.value) : '';
+  var el = row.querySelector('[data-sizeerr]');
+  if (el) { el.textContent = msg; el.style.color = msg ? 'var(--bad)' : 'var(--text3)'; }
+  var run = row.querySelector('[data-subrun^="images:"]'); if (run) run.disabled = !!msg;
+}
+function studioUploadRefs(files, sid) {
+  var p = studioProj(), s = ((p && p.shots) || []).filter(function (x) { return x.id === sid; })[0];
+  if (!p || !s) return;
+  var current = (s.img_refs || []).slice();
+  var list = [].slice.call(files || []).slice(0, Math.max(0, 16 - current.length));
+  if (!list.length) { toast('参考图最多 16 张'); return; }
+  function one(file) {
+    return new Promise(function (resolve) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        api('POST', '/api/studio/ref', { pid: p.id, name: file.name, data: reader.result }, 30000)
+          .then(function (j) { current.push(j.rel); resolve(); })
+          .catch(function (e) { toast('「' + file.name + '」没放进去：' + e.message, 7000); resolve(); });
+      };
+      reader.onerror = function () { resolve(); };
+      reader.readAsDataURL(file);
+    });
+  }
+  list.reduce(function (pr, f) { return pr.then(function () { return one(f); }); }, Promise.resolve()).then(function () {
+    studioPatch({ shots: [{ id: sid, img_refs: current }] }).then(function () { toast('参考图放好了（' + current.length + '/16）'); studioFetch(); }).catch(function () {});
+  });
+}
 function studioPublish() {
   var p = studioProj(); if (!p) { toast('还没有项目'); return; }
   var tags = ($('#stPubTags') || {}).value || 'ai漫剧 ai创作浪潮计划 搞笑';
@@ -728,7 +823,8 @@ function studioExport() {
 }
 function studioFetch() {
   if (!useLive()) { renderStudio(); return Promise.resolve(); }
-  return api('GET', '/api/studio/state', null, 8000).then(function (j) {
+  if (STUDIO.fetching) return STUDIO.fetching;
+  STUDIO.fetching = fetch('/api/studio/state', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('state ' + r.status); return r.json(); }).then(function (j) {
     var was = STUDIO.st && STUDIO.st.job && STUDIO.st.job.st === 'run' ? STUDIO.st.job : null;
     var oldPid = STUDIO.lastPid;
     STUDIO.st = j;
@@ -739,10 +835,20 @@ function studioFetch() {
     }
     var nav = $('.nav[data-tool="studio"]'); if (nav) nav.classList.toggle('on-busy', !!(j.job && j.job.st === 'run'));
     if (was && j.job && j.job.id === was.id && j.job.st !== 'run') toast('视频工坊：' + (j.job.msg || j.job.st), 7000);
+    if (STUDIO.autoPlay && !studioRunning()) {
+      var ap = ((j.project || {}).shots || []).filter(function (x) { return x.id === STUDIO.autoPlay; })[0];
+      if (ap && ap.tts_url) studioPlay(ap.tts_url);
+      STUDIO.autoPlay = '';
+    }
     renderStudio();
-  }).catch(function () {});
+  }).catch(function () { if (S.view === 'studio' && !STUDIO.st) setTimeout(studioFetch, 1200); })
+    .then(function () { STUDIO.fetching = null; }, function () { STUDIO.fetching = null; });
+  return STUDIO.fetching;
 }
-function studioEnter() { studioFetch(); stHWStart(); clearInterval(STUDIO.t); STUDIO.t = setInterval(function () { if (S.view === 'studio') studioFetch(); }, 1500); }
+function studioEnter() { studioFetch(); stHWStart(); clearInterval(STUDIO.t); STUDIO.t = setInterval(function () { if (S.view === 'studio') studioFetch(); }, 1500);
+  setTimeout(function () { if (S.view === 'studio' && !STUDIO.st) studioFetch(); }, 700);
+  setTimeout(function () { if (S.view === 'studio' && !STUDIO.st) studioFetch(); }, 2000);
+}
 function studioLeave() { clearInterval(STUDIO.t); STUDIO.t = null; stHWStop(); if (STUDIO.audio) { try { STUDIO.audio.pause(); } catch (e) {} } $$('#view-studio video').forEach(function (m) { try { m.pause(); } catch (e) {} }); }
 
 /* ---------- 事件委托 ---------- */
@@ -767,7 +873,17 @@ function studioLeave() { clearInterval(STUDIO.t); STUDIO.t = null; stHWStop(); i
     if (t.id === 'stTopic') { STUDIO.topic = t.value; if (typeof saveUI === 'function') saveUI({ studioTopic: t.value.slice(0, 60000) }); return; }
     if (t.id === 'stBgmVol') { var pct = +t.value; var o = $('#stBgmVolV'); if (o) o.textContent = pct + '%'; STUDIO.pref.bgmVol = pct / 100; studioPrefsSave(); clearTimeout(STUDIO.saveT); STUDIO.saveT = setTimeout(function () { studioPatch({ settings: { bgm_volume: pct / 100 } }).catch(function () {}); }, 450); return; }
     if (t.id === 'stTitle' || t.id === 'stDesc' || t.id === 'stTags') { clearTimeout(STUDIO.metaT); STUDIO.metaT = setTimeout(studioSaveMeta, 650); return; }
-    if (t.hasAttribute('data-f')) { clearTimeout(STUDIO.saveT); STUDIO.saveT = setTimeout(studioSaveShots, 700); return; }
+    if (t.hasAttribute('data-f')) {
+      var f = t.getAttribute('data-f');
+      if (f === 'img_custom_w' || f === 'img_custom_h') {
+        var srow = t.closest('.st-sub'); if (srow) stUpdateSizeHint(srow.getAttribute('data-sid'));
+      }
+      if (f === 'gif_frames' || f === 'gif_delay_ms') {
+        var grow = t.closest('.st-sub'), fr = grow && grow.querySelector('[data-f="gif_frames"]'), de = grow && grow.querySelector('[data-f="gif_delay_ms"]'), gc = grow && grow.querySelector('[data-gifcalc]');
+        if (fr && de && gc) gc.textContent = '共 ' + fr.value + ' 帧，约 ' + (Math.round(fr.value * de.value / 100) / 10) + ' 秒';
+      }
+      clearTimeout(STUDIO.saveT); STUDIO.saveT = setTimeout(studioSaveShots, 700); return;
+    }
     if (t.id === 'stBgmPrompt' || t.id === 'stBgmSec' || t.id === 'stBgmSteps') {
       clearTimeout(STUDIO.saveT);
       STUDIO.saveT = setTimeout(function () {
@@ -778,12 +894,34 @@ function studioLeave() { clearInterval(STUDIO.t); STUDIO.t = null; stHWStop(); i
     var webMap = { stWebBg: 'web_bg', stWebPos: 'web_sub_pos', stWebSize: 'web_sub_size', stWebColor: 'web_sub_color', stWebGifScale: 'web_gif_scale', stWebMotion: 'web_motion', stDuck: 'duck_depth', stFade: 'fade' };
     if (webMap[t.id]) { clearTimeout(STUDIO.saveT); STUDIO.saveT = setTimeout(function () { studioPatch({ settings: { [webMap[t.id]]: t.value } }).catch(function () {}); }, 500); return; }
     if (t.id === 'stPptFile') { clearTimeout(STUDIO.saveT); STUDIO.saveT = setTimeout(function () { studioPatch({ settings: { ppt_file: t.value } }).catch(function () {}); }, 600); return; }
+    if (t.getAttribute('data-f') === 'gif_frames' || t.getAttribute('data-f') === 'gif_delay_ms') {
+      var row = t.closest('.st-sub'), fr = row && row.querySelector('[data-f="gif_frames"]'), de = row && row.querySelector('[data-f="gif_delay_ms"]'), gc = row && row.querySelector('[data-gifcalc]');
+      if (fr && de && gc) gc.textContent = '共 ' + fr.value + ' 帧，约 ' + (Math.round(fr.value * de.value / 100) / 10) + ' 秒';
+    }
+    if (t.getAttribute('data-f') === 'img_custom_w' || t.getAttribute('data-f') === 'img_custom_h') {
+      var row2 = t.closest('.st-sub'); if (row2) stUpdateSizeHint(row2.getAttribute('data-sid'));
+    }
   });
   v.addEventListener('change', function (ev) {
     var t = ev.target, p = studioProj();
     if (t.id === 'stProj') { if (t.value) studioDo('select', { pid: t.value }).then(function (j) { STUDIO.st = j; STUDIO.lastPid = j.project && j.project.id; applyProjectLayout(j.project); STUDIO.sig = {}; renderStudio(true); }).catch(function () {}); return; }
     if (t.id === 'stTitle' || t.id === 'stDesc' || t.id === 'stTags') { studioSaveMeta(); return; }
-    if (t.hasAttribute('data-f')) { studioSaveShots(); return; }
+    if (t.hasAttribute('data-f')) {
+      var f = t.getAttribute('data-f');
+      if (f === 'img_resolution') {
+        var row = t.closest('.st-sub'), sid = row && row.getAttribute('data-sid');
+        if (sid && t.value === 'custom') {
+          studioPatch({ shots: [{ id: sid, img_resolution: 'custom', img_custom_w: 1024, img_custom_h: 1024 }] })
+            .then(function () { STUDIO.editing = false; renderStudio(true); }).catch(function () {});
+        } else {
+          studioSaveShots();
+          STUDIO.editing = false; setTimeout(function () { renderStudio(true); }, 80);
+        }
+        return;
+      }
+      studioSaveShots();
+      return;
+    }
     if (t.id === 'stBgmSec' || t.id === 'stBgmSteps') {
       if (!p) return; studioPatch({ settings: t.id === 'stBgmSec' ? { bgm_seconds: +t.value } : { bgm_steps: +t.value } }).then(function () { STUDIO.sig.canvas = ''; }).catch(function () {}); return;
     }
@@ -799,7 +937,7 @@ function studioLeave() { clearInterval(STUDIO.t); STUDIO.t = null; stHWStop(); i
     }
     if (t.id === 'stSub' && p) { studioPatch({ settings: { subtitle: t.checked } }).catch(function () {}); return; }
     if (t.id === 'stImportFile') { studioImport(); return; }
-    if (t.getAttribute('data-ref-file')) { studioUploadRef(t.files && t.files[0], t.getAttribute('data-ref-file')); t.value = ''; return; }
+    if (t.getAttribute('data-ref-file')) { studioUploadRefs(t.files, t.getAttribute('data-ref-file')); t.value = ''; return; }
   });
   v.addEventListener('click', function (ev) {
     var b = ev.target.closest('button'); if (!b || b.disabled) return;
@@ -811,6 +949,17 @@ function studioLeave() { clearInterval(STUDIO.t); STUDIO.t = null; stHWStop(); i
     if (d.stRatio) {
       var r = d.stRatio; STUDIO.pref.ratio = r; studioPrefsSave();
       if (p) studioPatch({ ratio: r }).then(function () { STUDIO.sig.canvas = ''; renderStudio(true); toast('画幅改成 ' + r + '：图要重出，配音不用'); }).catch(function () {});
+      return;
+    }
+    if (d.out) {
+      var z = String(d.out).split(':');
+      studioSetOut(z[0], z[1]);
+      return;
+    }
+    if (d.delShot) { studioDelShot(d.delShot); return; }
+    if (d.refdel) {
+      var z2 = String(d.refdel).split(':');
+      studioRemoveRef(z2[0], +z2[1]);
       return;
     }
     if (d.st) {
@@ -839,6 +988,7 @@ function studioLeave() { clearInterval(STUDIO.t); STUDIO.t = null; stHWStop(); i
     if (run) { toast('正在跑，先停下或者等它完成'); return; }
     if (d.subrun) {
       var q = String(d.subrun).split(':');
+      if (d.autoplay === '1') STUDIO.autoPlay = q[1];
       studioRun(q[0] === 'images' ? 'images' : 'tts', [q[1]]);
       return;
     }
@@ -861,6 +1011,7 @@ function studioLeave() { clearInterval(STUDIO.t); STUDIO.t = null; stHWStop(); i
     if (d.act === 'importToggle') { var box = $('#stImportBox'); if (box) box.hidden = !box.hidden; return; }
     if (d.act === 'import') { studioImport(); return; }
     if (d.act === 'plan') { studioPlan(); return; }
+    if (d.act === 'addShot') { studioAddShot(); return; }
     if (d.act === 'imgs') { studioRun('images'); return; }
     if (d.act === 'imgsAll') { studioRun('images', (p && p.shots || []).map(function (s) { return s.id; })); return; }
     if (d.act === 'tts') { studioRun('tts'); return; }

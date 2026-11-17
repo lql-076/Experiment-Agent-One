@@ -854,3 +854,11 @@ html[data-orient="portrait"] .st-hw{gap:.6rem}
 .st-pptrow .st-mini-x b{font-size:.7rem}
 .st-pptrow .st-mini-x em{font-size:.6rem;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-style:normal}
 .st-pptrow .linkbtn{font-size:.62rem}
+.st-outtype{display:flex;gap:.2rem;margin:.1rem 0}
+.st-outtype button{flex:1;min-height:1.45rem;padding:.05rem .2rem;font-size:.62rem}
+.st-outtype button[aria-pressed="true"]{background:color-mix(in srgb,var(--hud) 18%,transparent);border-color:var(--hud);color:var(--hud)}
+.st-refs{display:flex;flex-wrap:wrap;gap:.25rem;align-items:center;min-height:1.8rem}
+.st-ref{position:relative;width:2.1rem;height:2.7rem;border:1px solid var(--line2);display:grid;place-items:center;overflow:hidden;font-size:.55rem;color:var(--text3)}
+.st-ref img{width:100%;height:100%;object-fit:cover}
+.st-ref b{font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:1.9rem}
+.st-ref button{position:absolute;right:0;top:0;width:1rem;height:1rem;border:0;background:color-mix(in srgb,var(--bad) 80%,transparent);color:#fff;font-size:.65rem;line-height:1;padding:0}

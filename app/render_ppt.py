@@ -174,6 +174,7 @@ def _imported_slides(project_dir, project):
 
 
 def render_all(project_dir, project, say=None, stopped=None) -> dict:
+    from . import studio_cache as cache
     say = say or (lambda _m: None)
     d = Path(project_dir)
     ratio = str(project.get("ratio") or "9:16")
@@ -186,16 +187,37 @@ def render_all(project_dir, project, say=None, stopped=None) -> dict:
     except RenderPptError:
         pass
     imported = _imported_slides(d, project)
+    pptx = d / "output" / "卡片.pptx"
+    src = Path((project.get("settings") or {}).get("ppt_file") or "")
+    if src and not src.is_absolute():
+        src = d / src
+    if src.is_file():
+        pp_sha = cache.sha_file(src)
+    else:
+        pp_sha = cache.fingerprint("pptx_content", {"shots": [{"text": x.get("text") or "", "points": x.get("ppt_points") or [],
+                                                                  "role": x.get("role") or ""} for x in shots],
+                                                     "w": W, "h": H})
     out = {}
     for i, s in enumerate(shots, 1):
         if stopped and stopped():
             raise RenderPptError("停下了")
         say(f"PPT 卡片渲染 {i}/{len(shots)}：第 {s.get('id')} 镜")
         p = d / "render" / f"ppt_{s['id']}.png"
+        page = str(s.get("id") or i).lstrip("s") or i
+        fp = cache.fingerprint("track_ppt", {"pptx_sha": pp_sha, "text": s.get("text") or "",
+                                             "points": s.get("ppt_points") or [], "role": s.get("role") or "",
+                                             "page": str(page), "w": W, "h": H})
+        if cache.hit_to(fp, p, "tracks"):
+            s["render_cache_hit"] = True
+            s["render_image"] = f"render/{p.name}"
+            out[s["id"]] = s["render_image"]
+            continue
+        s["render_cache_hit"] = False
         if i <= len(imported):
             shutil.copy2(imported[i - 1], p)
         else:
-            render_slide(d, s, p, W, H, str(s.get('id') or i).lstrip('s') or i)
+            render_slide(d, s, p, W, H, page)
+        cache.put(fp, p, "tracks", {"type": "ppt", "w": W, "h": H, "page": str(page)})
         s["render_image"] = f"render/{p.name}"
         out[s["id"]] = s["render_image"]
     return out
