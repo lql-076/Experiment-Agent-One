@@ -112,6 +112,7 @@ function goView(v) {
   if (S.view === 'img') imgLeave();
   if (S.view === 'bgm') bgmLeave();
   if (S.view === 'publish') pubLeave();
+  if (S.view === 'ccode' && typeof ccodeLeave === 'function') ccodeLeave();
   var usingVT = moving();
   var t = vt(function () {
     S.view = v;
@@ -127,6 +128,7 @@ function goView(v) {
     if (v === 'img') { if (IMG.st) renderImg(); imgEnter(); }
     if (v === 'bgm') { BGM.sig = ''; renderBgm(); bgmEnter(); }
     if (v === 'publish') { renderPub(); pubEnter(); }
+    if (v === 'ccode') { renderCCode(); ccodeEnter(); }
     placeInd(usingVT);
   });
   if (!t) replay($('#view-' + v));

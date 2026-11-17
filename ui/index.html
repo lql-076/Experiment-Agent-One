@@ -30,6 +30,7 @@ try{var _t=new URLSearchParams(location.search).get('tool');if(_t&&/^[a-z]{2,12}
     <button class="nav tool" data-tool="publish" aria-label="打开发布（新窗口）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5V4M7.5 8.5L12 4l4.5 4.5"/><path d="M5 14v5.5h14V14"/></svg>发布<span class="busy" aria-hidden="true"></span></button>
     <button class="nav tool" data-tool="events" aria-label="打开事件（新窗口）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>事件<span class="busy" aria-hidden="true"></span></button>
     <button class="nav tool" data-tool="monitor" aria-label="打开后台（新窗口）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12.5h4l2.5-6 4.5 12 2.5-6H21"/></svg>后台<span class="busy" aria-hidden="true"></span></button>
+    <button class="nav tool" data-tool="ccode" aria-label="打开 Claude Code 工作台（新窗口）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"/><path d="M7 9.5l2.5 2L7 13.5M11.5 13.5H16"/></svg>Claude<span class="busy" aria-hidden="true"></span></button>
     <button class="nav tool" data-tool="brains" hidden aria-label="打开大脑（新窗口）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="7" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="M8.3 9.2l2.4 5.6M15.7 9.2l-2.4 5.6M9.5 7h5"/></svg>大脑<span class="busy" aria-hidden="true"></span></button>
     <button class="nav tool" data-tool="reports" hidden aria-label="打开报告（新窗口）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V11M10 20V5M15 20v-7M20 20v-4"/></svg>报告<span class="busy" aria-hidden="true"></span><span class="badge num" id="repBadge" hidden></span></button>
     <button class="nav tool" data-tool="settings" aria-label="打开设置（新窗口）"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M18 7h2M4 17h3M12 17h8"/><circle cx="15.5" cy="7" r="2.3"/><circle cx="9.5" cy="17" r="2.3"/></svg>设置<span class="busy" aria-hidden="true"></span><span class="badge num" id="setBadge" hidden></span></button>
@@ -67,6 +68,7 @@ try{var _t=new URLSearchParams(location.search).get('tool');if(_t&&/^[a-z]{2,12}
     <section class="view" id="view-publish" aria-label="发布"></section>
     <section class="view" id="view-events" aria-label="事件"></section>
     <section class="view" id="view-monitor" aria-label="后台"></section>
+    <section class="view" id="view-ccode" aria-label="Claude Code"></section>
     <section class="view" id="view-brains" aria-label="大脑"></section>
     <section class="view" id="view-reports" aria-label="报告"></section>
     <section class="view" id="view-settings" aria-label="设置"></section>
@@ -127,6 +129,7 @@ try{var _t=new URLSearchParams(location.search).get('tool');if(_t&&/^[a-z]{2,12}
 <script src="js/core.js"></script>
 <script src="js/voice.js"></script>
 <script src="js/chat.js"></script>
+<script src="js/ccode.js"></script>
 <script src="js/fx.js"></script>
 <script src="js/main.js"></script>
 </body>

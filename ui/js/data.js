@@ -199,11 +199,11 @@ var SECTIONS = [
     { k: 'hfToken', l: 'Hugging Face 令牌（一般不用填）', t: 'secret', h: '只有一键装 Breeze TTS 2 时提示「要登录才给下」才填：先在 huggingface.co 打开 BreezeBlue/breeze-tts-2 点同意许可证，再建一个 Read 令牌贴在这里。加密保存在本机，只在下载时用' },
     { k: 'voiceIdle', l: 'Breeze 闲多久关掉', t: 'number', u: '分钟', d: 10, h: '只关 Agent 自己开的。Breeze 大约占 7.7GB 显存' }
   ] },
-  { id: 'bgm', name: '配乐', custom: 'bgm', desc: '本地的 ACE-Step 1.5 出纯音乐，不花钱、不出本机。在 设置 › 整备 一键装好就能用；左边「配乐」窗口里手动出（能批量），Agent 做视频时也会自己用。', fields: [
-    { k: 'bgmDir', l: '自己装的 ACE-Step 文件夹（一般不用填）', ph: '不填 = 用整备里一键装好的那一份（Agent 文件夹里的 ace-step）', h: '填了它，Agent 用到时自己把 ACE-Step 的接口开起来、闲着自己关、打游戏让路。不填就照下面的地址连（你自己开着）' },
-    { k: 'bgmUrl', l: 'ACE-Step 接口的地址', d: 'http://127.0.0.1:8001', h: 'ACE-Step 自带的接口默认就是 8001 端口' },
+  { id: 'bgm', name: '配乐', custom: 'bgm', desc: '本地的 Stable Audio 3 Medium 出纯音乐，不花钱、不出本机。在 设置 › 整备 一键装好就能用；左边「配乐」窗口里手动出（能批量），Agent 做视频时也会自己用。', fields: [
+    { k: 'bgmDir', l: '自己转换好的 Stable Audio 3 模型文件夹（一般不用填）', ph: '不填 = 用整备里一键装好的那一份（models\\bgm\\stable-audio-3-medium）', h: '填了它，Agent 用到时自己把配乐服务开起来、闲着自己关、打游戏让路。不填就照下面的地址连（你自己开着）' },
+    { k: 'bgmUrl', l: '配乐服务地址', d: 'http://127.0.0.1:8094', h: 'Agent 自己的配乐服务默认是 8094 端口' },
     { k: 'bgmIdle', l: '闲多久关掉', t: 'number', u: '分钟', d: 10 },
-    { k: 'bgmSteps', l: '出一首走多少步', t: 'number', u: '步', d: 8, h: 'Turbo 模型 8 步就够；步数多一点细节好一点、慢一点' },
+    { k: 'bgmSteps', l: '出一首走多少步', t: 'number', u: '步', d: 8, h: 'Stable Audio 3 Medium 是 8 步对抗蒸馏模型，8 步最稳；一般不用改' },
     { k: 'bgmFormat', l: '存成什么格式', t: 'select', d: 'wav', o: [['wav', 'WAV（不压缩，做视频用这个）'], ['mp3', 'MP3（小）'], ['flac', 'FLAC']] },
     { k: 'bgmOut', l: '出的音乐放哪', ph: '留空 = Agent 文件夹里的「配乐输出」' }
   ] },

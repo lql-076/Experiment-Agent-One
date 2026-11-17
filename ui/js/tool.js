@@ -4,8 +4,8 @@
    都是左边的按钮，点了弹出一个独立窗口。工具窗口打开的是同一个界面，地址带 ?tool=img 这种：只显示那一个工具，自己的标题栏
    （拖动、置顶、收起、关掉），桌面窗口那边见 app/window.py 的 open_tool。不在桌面窗口里（用浏览器打开）时，用 window.open 开新窗口。
    Ctrl K：命令面板，打开工具、跳到设置的哪一块、切深浅色。 */
-var TOOL_KEYS = ['img', 'tts', 'bgm', 'publish', 'events', 'monitor', 'brains', 'reports', 'settings', 'docs'];
-var TOOL_NAME = { img: '生图', tts: '配音', bgm: '配乐', publish: '发布', events: '事件', monitor: '后台', brains: '大脑', reports: '报告', settings: '设置', docs: '说明' };
+var TOOL_KEYS = ['img', 'tts', 'bgm', 'publish', 'events', 'monitor', 'brains', 'reports', 'ccode', 'settings', 'docs'];
+var TOOL_NAME = { img: '生图', tts: '配音', bgm: '配乐', publish: '发布', events: '事件', monitor: '后台', brains: '大脑', reports: '报告', ccode: 'Claude Code', settings: '设置', docs: '说明' };
 var TOOL = TOOL_KEYS.indexOf(root.dataset.tool) >= 0 ? root.dataset.tool : '';
 if (root.dataset.tool && !TOOL) delete root.dataset.tool;
 var TOOL_ARG = (function () { try { var a = new URLSearchParams(location.search).get('arg'); return a ? JSON.parse(a) : null; } catch (e) { return null; } })();

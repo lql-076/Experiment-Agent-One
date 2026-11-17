@@ -32,16 +32,17 @@ REF = VD / "ref.wav"
 ASR_MODEL = "Qwen3-ASR-0.6B"
 JOBN = "语音"
 PY_DIRS = (".venv/Scripts", "venv/Scripts", "python_embeded", "python", ".venv/bin", "venv/bin")
-HF_ID = "BreezeBlue/breeze-tts-2"
+HF_ID = "BreezeBlue/Breeze-TTS-2"
 CODE = paths.ROOT / "vendor" / "breeze-tts"            # 推理代码随包带着（v3.1；Apache-2.0，见那里的说明）
 MODEL = paths.MODELS_TTS / "breeze-tts-2"               # 一键装好时把权重下到这里（scripts/install_tts.py --breeze）
 
 
 def model_ok(d=None):
-    """权重下全了没有：config.json、.safetensors、它自带的声音编解码器（audio_tokenizer），没有下到一半的文件。"""
+    """权重下全了没有：config.json、.safetensors、它自带的声音编解码器（audio_tokenizer），根目录没有下到一半的文件。
+    `.cache` 里 HF 下载留下的半截文件不算（和 install_tts.py 的 breeze_done() 同一规则，v3.3.2）。"""
     d = Path(d or MODEL)
     return ((d / "config.json").exists() and any(d.glob("*.safetensors")) and (d / "audio_tokenizer" / "config.json").exists()
-            and not any(d.rglob("*.incomplete")))
+            and not any(p for p in d.rglob("*.incomplete") if ".cache" not in p.parts))
 
 
 def installed():

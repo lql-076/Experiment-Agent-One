@@ -31,6 +31,11 @@ if sys.stdout is None or "--log" in sys.argv:           # pythonw 没有黑窗�
     LOG.parent.mkdir(parents=True, exist_ok=True)
     sys.stdout = sys.stderr = open(LOG, "a", encoding="utf-8", errors="replace", buffering=1)
     print(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} 硬件监控助手启动")
+try:                                                    # 底层访问违例（比如 NVML）也留一份堆栈；只写这一次，进程会退出
+    import faulthandler
+    faulthandler.enable(file=sys.stderr, all_threads=True)
+except Exception:
+    pass
 
 try:
     from HardwareMonitor.Hardware import Computer
@@ -58,6 +63,57 @@ pc.IsMotherboardEnabled = True
 pc.Open()
 
 latest = {"json": b"{}"}
+
+# ---------- NVML：显卡频率、温度、功耗、显存（v3.3.2 从后端主进程挪到这里） ----------
+# NVIDIA 驱动偶发访问违例（Windows fatal exception: access violation）时，最坏只把这个助手带崩，
+# 后端照常；助手没起来也只是显卡温度/显存暂时读不到，CPU 和占用不受影响。
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    NV = pynvml.nvmlDeviceGetHandleByIndex(0)
+    print("NVML 显卡读数：已启用")
+except Exception as e:
+    pynvml, NV = None, None
+    print("NVML 显卡读数：用不了（", e, "）")
+_NV = {"ts": 0.0, "data": {}}
+
+
+def nvml_snap():
+    """和原来后端 hw.nvml() 一样的字段；某一项读不到就少给这一项，不让助手整体挂掉。"""
+    if not NV:
+        return {}
+    g = {}
+    try:
+        g["name"] = pynvml.nvmlDeviceGetName(NV)
+        if isinstance(g["name"], bytes):
+            g["name"] = g["name"].decode()
+        g["load3d"] = float(pynvml.nvmlDeviceGetUtilizationRates(NV).gpu)      # 只是图形/计算，不含视频编码、解码
+        g["temp"] = float(pynvml.nvmlDeviceGetTemperature(NV, pynvml.NVML_TEMPERATURE_GPU))
+        g["clock"] = float(pynvml.nvmlDeviceGetClockInfo(NV, pynvml.NVML_CLOCK_GRAPHICS))
+        g["power"] = pynvml.nvmlDeviceGetPowerUsage(NV) / 1000.0
+        mem = pynvml.nvmlDeviceGetMemoryInfo(NV)
+        g["vram"], g["vramTotal"] = mem.used / 2**30, mem.total / 2**30
+    except Exception as e:
+        print("NVML 读显卡出错：", e)
+    try:
+        g["enc"] = float(pynvml.nvmlDeviceGetEncoderUtilization(NV)[0])
+        g["dec"] = float(pynvml.nvmlDeviceGetDecoderUtilization(NV)[0])
+    except Exception as e:
+        print("NVML 读视频引擎出错：", e)
+    if g.get("load3d") is not None:          # 和任务管理器一样：最忙的那个引擎就是总占用
+        parts = {"3D": g["load3d"], "视频编码": g.get("enc") or 0.0, "视频解码": g.get("dec") or 0.0}
+        g["top"] = max(parts, key=parts.get)
+        g["load"] = parts[g["top"]]
+    return g
+
+
+def nvml_cached():
+    """2 秒读一次就够界面用了，少碰几次驱动。"""
+    now = time.time()
+    if now - _NV["ts"] >= 2:
+        _NV["data"] = nvml_snap()
+        _NV["ts"] = now
+    return _NV["data"]
 
 
 class FpsMeter:
@@ -240,6 +296,7 @@ def loop():
         try:
             snap = snapshot()
             snap["AgentFps"] = FPS.stats()
+            snap["AgentNvml"] = nvml_cached()
             latest["json"] = json.dumps(snap, ensure_ascii=False).encode("utf-8")
         except Exception as e:
             print("读取传感器出错：", e)

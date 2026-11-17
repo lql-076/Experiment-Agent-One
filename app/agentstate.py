@@ -281,13 +281,13 @@ async def view():
                           None if vv.asr_ok() else {"label": "去装", "sec": "prep"}))
     bb = bgm.B
     if bb.job and bb.job.get("st") == "run":
-        hands.append(_row("bgm", "配乐（ACE-Step）", "ok", "正在出一首：" + str(bb.job.get("prompt") or "")[:20]))
+        hands.append(_row("bgm", "配乐（Stable Audio 3）", "ok", "正在出一首：" + str(bb.job.get("prompt") or "")[:20]))
     elif bb.proc.alive():
-        hands.append(_row("bgm", "配乐（ACE-Step）", "ok", "开着 · 闲着会自己关"))
+        hands.append(_row("bgm", "配乐（Stable Audio 3）", "ok", "开着 · 闲着会自己关"))
     elif bb.configured():
-        hands.append(_row("bgm", "配乐（ACE-Step）", "idle", "配好了 · 用到才启动"))
+        hands.append(_row("bgm", "配乐（Stable Audio 3）", "idle", "配好了 · 用到才启动"))
     else:
-        hands.append(_row("bgm", "配乐（ACE-Step）", "off", "还没装：在整备里一键装好", {"label": "去装", "sec": "prep"}))
+        hands.append(_row("bgm", "配乐（Stable Audio 3）", "off", "还没装：在整备里一键装好", {"label": "去装", "sec": "prep"}))
 
     groups = [{"name": "大脑", "items": brain}, {"name": "云端", "items": cloud}, {"name": "手脚", "items": hands}, {"name": "通道", "items": chan}, {"name": "后台", "items": back}]
     cnt = {"ok": 0, "idle": 0, "warn": 0, "bad": 0, "off": 0, "start": 0, "stuck": 0}

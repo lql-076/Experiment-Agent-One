@@ -2,22 +2,19 @@
 1. 清单怎么认：配音（## 文件名、音色 / 语气、没小节就整份一段、空的跳过）、配乐（## 名字 + 时长 + 描述、一行一首、表格、混着写）、时长的各种写法
 2. 存文件：同名的旧文件挪进「旧版」（不删），新的先写 .part
 3. 整备 ›「配音、语音、配乐」那一组：4 项、只装一项、一组在装时另一组不让开（409）、别的组的状态不被冲掉
-4. 一键装配乐（scripts/install_bgm.py）真的跑一遍：假下载站（dev/mocks.py 8001 /files/）给 7za 和一个假的 ACE-Step 便携包（这里现做的，
-   照官方便携包只带 acestep.model_downloader）→ 校验 7za → 多连接下载 → 7za 测试、解压、改名 ace-step → 魔搭下不了换 hf-mirror（报错进日志）→ 自检；
-   装完配乐认得出（不用填文件夹）；做完把装出来的删掉
+4. 一键装 Stable Audio 3（scripts/install_bgm.py）：用 AGENT_BGM_FAKE=1 造一份小的假模型，不下载 10GB；
+   校验模型结构、`.cache` 里的半截文件不算、根目录半截算没下全
 5. 说话的声音（Breeze TTS 2）一键装好之后：启动命令用随包的代码（app/breeze_run.py）+ 配音环境，设置里什么都不用填
 6. 配音批量（连测试后端，假配音服务）：认清单 → 每段自己的音色（我的音色 / 预设）→ 一段一段念、存进 配音输出\\日期_清单名\\ →
    跑的时候单个生成、重新对齐不让开 → 重来一段旧的进「旧版」→ 改一段 → 一次选几个 .txt → 写错的音色开始前就拦下 → 停下 → 打包、放进工作区
-7. 配乐批量（连测试后端，假 ACE-Step）：认清单 → 一首一首出、按名字存 → 跑的时候单个不让出 → 重来 → 停下 → 历史里也有
+7. 配乐批量（连测试后端，假 Stable Audio 3）：认清单 → 一首一首出、按名字存 → 跑的时候单个不让出 → 重来 → 停下 → 历史里也有
 用法：python dev/test_media.py（要先 dev/serve.sh start）"""
 import json
 import os
 import pathlib
 import shutil
-import stat
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 
@@ -148,84 +145,31 @@ check(steps["bgm"]["st"] in ("ok", "done", "ready") and all(steps[k]["st"] not i
       "只跑了配乐那一项：" + "、".join(f"{k}={steps[k]['st']}" for k in media))
 check({k: steps[k]["st"] for k in core_before} == core_before, "一键补齐那 6 步的状态没被冲掉")
 
-# ---------- 4. 一键装配乐：真的跑一遍 install_bgm.py ----------
-print("── 一键装配乐（scripts/install_bgm.py，假下载站）")
-ACE, SEVEN_DIR, DLD = ROOT / "ace-step", paths.TOOLS / "7z", paths.TOOLS / "downloads"
-if ACE.exists() or SEVEN_DIR.exists() or DLD.exists():
-    print("  · 跳过：这台电脑上已经有 ace-step / tools\\7z / tools\\downloads（不碰它们）")
-else:
-    MF = RUN / "mockfiles"
-    MF.mkdir(parents=True, exist_ok=True)
-    tgz = RUN / "7zip-bin-5.2.0.tgz"
-    if not tgz.exists():
-        try:
-            tgz.write_bytes(httpx.get("https://registry.npmjs.org/7zip-bin/-/7zip-bin-5.2.0.tgz", timeout=60, follow_redirects=True).content)
-        except Exception as e:
-            print("  · 拿不到 7zip-bin 的包（第一次要联网下一次，之后用 dev/.run 里存的）：", e)
-    if not tgz.exists():
-        check(False, "7zip-bin-5.2.0.tgz 没有：一键装配乐这一段测不了")
-    else:
-        shutil.copy2(tgz, MF / tgz.name)
-        build = RUN / "fakeace"
-        shutil.rmtree(build, ignore_errors=True)
-        with tarfile.open(tgz) as tf:                        # 现做假的便携包要用 7za：从同一个包里拿 linux 版
-            m = tf.getmember("package/linux/x64/7za")
-            (build / "bin").mkdir(parents=True)
-            (build / "bin" / "7za").write_bytes(tf.extractfile(m).read())
-        za = build / "bin" / "7za"
-        za.chmod(za.stat().st_mode | stat.S_IEXEC)
-        a = build / "ACE-Step-1.5"
-        (a / "acestep").mkdir(parents=True)
-        (a / "python_embedded").mkdir()
-        (a / "acestep" / "__init__.py").write_text("")
-        (a / "acestep" / "api_server.py").write_text('print("fake api server")\n')
-        (a / "acestep" / "model_downloader.py").write_text('''import os
-from pathlib import Path
-# 照便携包里那一版：只有 acestep.model_downloader（没有 acestep.api.model_download），download_main_model 没有 prefer_source 参数
-def download_main_model(checkpoints_dir=None, force=False, token=None):
-    src = os.environ.get("ACESTEP_DOWNLOAD_SOURCE", "")
-    print("Downloading main model from ACE-Step/Ace-Step1.5... (" + src + ")", flush=True)
-    if os.environ.get("FAKE_MS_FAIL") and src == "modelscope":
-        print("Error: 魔搭连不上（假的）", flush=True)
-        return False, "ModelScope download failed"
-    for m in ("acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"):
-        d = Path(checkpoints_dir) / m
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "model.safetensors").write_bytes(b"x" * 1000)
-        print(f"Downloading [{m}]: 100%|##########| 1.00k/1.00k [00:00<00:00, 5.00MB/s]", flush=True)
-    return True, "Main model downloaded"
-''')
-        py = a / "python_embedded" / "python"                 # 便携包自带的 Python：这里用一段 sh 接到本机的 Python 上；问 PyTorch 时假装有显卡
-        py.write_text('#!/bin/sh\ncase "$2" in *"import torch"*) echo "PyTorch 2.7.1+cu128 | 显卡 测试显卡"; exit 0;; esac\nexec ' + sys.executable + ' "$@"\n')
-        py.chmod(0o755)
-        (a / "padding.bin").write_bytes(os.urandom(12 * 1024 * 1024))    # 12MB：够多连接分段下
-        arc = MF / "ACE-Step-1.5.7z"
-        arc.unlink(missing_ok=True)
-        subprocess.run([str(za), "a", "-t7z", "-mx=1", str(arc), "ACE-Step-1.5"], cwd=str(build), check=True, capture_output=True)
-        env = dict(os.environ, AGENT_7Z_URLS="http://127.0.0.1:8001/files/7zip-bin-5.2.0.tgz", AGENT_ACE_URLS="http://127.0.0.1:8001/files/ACE-Step-1.5.7z",
-                   FAKE_MS_FAIL="1", PYTHONUTF8="1")
-        try:
-            r = subprocess.run([sys.executable, str(ROOT / "scripts" / "install_bgm.py")], cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=300)
-            out = r.stdout + r.stderr
-            check(r.returncode == 0 and "配乐装好了" in out, f"装完了（退出码 {r.returncode}）" + ("" if r.returncode == 0 else "：" + out[-600:]))
-            check((SEVEN_DIR / "7za").exists() and "sha512" not in out.lower().replace("sha512 对上了", ""), "7za 从 npm 的包里拿出来，校验过")
-            check((ACE / "acestep" / "api_server.py").exists() and (ACE / "python_embedded" / "python").exists() and not (ROOT / "ace-step.tmp").exists(),
-                  "解压到 ace-step（先解到 ace-step.tmp 再改名）")
-            check("换 hf-mirror" in out and all((ACE / "checkpoints" / m / "model.safetensors").exists() for m in ("acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B")),
-                  "魔搭下不了，换 hf-mirror 下全了三个模型")
-            check("acestep.model_downloader" in out and "魔搭连不上（假的）" in out and "换 hf-mirror 再试：" in out,
-                  "便携包里只有 acestep.model_downloader（没有 api/model_download）也能下；它打印的报错进了日志，「没下全」后面写着原因")
-            check((DLD / "ACE-Step-1.5.7z").exists(), "下好的便携包留在 tools\\downloads（不删；要腾地方自己删）")
-            from app import bgm
-            check(bgm.B.installed() and bgm.B.builtin() and str(bgm.B.cmd()[0]).endswith("python_embedded/python") and str(bgm.B.cmd()[1]).endswith("acestep/api_server.py"),
-                  "装完配乐认得出：设置里不用填文件夹，启动命令是它自带的 Python 跑 acestep\\api_server.py")
-            r = subprocess.run([sys.executable, str(ROOT / "scripts" / "install_bgm.py")], cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=120)
-            check(r.returncode == 0 and "跳过" in r.stdout, "再点一次：都装好了，跳过")
-        finally:
-            for x in (ACE, ROOT / "ace-step.tmp", SEVEN_DIR, DLD, build):
-                shutil.rmtree(x, ignore_errors=True)
-            for x in ROOT.glob("ace-step.旧的-*"):
-                shutil.rmtree(x, ignore_errors=True)
+# ---------- 4. 一键装 Stable Audio 3（假模型，不下载 10GB） ----------
+print("── 一键装 Stable Audio 3（假模型）")
+with tempfile.TemporaryDirectory() as td:
+    md = pathlib.Path(td) / "models" / "bgm" / "stable-audio-3-medium"
+    env = dict(os.environ, AGENT_BGM_FAKE="1", AGENT_BGM_MODEL=str(md), PYTHONUTF8="1")
+    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "install_bgm.py")], cwd=str(ROOT), env=env,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    out = r.stdout + r.stderr
+    check(r.returncode == 0 and (md / "model_index.json").exists(), f"假模型装完了（退出码 {r.returncode}）" + ("" if r.returncode == 0 else "：" + out[-500:]))
+    check(all((md / n / "model.safetensors").exists() for n in ("transformer", "vae", "text_encoder")),
+          "转换后的核心权重和配置齐了")
+    from app import bgm
+    old_model, old_server, old_py = bgm.MODEL, bgm.SERVER, bgm.paths.bgm_python
+    bgm.MODEL = md
+    bgm.paths.bgm_python = lambda: pathlib.Path(sys.executable)
+    try:
+        check(bgm.model_ok(), "models_ok：核心文件齐、没有 .incomplete")
+        check(bgm.B.installed() and bgm.B.configured(), "整备认得出：环境（测试里用本机 Python）+ 模型 + 服务脚本")
+        (md / ".cache").mkdir(exist_ok=True)
+        (md / ".cache" / "leftover.incomplete").write_text("")
+        check(bgm.model_ok(), ".cache 里的半截文件不算没下全")
+        (md / "root.incomplete").write_text("")
+        check(not bgm.model_ok(), "根目录有 .incomplete：算没下全")
+    finally:
+        bgm.MODEL, bgm.SERVER, bgm.paths.bgm_python = old_model, old_server, old_py
 
 # ---------- 5. 说话的声音一键装好之后 ----------
 print("── 说话的声音（Breeze TTS 2）一键装好之后")
@@ -358,7 +302,7 @@ for v in VID:                                   # 测试存的「我的音色」
 check(d.exists() and (d / "01_橘页_开场.wav").exists(), "出好的文件还在")
 
 # ---------- 7. 配乐批量 ----------
-print("── 配乐批量（假 ACE-Step）")
+print("── 配乐批量（假 Stable Audio 3）")
 BOUT = RUN / "配乐输出-批量测试"
 shutil.rmtree(BOUT, ignore_errors=True)
 c.put("/api/settings", json={"bgmOut": str(BOUT), "bgmDir": "", "bgmUrl": "http://127.0.0.1:8001"})
@@ -374,7 +318,7 @@ d = BOUT / pathlib.Path(r.json()["board"]["dir"]).name
 check(j["job"]["done"] == 2 and sorted(x.name for x in d.iterdir()) == ["bgm01_开场.json", "bgm01_开场.wav", "bgm02_讲解.json", "bgm02_讲解.wav", "配乐清单.md"],
       f"2 首按清单里的名字存（旁边一份 .json）：{j['job']['msg']}")
 meta = json.loads((d / "bgm02_讲解.json").read_text("utf-8"))
-check(meta["prompt"] == "安静钢琴" and meta["seconds"] == 30, "发给 ACE-Step 的就是这一首的描述和时长")
+check(meta["prompt"] == "安静钢琴" and meta["seconds"] == 30, "发给 Stable Audio 3 的就是这一首的描述和时长")
 rec = c.get("/api/bgm").json()["recent"]
 check({"bgm01_开场.wav", "bgm02_讲解.wav"} <= {x["name"] for x in rec[:5]}, "「最近出的」里也有（点一首在中间听）")
 c.post("/api/bgm/batch/run", json={"ids": ["b1"]})

@@ -17,7 +17,11 @@ HF_CACHE = MODELS / "hf-cache"                         # Kev 权重的下载缓�
 KEV = ROOT / "kev"                                     # Kev 源码（已随项目打包）
 AI_ENV = ROOT / "ai-env"                               # 本地模型的 Python 环境（安装本地模型环境.bat 生成）
 TTS_ENV = ROOT / "tts-env"                             # 配音的 Python 环境（设置 › 本地模型「安装配音」或 安装配音.bat 生成；配音要的 Transformers 版本和 ai-env 不一样，分开装）
+BGM_ENV = ROOT / "bgm-env"                             # 配乐的 Python 环境（v3.4：只装 diffusers/soundfile/lameenc；torch 和 transformers 通过 .pth 复用 ai-env，不另装一份 3GB）
 MODELS_TTS = MODELS / "tts"                            # 配音模型（魔搭 Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice、-VoiceDesign）
+MODELS_BGM = MODELS / "bgm"                            # 配乐模型（v3.4：Stable Audio 3 Medium）
+BGM_MODEL = MODELS_BGM / "stable-audio-3-medium"       # 转换好的 diffusers 格式（出曲子的那一份）
+BGM_SRC = MODELS_BGM / "stable-audio-3-medium-src"     # 官方原始 checkpoint + T5Gemma（转换用）
 TTS_MODELS = {"custom": "Qwen3-TTS-12Hz-1.7B-CustomVoice",  # 预设音色 + 一句话控制语气
               "design": "Qwen3-TTS-12Hz-1.7B-VoiceDesign"}  # 用一段文字描述造音色
 ALIGN_MODEL = "Qwen3-ForcedAligner-0.6B"               # 时间轴对齐（v1.8.14）：音频 + 原文 → 每个字的开始、结束（Apache 2.0，约 1.8 GB，也在 models\tts）
@@ -36,6 +40,10 @@ def ai_python() -> Path:
 
 def tts_python() -> Path:
     return TTS_ENV / ("Scripts/python.exe" if IS_WIN else "bin/python")
+
+
+def bgm_python() -> Path:
+    return BGM_ENV / ("Scripts/python.exe" if IS_WIN else "bin/python")
 
 
 TRAINING_RULES = """# 训练数据的规矩（写死在代码里）
@@ -74,12 +82,12 @@ def keep_inside():
         except Exception:
             return
     os.environ.update({
-        "PIP_CACHE_DIR": str(CACHE / "pip"),           # 默认在 C:\Users\你\AppData\Local\pip\cache
-        "HF_HOME": str(HF_CACHE),                      # 默认在 C:\Users\你\.cache\huggingface
-        "MODELSCOPE_CACHE": str(CACHE / "modelscope"),  # 默认在 C:\Users\你\.cache\modelscope
+        "PIP_CACHE_DIR": str(CACHE / "pip"),           # 默认在系统用户缓存目录的 pip\cache
+        "HF_HOME": str(HF_CACHE),                      # 默认在系统用户缓存目录的 .cache\huggingface
+        "MODELSCOPE_CACHE": str(CACHE / "modelscope"),  # 默认在系统用户缓存目录的 .cache\modelscope
         "TORCH_HOME": str(CACHE / "torch"),
         "XDG_CACHE_HOME": str(CACHE),
-        "CUDA_CACHE_PATH": str(CACHE / "cuda"),        # 显卡编译缓存，默认在 AppData\Roaming\NVIDIA
+        "CUDA_CACHE_PATH": str(CACHE / "cuda"),        # 显卡编译缓存，默认在系统的 NVIDIA 缓存目录
         "TMP": str(TMP), "TEMP": str(TMP),
         # HuggingFace 新的 Xet 下载方式要直连 cas-server.xethub.hf.co，hf-mirror 不支持（返回 401，Kev 的权重下不动）。
         # 关掉它，走老的按文件下载，hf-mirror 和官方都能用

@@ -1,223 +1,65 @@
-r"""安装配乐引擎 ACE-Step 1.5（v3.1）：整备 › 「配音、语音、配乐」一键装好的最后一步调用。
-可以重复运行：下过的、解压过的、模型下过的都跳过；下到一半断了，再运行一次接着下。
+r"""安装配乐引擎 Stable Audio 3 Medium（v3.4）。
 
+整备 ›「配音、语音、配乐」一键装好的最后一步调用；也可以单独运行：
   python scripts/install_bgm.py
 
 做什么（都是写死的，不让模型随手敲命令）：
-1. 解压工具 7-Zip（7za.exe，npm 上的 7zip-bin 5.2.0 包里带的官方程序，先 npmmirror 再 npmjs，下完对 sha512），放 tools\7z\。
-2. 下 ACE-Step 官方的 Windows 便携包 ACE-Step-1.5.7z（files.acemusic.ai，自带 python_embedded 和装好的依赖、PyTorch 2.7.1 cu128，
-   RTX 50 系能用）到 tools\downloads\，多线程分段下、断了接着下（scripts\fastdl.py）。
-3. 解压到 Agent 文件夹里的 ace-step\（先解到 ace-step.tmp，好了再改名；已经有的旧版改名留着，不删）。
-4. 用它自带的 Python 下模型（约 10GB）：先魔搭、不行再 hf-mirror，放 ace-step\checkpoints\。用的是便携包一直带着的
-   acestep.model_downloader（v3.2 改的：v3.1 调的 acestep.api.model_download 只有新版代码才有，便携包里没有，一导入就退出）；
-   它打印的东西都转进整备的日志（就是它自己的 ACE-Step/Ace-Step1.5 主仓库：
-   出曲子的 DiT turbo、VAE、文本编码器、1.7B 语言模型——我们不开语言模型，但它是同一个仓库一起下的）。
-5. 用它自带的 Python 导入一次 PyTorch 看显卡在不在。
-装好以后 app\bgm.py 直接用 ace-step\ 这一份（设置 › 配乐 不用填）。启动时不走它的 start_api_server.bat（那个会检查更新、问 Y/N，没有窗口就卡住），
-而是照那个 bat 一样直接跑 python_embedded\python.exe acestep\api_server.py。
+1. 准备 `bgm-env`：只装 diffusers / soundfile / lameenc；torch 和 transformers 通过一个 .pth 复用 `ai-env`，
+   不另装一份 3GB 的 PyTorch。tts-env 的 transformers 4.57.3 和 diffusers 0.43 的 huggingface-hub 依赖冲突，
+   所以不去动配音环境。
+2. 下载 `stabilityai/stable-audio-3-medium`（约 10.4GB，含 T5Gemma 文本编码器和 SAME 自编码器权重）：
+   先魔搭 ModelScope，失败再走 hf-mirror（gated 仓库要 HF_TOKEN，并在网页上同意 Stability / Gemma 条款）。
+   放到 `models\bgm\stable-audio-3-medium-src`。
+3. 用 `scripts/convert_stable_audio_3.py`（diffusers 官方转换脚本，Apache-2.0）把原始 checkpoint 转成
+   diffusers 格式，放到 `models\bgm\stable-audio-3-medium`。转换时固定用 SDPA（Windows 没有 flash-attn），
+   并按 `rf_denoiser` 自动写入 `stochastic_sampling=True` 的 8 步调度器。
+4. 自检：bgm-env 能导入 torch / diffusers / soundfile，显卡看得见。
 
-测试时能用环境变量换下载地址：AGENT_7Z_URLS、AGENT_ACE_URLS（空格隔开）。
+测试时可用 `AGENT_BGM_FAKE=1` 直接造一份小的假模型目录，不下载 10GB；`AGENT_BGM_MODEL` / `AGENT_BGM_SRC` /
+`AGENT_BGM_ENV` 可以换目录（`dev/test_media.py` 用）。
 """
-import base64
-import hashlib
-import io
+import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
-import tarfile
 import time
 from pathlib import Path
 
-import httpx
-
-HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(HERE))
 from app import paths  # noqa: E402
-import fastdl  # noqa: E402
 
 paths.keep_inside()
 
-IS_WIN = os.name == "nt"
-ACE = ROOT / "ace-step"
-DL = paths.TOOLS / "downloads"
-SEVEN = paths.TOOLS / "7z" / ("7za.exe" if IS_WIN else "7za")
-SEVEN_PKG = "7zip-bin-5.2.0.tgz"
-SEVEN_SHA512 = "ukTPVhqG4jNzMro2qA9HSCSSVJN3aN7tlb+hfqYCt3ER0yWroeA2VR38MNrOHLQ/cVj+DaIMad0kFCtWWowh/A=="
-SEVEN_URLS = [("npmmirror", f"https://registry.npmmirror.com/7zip-bin/-/{SEVEN_PKG}"), ("npmjs", f"https://registry.npmjs.org/7zip-bin/-/{SEVEN_PKG}")]
-ACE_URLS = [("ACE Studio 官方", "https://files.acemusic.ai/acemusic/win/ACE-Step-1.5.7z")]
-ACE_REPO = "ACE-Step/Ace-Step1.5"
-NEED = ("acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B")      # 出纯音乐要的三样（语言模型不开）
-FEED = os.environ.get("AGENT_FEED") == "1"
+REPO = "stabilityai/stable-audio-3-medium"
+TEXT_REPO = "google/t5gemma-b-b-ul2"
+ENV = Path(os.environ.get("AGENT_BGM_ENV") or paths.BGM_ENV)
+SRC = Path(os.environ.get("AGENT_BGM_SRC") or paths.BGM_SRC)
+DST = Path(os.environ.get("AGENT_BGM_MODEL") or paths.BGM_MODEL)
+CONVERT = ROOT / "scripts" / "convert_stable_audio_3.py"
+NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+MIRROR = "https://pypi.tuna.tsinghua.edu.cn/simple"
+SRC_FILES = ("model.safetensors", "model_config.json", "t5gemma-b-b-ul2/model.safetensors",
+             "t5gemma-b-b-ul2/config.json", "t5gemma-b-b-ul2/tokenizer.json")
+TQDM_LINE = re.compile(r"\d+%\|")
 
 
 def say(msg, kind=""):
-    print(("@@SAY " + kind + msg) if FEED else msg, flush=True)
+    print(("@@SAY " + kind + msg) if os.environ.get("AGENT_FEED") == "1" else msg, flush=True)
 
 
 def emit(**kw):
     print("@@PROGRESS " + json.dumps(kw, ensure_ascii=False), flush=True)
 
 
-def urls(env, default):
-    v = os.environ.get(env, "").split()
-    return [(f"源{i + 1}", u) for i, u in enumerate(v)] if v else default
-
-
-def ace_python(d=ACE):
-    for sub in ("python_embedded", "python_embeded"):
-        for exe in (("python.exe",) if IS_WIN else ("python", "python.exe")):
-            p = d / sub / exe
-            if p.exists():
-                return p
-    return None
-
-
-def code_ok(d=ACE):
-    return (d / "acestep" / "api_server.py").exists() and ace_python(d) is not None
-
-
-def models_ok(d=ACE):
-    ck = d / "checkpoints"
-    return all((ck / m).is_dir() and any((ck / m).rglob("*.safetensors")) for m in NEED) and not any(ck.rglob("*.incomplete"))
-
-
-# ---------- 1. 7-Zip ----------
-def ensure_7z():
-    if SEVEN.exists():
-        say("解压工具 7-Zip 已经有了", "✓")
-        return SEVEN
-    want = "package/win/x64/7za.exe" if IS_WIN else "package/linux/x64/7za"
-    errs = []
-    for name, url in urls("AGENT_7Z_URLS", SEVEN_URLS):
-        try:
-            say(f"下载解压工具 7-Zip（{SEVEN_PKG}，约 5MB）：{name}")
-            with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(20, read=60)) as c:
-                r = c.get(url)
-                r.raise_for_status()
-            data = r.content
-            got = base64.b64encode(hashlib.sha512(data).digest()).decode()
-            if got != SEVEN_SHA512:
-                raise RuntimeError("校验码对不上（文件被改过或者下坏了）")
-            with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as t:
-                f = t.extractfile(want)
-                if not f:
-                    raise RuntimeError("压缩包里没有 " + want)
-                SEVEN.parent.mkdir(parents=True, exist_ok=True)
-                tmp = SEVEN.with_name(SEVEN.name + ".part")
-                tmp.write_bytes(f.read())
-                tmp.chmod(0o755)
-                tmp.replace(SEVEN)
-            say(f"7-Zip 放好了：{paths.show(SEVEN)}", "✓")
-            return SEVEN
-        except Exception as e:
-            errs.append(f"{name}：{str(e)[:100]}")
-            say(f"「{name}」不行：{str(e)[:100]}，换下一个", "!")
-    raise RuntimeError("7-Zip 没下成：" + "；".join(errs))
-
-
-# ---------- 2、3. 便携包 ----------
-def extract(arc: Path, sz: Path):
-    """解压到 ace-step.tmp，找到里面带 acestep\\ 和 python_embedded\\ 的那一层，改名成 ace-step。"""
-    tmp = ROOT / "ace-step.tmp"
-    if tmp.exists():
-        tmp.rename(ROOT / f"ace-step.tmp-old-{int(time.time())}")
-    size = arc.stat().st_size
-    say(f"解压 {arc.name}（{size / 2**30:.2f} GB，几分钟，硬盘慢的话更久）")
-    p = subprocess.Popen([str(sz), "x", str(arc), f"-o{tmp}", "-y", "-bsp1", "-bso0", "-bse1"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    buf, last, err = "", -1, []
-    while True:
-        ch = p.stdout.read(256)
-        if not ch:
-            break
-        buf += ch.decode("utf-8", errors="replace")
-        parts = re.split(r"[\r\n\b]+", buf)
-        buf = parts.pop()
-        for x in parts:
-            m = re.search(r"(\d{1,3})%", x)
-            if m:
-                pct = int(m.group(1))
-                if pct != last:
-                    last = pct
-                    emit(phase="解压 ACE-Step", src="7-Zip", done=size * pct // 100, total=size)
-            elif x.strip() and not x.strip().startswith(("7-Zip", "Scanning", "Extracting", "Everything", "Path", "Type", "Physical", "Headers", "Solid", "Blocks", "Size", "Compressed", "Files", "Folders")):
-                err.append(x.strip())
-    code = p.wait()
-    if code != 0:
-        raise RuntimeError(f"解压失败（7-Zip 退出码 {code}）：" + " ".join(err[-3:])[:200])
-    emit(phase="解压 ACE-Step", src="7-Zip", done=size, total=size)
-    found = next((d for d in [tmp, *sorted(tmp.iterdir())] if d.is_dir() and code_ok(d)), None) if tmp.exists() else None
-    if not found:
-        raise RuntimeError("解压出来的东西里没找到 acestep\\api_server.py 和 python_embedded（压缩包可能不对）")
-    if ACE.exists():
-        old = ROOT / f"ace-step-old-{int(time.time())}"
-        ACE.rename(old)
-        say(f"以前的 ace-step 改名留着：{old.name}（不删，确认新的好用了你可以自己删）")
-    found.rename(ACE)
-    if tmp.exists() and found != tmp:
-        try:
-            tmp.rmdir()                       # 空的才删得掉
-        except OSError:
-            pass
-    say(f"ACE-Step 解压好了：{paths.show(ACE)}", "✓")
-
-
-def ensure_code():
-    if code_ok():
-        say("ACE-Step 的程序已经解压好了，跳过", "✓")
-        return
-    sz = ensure_7z()
-    DL.mkdir(parents=True, exist_ok=True)
-    arc = fastdl.fetch(DL / "ACE-Step-1.5.7z", urls("AGENT_ACE_URLS", ACE_URLS), phase="下载 ACE-Step 便携包")
-    say("检查压缩包有没有下坏（7-Zip 测一遍）")
-    r = subprocess.run([str(sz), "t", str(arc), "-bso0", "-bsp0"], capture_output=True, text=True, errors="replace",
-                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    if r.returncode != 0:
-        bad = arc.with_name(arc.name + f".坏的-{int(time.time())}")
-        arc.rename(bad)
-        raise RuntimeError("压缩包下坏了（已改名 " + bad.name + "），再点一次会重新下：" + (r.stdout + r.stderr).strip()[-160:])
-    extract(arc, sz)
-
-
-# ---------- 4. 模型 ----------
-DL_CODE = r"""
-import inspect, os, sys
-from pathlib import Path
-sys.path.insert(0, os.getcwd())
-os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
-os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-ck, src = sys.argv[1], sys.argv[2]
-want = "modelscope" if src == "modelscope" else "huggingface"
-os.environ["ACESTEP_DOWNLOAD_SOURCE"] = want
-try:
-    from acestep import model_downloader as M              # 便携包一直带着的下载工具（就是它的 acestep-download 命令）
-except ImportError as e:
-    M = None
-    print("这个版本没有 acestep.model_downloader：", e, flush=True)
-if M is not None and hasattr(M, "download_main_model"):
-    ps = inspect.signature(M.download_main_model).parameters
-    kw = {k: v for k, v in (("prefer_source", want), ("force", True)) if k in ps}   # force：上次下了一半的也重新核一遍（下好的文件会跳过）
-    print("用它自带的 acestep.model_downloader 下主模型（" + want + "）", flush=True)
-    ok, msg = M.download_main_model(Path(ck), **kw)
-    print(msg, flush=True)
-    sys.exit(0 if ok else 1)
-from acestep.api import model_download as D                   # 新版才有的那一个
-if src == "modelscope":
-    D.download_from_modelscope(%r, ck, "acestep-v15-turbo")
-else:
-    D.download_from_huggingface(%r, ck, "acestep-v15-turbo")
-""" % (ACE_REPO, ACE_REPO)
-
-
-def run_fwd(cmd, cwd, env):
-    """跑一个子程序，它打印的东西原样转到我们自己的输出上（整备的日志里看得到、进度条也认得出）。
-    v3.2：以前没接，CREATE_NO_WINDOW 时它的输出进了一个看不见的控制台，出错只剩「退出码 1」。返回 (退出码, 最后几行)。"""
-    p = subprocess.Popen([str(c) for c in cmd], cwd=str(cwd), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+def run_fwd(cmd, cwd=None, env=None):
+    """跑一个子程序，输出原样转到整备日志；返回 (退出码, 最后几行)。"""
+    p = subprocess.Popen([str(c) for c in cmd], cwd=str(cwd or ROOT), env=env or os.environ,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                         creationflags=NOWIN)
     out = getattr(sys.stdout, "buffer", None)
     tail, buf = [], b""
     while True:
@@ -235,61 +77,175 @@ def run_fwd(cmd, cwd, env):
         for x in lines:
             t = x.decode("utf-8", "replace").strip()
             if t and not TQDM_LINE.search(t):
-                tail = (tail + [t])[-30:]
+                tail = (tail + [t])[-40:]
     t = buf.decode("utf-8", "replace").strip()
     if t:
         tail.append(t)
     return p.wait(), tail
 
 
-TQDM_LINE = re.compile(r"\d+%\|")
+def src_ok():
+    return all((SRC / f).exists() for f in SRC_FILES)
 
 
-def ensure_models():
+def models_ok(d=None):
+    """转换好的 diffusers 目录：核心 safetensors、配置齐备；`.cache` 里的半截文件不算。"""
+    d = Path(d or DST)
+    return ((d / "model_index.json").exists()
+            and all((d / n).is_dir() and any((d / n).glob("*.safetensors")) for n in ("transformer", "vae", "text_encoder"))
+            and (d / "scheduler" / "scheduler_config.json").exists()
+            and not any(p for p in d.rglob("*.incomplete") if ".cache" not in p.parts))
+
+
+def _site(env_dir: Path) -> Path | None:
+    for pat in ("Lib/site-packages", "lib/python*/site-packages"):
+        for p in env_dir.glob(pat):
+            if p.is_dir():
+                return p
+    return None
+
+
+def ensure_env():
+    py = ENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    ok = False
+    if py.exists():
+        code, _ = run_fwd([py, "-c", "import torch, diffusers, soundfile, lameenc; print('ok')"])
+        ok = code == 0
+    if ok:
+        say("配乐环境已经有了，跳过", "✓")
+        return py
+    if not py.exists():
+        say(f"建配乐环境：{paths.show(ENV)}（只装 diffusers / soundfile，不另装 PyTorch）")
+        code, tail = run_fwd([sys.executable, "-m", "venv", str(ENV)])
+        if code != 0:
+            raise RuntimeError("配乐环境建不起来：" + " ".join(tail[-3:]))
+        py = ENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    # 复用 ai-env 的 torch / transformers，避免再装一份几 GB 的 PyTorch
+    ai_site = _site(paths.AI_ENV)
+    if not ai_site:
+        raise RuntimeError("没有找到 ai-env：先到 设置 › 整备 装好「本地模型环境」，配乐复用它的 PyTorch")
+    site = _site(ENV)
+    if not site:
+        raise RuntimeError("配乐环境里找不到 site-packages")
+    (site / "ai-env.pth").write_text(str(ai_site), "utf-8")
+    say("安装配乐用的 diffusers、soundfile、lameenc（走清华镜像）")
+    code, tail = run_fwd([py, "-m", "pip", "install", "-i", MIRROR, "-U", "diffusers>=0.43", "soundfile", "lameenc", "protobuf"])
+    if code != 0:
+        raise RuntimeError("配乐依赖没装上：" + " ".join(tail[-4:]))
+    code, tail = run_fwd([py, "-c", "import torch, diffusers, soundfile, lameenc; print('ok')"])
+    if code != 0:
+        raise RuntimeError("配乐环境装好了但导入失败：" + " ".join(tail[-4:]))
+    say("配乐环境好了", "✓")
+    return py
+
+
+def _download_modelscope():
+    """大文件用 fastdl（12 连接，单连接被限速时快很多），小文件用 snapshot_download 补齐。"""
+    say(f"下载 Stable Audio 3 Medium（约 10.4GB）：魔搭 {REPO} → {paths.show(SRC)}")
+    base_www = f"https://www.modelscope.cn/models/{REPO}/resolve/master/"
+    base = f"https://modelscope.cn/models/{REPO}/resolve/master/"
+    big_ok = True
+    try:
+        import fastdl
+        (SRC / "model.safetensors.incomplete").unlink(missing_ok=True)
+        for rel in ("model.safetensors", "t5gemma-b-b-ul2/model.safetensors"):
+            dest = SRC / rel
+            if dest.exists() and dest.stat().st_size > 0:
+                continue
+            fastdl.fetch(dest, [("魔搭", base_www + rel), ("魔搭备用", base + rel)], phase=f"下载 {rel}")
+    except Exception as e:
+        big_ok = False
+        say(f"多连接下载没成（{str(e)[:120]}），改用魔搭的 snapshot_download 单连接续传", "!")
+    small = ['*.json', '*.md', '*.gitattributes', 'LICENSE*', 'NOTICE', 't5gemma-b-b-ul2/*.json',
+             't5gemma-b-b-ul2/*.model', 't5gemma-b-b-ul2/*.md', 't5gemma-b-b-ul2/.gitattributes']
+    patterns = None if not big_ok else small
+    code = ("from modelscope import snapshot_download\n"
+            f"snapshot_download({REPO!r}, local_dir={str(SRC)!r}, allow_patterns={patterns!r})\n")
+    return run_fwd([sys.executable, "-c", code], ROOT, dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8"))
+
+
+def _download_hf(token=""):
+    code = ("import os\n"
+            "from huggingface_hub import snapshot_download\n"
+            f"snapshot_download({REPO!r}, local_dir={str(SRC)!r}, token=os.environ.get('HF_TOKEN') or None)\n")
+    env = dict(os.environ, HF_ENDPOINT="https://hf-mirror.com", HF_HUB_DISABLE_XET="1",
+               HF_TOKEN=token or os.environ.get("HF_TOKEN", ""), PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    say(f"魔搭没下成，改走 hf-mirror：{REPO}")
+    return run_fwd([sys.executable, "-c", code], ROOT, env)
+
+
+def ensure_models(py: Path, token=""):
     if models_ok():
-        say("ACE-Step 的模型已经下好了，跳过", "✓")
+        say("Stable Audio 3 的模型已经转换好了，跳过", "✓")
         return
-    ck = ACE / "checkpoints"
-    ck.mkdir(parents=True, exist_ok=True)
-    py = ace_python()
-    env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
-    errs = []
-    for src, name in (("modelscope", "魔搭"), ("hf", "hf-mirror")):
-        say(f"下载 ACE-Step 的模型（约 10GB）：从{name} {ACE_REPO}，放到 {paths.show(ck)}")
-        code, tail = run_fwd([py, "-c", DL_CODE, ck, src], ACE, env)
-        if code == 0 and models_ok():
-            say("ACE-Step 的模型下好了", "✓")
-            return
-        why = next((x for x in reversed(tail) if re.search(r"Error|错误|失败|failed|Exception|没有", x, re.I)), tail[-1] if tail else "")
-        errs.append(f"{name}：" + (f"退出码 {code}" if code else "跑完了但文件不全") + (f"（{why[:160]}）" if why else ""))
-        say(f"{name}没下全，{'换 hf-mirror 再试' if src == 'modelscope' else '都试过了'}" + (f"：{why[:160]}" if why else ""), "!")
-    raise RuntimeError("模型没下成：" + "；".join(errs))
+    if not src_ok():
+        code, tail = _download_modelscope()
+        if code != 0 or not src_ok():
+            why = " ".join(tail[-3:])[:300]
+            code, tail = _download_hf(token)
+            if code != 0 or not src_ok():
+                raise RuntimeError("模型没下全：" + (why or "魔搭失败") + "；hf-mirror：" + " ".join(tail[-3:])[:300] +
+                                   "（HF 仓库是 gated：先在网页同意 Stability / Gemma 条款，再填 设置 › 语音 的 Hugging Face 令牌）")
+    say("把原始 checkpoint 转成 diffusers 格式（一次性，几分钟到十几分钟）")
+    shutil.rmtree(DST, ignore_errors=True)
+    cmd = [py, CONVERT,
+           "--checkpoint_path", SRC / "model.safetensors",
+           "--model_config_path", SRC / "model_config.json",
+           "--text_encoder_repo", SRC / "t5gemma-b-b-ul2",
+           "--output_dir", DST,
+           "--dtype", "bfloat16",
+           "--skip_sanity_check"]
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8", HF_HUB_OFFLINE="1")
+    code, tail = run_fwd(cmd, ROOT, env)
+    if code != 0 or not models_ok():
+        raise RuntimeError("转换失败（退出码 %s）：%s" % (code, " ".join(tail[-6:])[:500]))
+    say("Stable Audio 3 的模型转换好了", "✓")
 
 
-# ---------- 5. 自检 ----------
-def check():
-    py = ace_python()
-    r = subprocess.run([str(py), "-c", "import torch; print('PyTorch', torch.__version__, '| 显卡', torch.cuda.get_device_name(0) if torch.cuda.is_available() else '用不了')"],
-                       cwd=str(ACE), capture_output=True, text=True, errors="replace", env=dict(os.environ, PYTHONUTF8="1"),
-                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    out = (r.stdout or "").strip().splitlines()
-    if r.returncode != 0:
-        print((r.stderr or "")[-1500:], flush=True)
-        raise RuntimeError("它自带的 Python 导入 PyTorch 出错：" + ((r.stderr or "").strip().splitlines() or ["?"])[-1][:200])
-    info = out[-1] if out else ""
+def check(py: Path):
+    code, tail = run_fwd([py, "-c",
+                          "import torch, diffusers, soundfile; print('PyTorch', torch.__version__, '| diffusers', diffusers.__version__, "
+                          "'| 显卡', torch.cuda.get_device_name(0) if torch.cuda.is_available() else '用不了')"])
+    if code != 0:
+        raise RuntimeError("配乐环境自检失败：" + " ".join(tail[-4:]))
+    info = tail[-1] if tail else ""
     if "用不了" in info:
-        say("ACE-Step 自带的 PyTorch 找不到显卡（要 CUDA 12.8 的显卡驱动：NVIDIA 驱动更新到 570 以上）：" + info, "!")
+        say("配乐环境能导入，但 PyTorch 看不到显卡（NVIDIA 驱动要支持 CUDA 12.8）：" + info, "!")
     else:
-        say("ACE-Step 能用了：" + info, "✓")
+        say("配乐能用了：" + info, "✓")
+    if not models_ok():
+        raise RuntimeError(f"模型文件不全：{paths.show(DST)}")
+
+
+def fake_model():
+    """测试用：造一份小的、结构正确的假模型，不下载。"""
+    shutil.rmtree(DST, ignore_errors=True)
+    DST.mkdir(parents=True, exist_ok=True)
+    (DST / "model_index.json").write_text(json.dumps({"_class_name": "StableAudio3Pipeline"}, ensure_ascii=False), "utf-8")
+    for n in ("transformer", "vae", "text_encoder"):
+        (DST / n).mkdir(exist_ok=True)
+        (DST / n / "model.safetensors").write_bytes(b"fake")
+    (DST / "scheduler").mkdir(exist_ok=True)
+    (DST / "scheduler" / "scheduler_config.json").write_text("{}", "utf-8")
+    say("测试模式：造了一份假的 Stable Audio 3 模型", "✓")
 
 
 def main():
-    if not IS_WIN and not os.environ.get("AGENT_ACE_URLS"):
-        print("ACE-Step 的便携包只有 Windows 版。")
-        return 1
-    ensure_code()
-    ensure_models()
-    check()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--models", action="store_true", help="只下模型/转换（环境已好时）")
+    ap.add_argument("--env", action="store_true", help="只准备环境")
+    ap.add_argument("--hf-token", default="", help="hf-mirror 用的令牌（gated 仓库）")
+    args = ap.parse_args()
+    if os.environ.get("AGENT_BGM_FAKE") == "1":
+        fake_model()
+        return 0
+    t0 = time.time()
+    py = ensure_env()
+    if not args.env:
+        ensure_models(py, args.hf_token or os.environ.get("HF_TOKEN", ""))
+    if not args.models:
+        check(py)
+    say(f"配乐装好了（{time.time() - t0:.0f} 秒）。左边点「配乐」出一首试试。", "✓")
     print("\n配乐装好了。左边点「配乐」出一首试试。", flush=True)
     return 0
 
@@ -302,6 +258,6 @@ if __name__ == "__main__":
         code = 1
     except Exception as e:
         print("\n出错了：", e, flush=True)
-        say(str(e)[:300], "!")
+        say(str(e)[:400], "!")
         code = 9
     sys.exit(code)

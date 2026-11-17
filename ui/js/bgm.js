@@ -1,6 +1,6 @@
 'use strict';
 /* ================= 配乐（v3.0，工具窗口）=================
-   本地的 ACE-Step 1.5 出纯音乐（不花钱、不出本机）。一屏三块：
+   本地的 Stable Audio 3 Medium 出纯音乐（不花钱、不出本机）。一屏三块：
    - 左：要什么样的（一句描述 + 几个现成的风格 + 多长）→「出一首」；下面一行写服务现在什么样（没配 / 用到才启动 / 开着），能手动关掉腾显存。
    - 中：正在听的这一首：波形（真的从音频里算出来的）、播放、名字、多长、当时的描述；正在出的时候这里是进度。
    - 右：最近出的，点一首就在中间听；每首能「放进工作区」（给 Agent 做视频用）、打开所在的文件夹。
@@ -24,10 +24,10 @@ function bgmSvcLine(st) {
   if (!st) return ['idle', '读取中…', ''];
   if (st.job && st.job.st === 'run') return ['run', '正在出：' + (st.job.msg || '等它出完'), ''];
   if (st.yielding) return ['warn', '在让路（' + (st.yield_reason || '别的程序要显存') + '）：现在不启动', ''];
-  if (st.alive) return ['ok', 'ACE-Step 开着 · 闲 ' + (st.idle || 10) + ' 分钟自己关', '<button class="btn mini ghost" data-bgm-off="1">现在关掉</button>'];
-  if (st.up) return ['ok', 'ACE-Step 开着（不是 Agent 开的，不归它关）', ''];
-  if (st.can_start) return ['idle', '用到才启动：点「出一首」会先把 ACE-Step 开起来（第一次要等它装模型）', ''];
-  return ['off', '还没装：到 设置 › 整备 一键装好（ACE-Step 1.5 和它的模型，不用自己去 GitHub 下）', '<button class="btn mini" data-go-sec="prep">去装</button>'];
+  if (st.alive) return ['ok', 'Stable Audio 3 开着 · 闲 ' + (st.idle || 10) + ' 分钟自己关', '<button class="btn mini ghost" data-bgm-off="1">现在关掉</button>'];
+  if (st.up) return ['ok', 'Stable Audio 3 开着（不是 Agent 开的，不归它关）', ''];
+  if (st.can_start) return ['idle', '用到才启动：点「出一首」会先把 Stable Audio 3 开起来（第一次要加载模型）', ''];
+  return ['off', '还没装：到 设置 › 整备 一键装好（Stable Audio 3 Medium 和它的模型）', '<button class="btn mini" data-go-sec="prep">去装</button>'];
 }
 function bgmHTML() {
   var st = bgmSt(), job = st && st.job, run = job && job.st === 'run', cur = bgmCur(), sv = bgmSvcLine(st), list = (st && st.recent) || [];
@@ -35,7 +35,7 @@ function bgmHTML() {
   var left = BGM.mode === 'batch' ? '<section class="hud bg-pn bg-make bg-batch"><div class="bg-h"><b>批量配乐</b><span>一首一个文件</span><span class="sp"></span>' + mode + '</div>' +
     '<div class="mb" data-mbk="bgm"></div><div class="bg-svc st-' + sv[0] + '"><i></i><span>' + esc(sv[1]) + '</span>' + sv[2] + '</div></section>' :
     '<section class="hud bg-pn bg-make"><div class="bg-h"><b>要什么样的</b><span>纯音乐，不带人声</span><span class="sp"></span>' + mode + '</div>' +
-    '<textarea class="bg-in" id="bgPrompt" spellcheck="false" placeholder="一句话写清楚：风格、情绪、乐器、快慢。比如：轻快的电子乐，明亮的合成器，适合科技类视频开场"' + (run ? ' disabled' : '') + '>' + esc(BGM.prompt) + '</textarea>' +
+    '<textarea class="bg-in" id="bgPrompt" spellcheck="false" placeholder="一句话写清楚：风格、情绪、乐器、快慢。英文效果最好；中文也行（配了 DeepSeek Key 会自动转成英文标签）。比如：轻快的电子乐，明亮的合成器，适合科技类视频开场"' + (run ? ' disabled' : '') + '>' + esc(BGM.prompt) + '</textarea>' +
     '<div class="bg-pre" role="group" aria-label="现成的风格">' + BGM_PRESET.map(function (p, i) { return '<button class="chip" data-bgm-pre="' + i + '"' + (run ? ' disabled' : '') + '>' + p[0] + '</button>'; }).join('') + '</div>' +
     '<div class="bg-len"><label for="bgSec">多长</label><input type="range" id="bgSec" min="10" max="240" step="5" value="' + BGM.seconds + '"' + (run ? ' disabled' : '') + '><output class="num" id="bgSecO">' + bgmClock(BGM.seconds) + '</output></div>' +
     '<div class="bg-go">' + (run ? '<button class="btn danger bg-big" data-bgm-stop="1">不等了</button>' : '<button class="btn primary bg-big" data-bgm-gen="1"' + (useLive() ? '' : ' disabled') + '>出一首</button>') + '</div>' +
@@ -50,7 +50,7 @@ function bgmHTML() {
     '<button class="btn" data-bgm-tows="' + cur.id + '"' + (useLive() && cur.exists ? '' : ' disabled') + ' title="复制一份到 工作区\\素材\\配乐\\，Agent 做视频时能用">放进工作区</button>' +
     '<button class="btn ghost" data-bgm-open="' + cur.id + '"' + (useLive() ? '' : ' disabled') + '>打开文件夹</button></div>' +
     '<div class="bg-t">' + esc(cur.name) + (cur.exists ? '' : '<em>（文件被挪走或删了）</em>') + '</div><div class="bg-p">' + esc(cur.prompt || '') + '</div></div>';
-  else mid = '<div class="bg-now"><div class="bg-t">还没出过</div><div class="bg-p">左边写一句描述，点「出一首」。一分钟的大概等二三十秒（看显卡）。</div></div>';
+  else mid = '<div class="bg-now"><div class="bg-t">还没出过</div><div class="bg-p">左边写一句描述，点「出一首」。8 步蒸馏模型，通常几十秒（看显卡和时长，最长 240 秒）。</div></div>';
   var right = '<section class="hud bg-pn bg-list"><div class="bg-h"><b>最近出的</b><span>' + list.length + ' 首</span><span class="sp"></span><button class="linkbtn" data-bgm-open=""' + (useLive() ? '' : ' disabled') + '>打开文件夹 ›</button></div><div class="bg-rows">' +
     (list.length ? list.map(function (h) {
       return '<button class="bg-row' + (cur && cur.id === h.id ? ' on' : '') + (h.exists ? '' : ' gone') + '" data-bgm-sel="' + h.id + '"><span class="num t">' + bgmWhen(h.ts) + '</span><span class="x">' + esc(h.prompt || h.name) + '</span><span class="num d">' + bgmClock(h.duration || h.seconds) + '</span></button>';

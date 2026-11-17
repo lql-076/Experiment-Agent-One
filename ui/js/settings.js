@@ -342,7 +342,7 @@ var CAPS_DEMO = { caps: { download: true, voice: true, voice_cloud: false, image
 var CAP_ROWS = [['download', '从网上下载文件到工作区', '只下公网上的（http / https），本机和局域网的地址不碰；单个最大 500MB'],
   ['voice', '自己配音（本地）', '用「配音」页上次用的那套音色，出音频 + 每句的时间 + 字幕，直接放进工作区。不花钱'],
   ['voice_cloud', '配音可以用云端（百炼）', '要花钱，文案会发给百炼。关着就只用本地的'],
-  ['music', '自己出配乐（ACE-Step）', '本地出纯音乐，不花钱。要先在 设置 › 配乐 里配好'],
+  ['music', '自己出配乐（Stable Audio 3）', '本地出纯音乐，不花钱。要先在 设置 › 配乐 里配好'],
   ['image', '自己生图（API易）', '要花钱：每张按「生图」页选的模型算，一件事最多出几张在上面设。提示词和参考图会发给 API易'],
   ['publish', '自己发抖音', '做好的视频它能交给「发布」发到你的抖音（发出去是公开的）。要先在「发布」窗口扫码登录'],
   ['publish_ask', '发抖音之前要我点确认', '开着：它只是交过去，在「发布」窗口里等你看一眼、点「发布」才发。关掉：它直接发']];
@@ -359,7 +359,7 @@ function capsHTML() {
       '<div class="secret"><input class="inp" id="ccBash" spellcheck="false" placeholder="它能跑哪些命令，逗号隔开" value="' + esc(cc.bash || '') + '"><button class="btn" data-cap-set="cc_bash"' + dis + '>保存</button></div>' +
       '<div class="help">能跑的命令只认名字（python、ffmpeg 这种），别的一律不让跑。' + (cc.log ? '它的原始输出记在 ' + esc(cc.log) : '') + '</div></div>' +
     '<div class="fields capsw">' + CAP_ROWS.map(function (r) {
-      var warn = r[0] === 'image' && !k.image_key ? '（还没填 API易 的 Key）' : r[0] === 'music' && !k.music_ready ? '（ACE-Step 还没配好）' : r[0] === 'voice' && !k.voice_env ? '（本地配音还没装）' :
+      var warn = r[0] === 'image' && !k.image_key ? '（还没填 API易 的 Key）' : r[0] === 'music' && !k.music_ready ? '（Stable Audio 3 还没配好）' : r[0] === 'voice' && !k.voice_env ? '（本地配音还没装）' :
         r[0] === 'publish' && !k.publish_ready ? '（抖音还没登录：在「发布」窗口扫码）' : r[0] === 'publish_ask' && !k.publish_ask && k.publish ? '（现在是直接发）' : '';
       return '<div class="field row"><div><label>' + r[1] + (warn ? '<em class="warn">' + warn + '</em>' : '') + '</label><div class="help">' + r[2] + '</div></div><button class="switch" role="switch" data-cap="' + r[0] + '" aria-checked="' + !!k[r[0]] + '" aria-label="' + r[1] + '"' + dis + '></button></div>'; }).join('') + '</div>' +
     '<div class="capbox"><div class="cap-h"><b>技能</b><span class="cap">' + (c.skills || []).length + ' 份 · 做某类事的成套做法，它用到时自己翻</span><span class="sp"></span><button class="btn mini" data-ws-open="ws"' + dis + '>打开工作区</button></div>' +
@@ -389,13 +389,13 @@ function voiceBoxFetch() { api('GET', '/api/voice').then(function (j) { VBOX.st 
 /* ---------- 配乐（v3.0） ---------- */
 var BBOX = { st: null };
 function bgmBoxHTML() {
-  var v = useLive() ? BBOX.st : { up: false, alive: false, configured: false, can_start: false, url: 'http://127.0.0.1:8001', out: 'F:\\Agent\\配乐输出' };
+  var v = useLive() ? BBOX.st : { up: false, alive: false, configured: false, can_start: false, url: 'http://127.0.0.1:8094', out: 'F:\\Agent\\配乐输出' };
   if (!v) return '<div class="field"><div class="cap">正在读取…</div></div>';
   var line = v.alive ? '<em class="ok">开着</em>（Agent 开的，闲着会自己关）' : v.up ? '<em class="ok">连得上</em>（你自己开着的）' : v.can_start ? '<em class="ok">配好了</em>：用到才启动' + (v.python ? ' · ' + esc(v.python) : '')
-    : v.dir && !v.dir_ok ? '<em class="bad">这个文件夹不存在</em>：' + esc(v.dir) : '<em class="warn">还没装</em>：点右边一键装（官方便携包 + 模型，约 15GB）';
-  var inst = !v.can_start && !v.up ? '<button class="btn mini primary" data-setup-one="bgm"' + (useLive() ? '' : ' disabled') + ' title="在 设置 › 整备 的「配音、语音、配乐」里装，进度在那张卡片上">一键装 ACE-Step</button>' : '';
-  return '<div class="capbox"><div class="cap-row"><b>ACE-Step 1.5</b><span>' + line + '</span>' + inst + '<button class="btn mini" data-open-tool="bgm">打开配乐窗口</button>' + (v.alive ? '<button class="btn mini ghost" data-bgm-off="1">现在关掉</button>' : '') + '</div>' +
-    '<div class="help">一键装：从 ACE 官方下 Windows 便携包（自带 Python 和依赖）解压到 Agent 文件夹里的 ace-step，再下模型，下面什么都不用填；进度在 设置 › 整备 的「配音、语音、配乐」卡片上。想用自己装的一份才填下面的文件夹。出的音乐放在：' + esc(v.out || '') + '</div></div>';
+    : v.dir && !v.dir_ok ? '<em class="bad">这个文件夹不存在</em>：' + esc(v.dir) : '<em class="warn">还没装</em>：点右边一键装（原始权重约 10.4GB，转换后 5~6GB）';
+  var inst = !v.can_start && !v.up ? '<button class="btn mini primary" data-setup-one="bgm"' + (useLive() ? '' : ' disabled') + ' title="在 设置 › 整备 的「配音、语音、配乐」里装，进度在那张卡片上">一键装 Stable Audio 3</button>' : '';
+  return '<div class="capbox"><div class="cap-row"><b>Stable Audio 3 Medium</b><span>' + line + '</span>' + inst + '<button class="btn mini" data-open-tool="bgm">打开配乐窗口</button>' + (v.alive ? '<button class="btn mini ghost" data-bgm-off="1">现在关掉</button>' : '') + '</div>' +
+    '<div class="help">一键装：下 Stable Audio 3 的原始权重，再用 diffusers 转成可推理格式（torch 复用本地模型环境，不另装一份）；下面什么都不用填。进度在 设置 › 整备 的「配音、语音、配乐」卡片上。想用自己的模型文件夹才填下面。出的音乐放在：' + esc(v.out || '') + '</div></div>';
 }
 function bgmBoxFetch() { api('GET', '/api/bgm').then(function (j) { BBOX.st = j; var b = $('#bgmBox'); if (b) b.innerHTML = bgmBoxHTML(); }).catch(function () {}); }
 var sv = $('#view-settings');
@@ -431,7 +431,7 @@ sv.addEventListener('click', function (ev) {
     else if (d.voiceTest) { cp.disabled = true; voiceSay('你好，我在。现在听到的就是我说话的声音。').then(function (ok) { cp.disabled = false; if (ok) setTimeout(voiceBoxFetch, 500); }); }
     else if (d.voiceOff) api('POST', '/api/voice/off', {}).then(function () { toast('Breeze 关掉了，显存还回去了'); voiceBoxFetch(); }).catch(function (e) { toast(e.message); });
     else if (d.voiceUnref) api('DELETE', '/api/voice/ref').then(function (j) { VBOX.st = j; $('#voiceBox').innerHTML = voiceBoxHTML(); toast('去掉了：回到按描述造声音'); }).catch(function (e) { toast(e.message); });
-    else if (d.bgmOff) api('POST', '/api/bgm/off', {}).then(function () { toast('ACE-Step 关掉了'); bgmBoxFetch(); }).catch(function (e) { toast(e.message); });
+    else if (d.bgmOff) api('POST', '/api/bgm/off', {}).then(function () { toast('Stable Audio 3 关掉了'); bgmBoxFetch(); }).catch(function (e) { toast(e.message); });
     return;
   }
   var mf = ev.target.closest('[data-main-full],[data-tone]');

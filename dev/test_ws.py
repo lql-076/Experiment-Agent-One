@@ -113,7 +113,7 @@ for cmd, why in (("del a.txt", "del"), ("rm -rf 小说", "rm"), ("powershell -c 
     check(W.guard(cmd) != "", f"拦下：{cmd}（{W.guard(cmd)[:30]}）")
 for cmd in ("python make.py", "pip install imageio-ffmpeg", "ffmpeg -y -framerate 30 -i 帧/%05d.png -c:v libx264 成品.mp4", "python -m http.server --help"):
     check(W.guard(cmd) == "", f"能跑：{cmd}")
-W.write("坏.py", "open('/home/somebody/x.txt', 'w').write('x')\n")
+W.write("坏.py", "open('/opt/example/x.txt', 'w').write('x')\n")
 g1 = W.guard("python 坏.py")
 W.write("坏.py", "import os\nprint(os.path.expanduser('~'))\n")
 g2 = W.guard("python 坏.py")

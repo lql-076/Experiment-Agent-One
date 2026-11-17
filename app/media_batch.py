@@ -13,7 +13,7 @@ r"""配音批量、配乐批量（v3.1）：照生图的批量做——一份清
   描述：轻快的电子乐……              ← 不写「描述：」的话，这一节剩下的字就是描述
   也能一行一首：bgm01_开场 | 30 | 轻快的电子乐……；或者 Markdown 表格（名字、时长、描述三列）。
 
-一条一条出（配音服务、ACE-Step 一次只出一个）。配音用 app/tts.py 的 T.start（和点「生成配音」走同一条路：整段 / 一句一句、
+一条一条出（配音服务、Stable Audio 3 一次只出一个）。配音用 app/tts.py 的 T.start（和点「生成配音」走同一条路：整段 / 一句一句、
 本地对齐、云端），念完把试听台那一份复制进批量文件夹；配乐用 app/bgm.py 的 B.generate（直接存进批量文件夹）。
 点「停下」：手上这一条按单个的规矩停（配音一句一句的念完这句；整段的关服务；配乐不等了），后面的不出了。连着两条没出成也停。
 存：配音输出\<日期>_<清单名>\<名字>.wav + _字幕.srt + _时间轴.json + _文案.txt；配乐输出\<日期>_<清单名>\<名字>.wav + .json。
@@ -93,8 +93,8 @@ def dedupe(name, seen):
     return name
 
 
-def seconds_of(s):
-    """30 / 30秒 / 30s / 0:30 / 1:30 / 1分30秒 / 2分钟 → 秒数（10~600）；认不出来 None。"""
+def seconds_of(s, hi=600):
+    """30 / 30秒 / 30s / 0:30 / 1:30 / 1分30秒 / 2分钟 → 秒数（10~hi，默认 600）；认不出来 None。"""
     s = str(s or "").strip().lower().replace("：", ":")
     if not s:
         return None
@@ -111,7 +111,7 @@ def seconds_of(s):
             if not m:
                 return None
             v = float(m.group(1))
-    return int(max(10, min(600, round(v))))
+    return int(max(10, min(hi, round(v))))
 
 
 def _body(lines):
@@ -219,7 +219,7 @@ def parse_bgm(md, name=""):
         if not prompt:
             warn.append(f"「{nm}」没写描述，跳过了")
             return
-        s = seconds_of(sec)
+        s = seconds_of(sec, hi=380)
         if sec and s is None:
             warn.append(f"「{nm}」的时长「{sec}」没认出来，按 60 秒")
         items.append({"file": dedupe(nm, seen), "prompt": prompt, "seconds": s or 60})
@@ -721,9 +721,9 @@ class BgmBatch(Batch):
                 raise HTTPException(400, "描述太长了（最多 1000 字）")
             it["prompt"] = p
         if "seconds" in body:
-            s = seconds_of(body["seconds"])
+            s = seconds_of(body["seconds"], hi=380)
             if s is None:
-                raise HTTPException(400, "时长写秒数（10~600），或者 1:30、1分30秒")
+                raise HTTPException(400, "时长写秒数（10~380），或者 1:30、1分30秒")
             it["seconds"] = s
 
     async def precheck(self, todo, base):
@@ -734,7 +734,7 @@ class BgmBatch(Batch):
             if not (it.get("prompt") or "").strip():
                 raise HTTPException(400, f"「{it['file']}」没写描述")
         if not bgm.B.cmd() and not await bgm.B.health():
-            raise HTTPException(400, "配乐还没装：到 设置 › 整备 点「配音、语音、配乐」那张卡片的一键装好（或者只装 ACE-Step 那一项）")
+            raise HTTPException(400, "配乐还没装：到 设置 › 整备 点「配音、语音、配乐」那张卡片的一键装好（或者只装 Stable Audio 3 那一项）")
         if bgm.M.yielding:
             raise HTTPException(409, f"现在在让路（{bgm.M.yield_reason or '显存不够'}），配乐先不开")
 
@@ -763,7 +763,7 @@ class BgmBatch(Batch):
         return True
 
     def engine_name(self):
-        return "本地 ACE-Step"
+        return "本地 Stable Audio 3"
 
 
 TB = TtsBatch()

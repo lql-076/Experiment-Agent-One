@@ -291,11 +291,11 @@ ev = ask("帮我在工作区配个音" + W_([{"name": "make_voice", "arguments":
 st = {s[0]: s[1] for s in ev.get("steps") or []}
 vd = WS2 / "ag" / "配音"
 tl = json.loads((vd / "旁白_时间轴.json").read_text("utf-8")) if (vd / "旁白_时间轴.json").exists() else {}
-ace = httpx.get("http://127.0.0.1:8001/__last", timeout=10).json()["last"] or {}
+bgs = httpx.get("http://127.0.0.1:8001/__last", timeout=10).json()["last"] or {}
 check((vd / "旁白.wav").exists() and (vd / "旁白_字幕.srt").exists() and len(tl.get("segments") or []) == 2 and tl.get("audio") == "旁白.wav" and "本地" in st.get("配音", ""),
       f"make_voice：本地配音，音频、时间轴、字幕都进工作区（{st.get('配音')}）")
-check(MI.probe(WS2 / "ag" / "配乐.wav").get("duration", 0) > 5 and ace.get("lyrics") == "[Instrumental]" and ace.get("audio_duration") == 12 and ace.get("thinking") is False and "配乐" in st,
-      f"make_music：交给 ACE-Step（纯音乐）、等它出完、存进工作区（{st.get('配乐')}）")
+check(MI.probe(WS2 / "ag" / "配乐.wav").get("duration", 0) > 5 and bgs.get("duration") == 12 and "lyrics" not in bgs and "thinking" not in bgs and "配乐" in st,
+      f"make_music：交给 Stable Audio 3（纯音乐）、等它出完、存进工作区（{st.get('配乐')}）")
 check(not (WS2 / "ag" / "猫.png").exists() and "生图" not in st and "没做成" in st.get("工作区", ""), "make_image：他没开，调了也不给做")
 c.put("/api/agent/caps", json={"image": True})
 c.put("/api/settings", json={"agImageMax": 1, "agImage": False})

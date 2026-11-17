@@ -273,9 +273,9 @@ def qq_seen():
     return QQ
 
 
-# ---------- 假的 ACE-Step 1.5 接口（v3.0，8001）：交任务 → 问结果 → 下音频 ----------
-ace = FastAPI()
-ACE = {"tasks": {}, "last": None}
+# ---------- 假的 Stable Audio 3 接口（v3.4，8001）：交任务 → 问结果 → 下音频 ----------
+bgs = FastAPI()
+BGS = {"tasks": {}, "last": None}
 
 
 def _wav(sec, sr=16000, f=330):
@@ -289,60 +289,53 @@ def _env(d):
     return {"data": d, "code": 200, "error": None, "timestamp": int(time.time() * 1000), "extra": None}
 
 
-@ace.get("/files/{name}")
-def ace_files(name: str):
-    """一键装测试用的「下载站」（v3.1）：dev/.run/mockfiles 里的文件，支持分段下载（Range）。"""
-    from pathlib import Path
-    from fastapi.responses import FileResponse, JSONResponse
-    p = Path(__file__).resolve().parent / ".run" / "mockfiles" / name
-    if not p.is_file():
-        return JSONResponse({"detail": "没有"}, status_code=404)
-    return FileResponse(p)
+@bgs.get("/health")
+def bgs_health():
+    return _env({"status": "ok", "service": "Stable Audio 3 Medium", "version": "3.0"})
 
 
-@ace.get("/health")
-def ace_health():
-    return _env({"status": "ok", "service": "ACE-Step API", "version": "1.0"})
-
-
-@ace.post("/release_task")
-async def ace_release(r: Request):
+@bgs.post("/release_task")
+async def bgs_release(r: Request):
     j = await r.json()
-    ACE["last"] = j
-    tid = f"T{len(ACE['tasks']) + 1}"
-    ACE["tasks"][tid] = {"t0": time.time(), "body": j}
+    BGS["last"] = j
+    tid = f"T{len(BGS['tasks']) + 1}"
+    BGS["tasks"][tid] = {"t0": time.time(), "body": j}
     return _env({"task_id": tid, "status": "queued", "queue_position": 1})
 
 
-@ace.post("/query_result")
-async def ace_query(r: Request):
+@bgs.post("/query_result")
+async def bgs_query(r: Request):
     j = await r.json()
     out = []
     for tid in j.get("task_id_list") or []:
-        t = ACE["tasks"].get(tid)
+        t = BGS["tasks"].get(tid)
+        prompt = (t or {}).get("body", {}).get("prompt") or ""
         if not t:
             out.append({"task_id": tid, "result": "[]", "status": 0})
-        elif "【失败】" in (t["body"].get("prompt") or ""):
-            out.append({"task_id": tid, "result": "[]", "status": 2})
-        elif time.time() - t["t0"] < (6 if "【慢】" in (t["body"].get("prompt") or "") else 1.0):
+        elif "【失败】" in prompt:
+            out.append({"task_id": tid, "result": "[]", "status": 2, "error": "假的失败"})
+        elif time.time() - t["t0"] < (6 if "【慢】" in prompt else 1.0):
             out.append({"task_id": tid, "result": "[]", "status": 0})
         else:
-            sec = float(t["body"].get("audio_duration") or 10)
-            res = [{"file": f"/v1/audio?path=%2Ftmp%2F{tid}_{int(min(sec, 20))}.wav", "status": 1, "metas": {"bpm": 120, "duration": sec}, "dit_model": "acestep-v15-turbo"}]
+            body = t["body"]
+            sec = float(body.get("duration", body.get("audio_duration", body.get("seconds", 10))) or 10)
+            fmt = str(body.get("format") or body.get("audio_format") or "wav")
+            res = [{"file": f"/v1/audio?path=%2Ftmp%2F{tid}_{int(min(sec, 20))}.{fmt}", "status": 1,
+                    "metas": {"sampling_rate": 44100, "duration": sec}, "dit_model": "stable-audio-3-medium"}]
             out.append({"task_id": tid, "result": json.dumps(res), "status": 1})
     return _env(out)
 
 
-@ace.get("/v1/audio")
-def ace_audio(path: str):
+@bgs.get("/v1/audio")
+def bgs_audio(path: str):
     from fastapi.responses import Response
     sec = int(path.rsplit("_", 1)[-1].split(".")[0] or 5)
     return Response(_wav(sec), media_type="audio/wav")
 
 
-@ace.get("/__last")
-def ace_last():
-    return {"last": ACE["last"], "n": len(ACE["tasks"])}
+@bgs.get("/__last")
+def bgs_last():
+    return {"last": BGS["last"], "n": len(BGS["tasks"])}
 
 
 # ---------- 假的 Breeze TTS 2 接口（v3.0，8093）：表单进来，24 kHz 单声道 16 位 PCM 一块一块出去 ----------
@@ -413,7 +406,7 @@ if __name__ == "__main__":
     from fake_apiyi import app as yi
     from fake_bailian import app as bl
     apps = ((k, 8091), (ds, 8099), (lhm, 8085)) if "--no-model" in sys.argv else ((m, 8090), (k, 8091), (ds, 8099), (lhm, 8085))
-    apps += ((bl, 8097), (yi, 8096), (ace, 8001), (brz, 8093))
+    apps += ((bl, 8097), (yi, 8096), (bgs, 8001), (brz, 8093))
     for app, port in apps:
         threading.Thread(target=serve, args=(app, port), daemon=True).start()
     while True:

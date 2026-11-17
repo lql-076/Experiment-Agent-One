@@ -7,7 +7,7 @@ r"""Agent 的本事（v3.0）：交给 DeepSeek 做事时，除了联网、读�
 - read_skill    看一份「技能」（做某类事的现成办法：skills\ 里自带的，和 工作区\技能\ 里他或者你自己写的）。
 - make_voice    配音（用配音页上次用的音色）。默认只用本地的；云端（百炼，花钱）要他在 设置 › Agent 能力 里打开。
 - make_image    生图（API易，花钱）。默认关着，要他打开；一件事最多出几张有上限。
-- make_music    配乐（本地 ACE-Step，纯音乐）。配好了才给。
+- make_music    配乐（本地 Stable Audio 3 Medium，纯音乐）。配好了才给。
 - publish_douyin 发抖音（v3.2，app/publish.py）。默认关着；开了也默认要他在「发布」窗口点确认才发（agPublishAsk）。登录过才给。
 
 还管三件事：
@@ -254,9 +254,9 @@ def tools():
                       "transparent": {"type": "boolean", "description": "透明背景（角色、道具用）"},
                       "refs": {"type": "array", "items": {"type": "string"}, "description": "参考图（工作文件夹里的图片路径，最多 4 张），比如角色定稿图"}}, ["prompt", "path"]))
     if c["music"] and c["music_ready"]:
-        t.append(_fn("make_music", "配乐：生成一段纯音乐（背景音乐，没有人声），存成 WAV。描述写风格、情绪、乐器、速度。要等一两分钟。",
+        t.append(_fn("make_music", "配乐：生成一段纯音乐（背景音乐，没有人声），存成 WAV。描述写风格、情绪、乐器、速度；英文效果最好，中文也行。要等一两分钟。",
                      {"prompt": {"type": "string", "description": "比如：轻快的电子流行，明亮的合成器和鼓点，适合科技类视频开场"},
-                      "seconds": {"type": "integer", "description": "多长，10~600 秒，默认 60"}, "path": {"type": "string", "description": "存成工作文件夹里的哪个文件，.wav 结尾"}}, ["prompt", "path"]))
+                      "seconds": {"type": "integer", "description": "多长，10~380 秒，默认 60"}, "path": {"type": "string", "description": "存成工作文件夹里的哪个文件，.wav 结尾"}}, ["prompt", "path"]))
     if c["publish"] and c["publish_ready"]:
         t.append(_fn("publish_douyin", "发到他的抖音（v3.2）：把工作文件夹里做好的一条视频发出去。" +
                      ("发之前要他在「发布」窗口点确认：你交过去就行，不用等。" if c["publish_ask"] else "会直接发出去，公开可见：标题、话题想清楚、视频用 look 看过再发。") +

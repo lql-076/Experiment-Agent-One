@@ -25,7 +25,7 @@ mindmap
       media_info 多长多大
       download_file 只下公网
       make_voice 本地配音进工作区
-      make_music ACE-Step
+      make_music Stable Audio 3
       make_image 默认关 · 有上限
       publish_douyin 发抖音 · 默认关 · 默认要他确认
       read_skill 翻技能
@@ -75,7 +75,7 @@ v2.x 的 Agent 在工作区里只会「读、写、跑命令」，一件事 40 �
 | `read_skill(name)` | 翻一份技能的全文 | 一直有 |
 | `download_file(url, path)` | 下到工作区；只认 http(s) 的公网地址，本机和局域网不碰；500 MB | `agDownload` |
 | `make_voice(text, dir, name)` | 用配音页上次的设置出音频 + 时间轴 + 字幕，放进工作区；云端要另开 | `agVoice` / `agVoiceCloud` |
-| `make_music(prompt, seconds, path)` | 交给 ACE-Step 出纯音乐 | `agMusic` |
+| `make_music(prompt, seconds, path)` | 交给 Stable Audio 3 出纯音乐（10~380 秒） | `agMusic` |
 | `make_image(prompt, path, ratio, refs)` | 走生图页选的模型；一件事最多 `agImageMax` 张；钱算进这件事 | `agImage`（默认关） |
 | `publish_douyin(path, title, desc, tags, schedule, cover)` | v3.2：把工作区里的视频发到他的抖音（[19](19-发布.md)）。默认交给他在「发布」窗口确认，工具马上返回；关掉确认才直接发、等发完 | `agPublish`（默认关）/ `agPublishAsk`（默认开）；登录过才给 |
 

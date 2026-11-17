@@ -15,7 +15,7 @@ var SU_MEDIA_DEMO = [
   { k: 'tts', g: 'media', t: '本地配音（Qwen3-TTS）', d: '配音环境 + 两个配音模型 + 时间轴对齐，约 14GB；视频配音、批量配音、Agent 自己配音都用它', st: 'ready', info: '配音环境和三个模型都在' },
   { k: 'asr', g: 'media', t: '听写（Qwen3-ASR）', d: '你说的话变成字，约 1.9GB，装在配音环境里', st: 'wait', info: '' },
   { k: 'breeze', g: 'media', t: '说话的声音（Breeze TTS 2）', d: '和它聊天时念回答（约 8GB 显存）；代码随包带着，只下权重；只许自己用、非商用', st: 'wait', info: '' },
-  { k: 'bgm', g: 'media', t: '配乐（ACE-Step 1.5）', d: '官方 Windows 便携包 + 模型，约 15GB；出纯音乐，能商用', st: 'wait', info: '' }
+  { k: 'bgm', g: 'media', t: '配乐（Stable Audio 3 Medium）', d: '原始权重约 10.4GB + 转换后 5~6GB；出纯音乐，10~380 秒；商用看 Stability 社区许可', st: 'wait', info: '' }
 ];
 var SU_TEXT = {
   core: { title: '一键补齐', all: '6 样都齐了：每次启动自动查一遍，好了的标「已就绪」，本地模型服务和硬件监控助手自己会起来，不用点。',

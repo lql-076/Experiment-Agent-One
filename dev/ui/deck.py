@@ -160,7 +160,7 @@ with sync_playwright() as pw:
 
     # ---------- 设置里的三块 ----------
     p = page(b, B + "/?tool=settings", 1440, 880)
-    for sec, need in (("agent", "Claude Code 引擎"), ("voice", "听（你说的话变成字）"), ("bgm", "ACE-Step 1.5")):
+    for sec, need in (("agent", "Claude Code 引擎"), ("voice", "听（你说的话变成字）"), ("bgm", "Stable Audio 3")):
         p.evaluate(f"goSec('{sec}')")
         p.wait_for_function(f"document.getElementById('view-settings').innerText.indexOf('{need}') >= 0 && document.getElementById('view-settings').innerText.indexOf('正在读取') < 0", timeout=10000)
         p.screenshot(path=f"{OUT}/deck-set-{sec}.png")

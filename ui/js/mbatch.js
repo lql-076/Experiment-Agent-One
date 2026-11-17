@@ -96,7 +96,7 @@ function mbRowHTML(k, it, run) {
       '<div class="mb-ed2"><label>音色<input class="inp" data-mbf="voice" value="' + esc(it.voice || '') + '" placeholder="不写用中间选的"' + dis + '></label>' +
         '<label>语气<input class="inp" data-mbf="tone" value="' + esc(it.tone || '') + '" placeholder="不写用中间写的"' + dis + '></label></div>' :
       '<textarea class="inp" data-mbf="prompt" rows="3" spellcheck="false"' + dis + '>' + esc(it.prompt) + '</textarea>' +
-      '<div class="mb-ed2"><label>时长（秒）<input class="inp num" data-mbf="seconds" type="number" min="10" max="600" step="5" value="' + (+it.seconds || 60) + '"' + dis + '></label>' +
+      '<div class="mb-ed2"><label>时长（秒）<input class="inp num" data-mbf="seconds" type="number" min="10" max="380" step="5" value="' + (+it.seconds || 60) + '"' + dis + '></label>' +
         (it.st === 'ok' ? '<button class="btn mini" data-mba="tows1" data-mbi="' + it.id + '">这一首放进工作区</button>' : '') + '</div>') +
       (it.edited ? '<div class="cap">改过（和清单里写的不一样）；改完点 ↻ 重新出</div>' : '') + '</div>';
   }

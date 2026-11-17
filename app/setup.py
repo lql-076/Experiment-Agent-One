@@ -33,7 +33,7 @@ STEPS = [
     {"k": "tts", "g": "media", "t": "本地配音（Qwen3-TTS）", "d": "配音环境 + 两个配音模型 + 时间轴对齐，约 14GB；视频配音、批量配音、Agent 自己配音都用它"},
     {"k": "asr", "g": "media", "t": "听写（Qwen3-ASR）", "d": "你说的话变成字，约 1.9GB，装在配音环境里"},
     {"k": "breeze", "g": "media", "t": "说话的声音（Breeze TTS 2）", "d": "和它聊天时念回答（约 8GB 显存）；代码随包带着，只下权重；只许自己用、非商用"},
-    {"k": "bgm", "g": "media", "t": "配乐（ACE-Step 1.5）", "d": "官方 Windows 便携包 + 模型，约 15GB；出纯音乐，能商用"},
+    {"k": "bgm", "g": "media", "t": "配乐（Stable Audio 3 Medium）", "d": "原始权重约 10.4GB + 转换后 5~6GB；出纯音乐，单次 10~380 秒；商用看 Stability 社区许可"},
 ]
 GROUPS = {"core": "一键补齐", "media": "配音、语音、配乐"}
 NEEDS = {"start": ["aienv", "models"], "kev": ["aienv"]}
@@ -50,6 +50,7 @@ FIXES = {
     "tts": {"pypi_mirror": "所有 pip 安装改走清华镜像", "source_hf": "改从 hf-mirror 下载模型"},
     "asr": {"pypi_mirror": "所有 pip 安装改走清华镜像", "source_hf": "改从 hf-mirror 下载模型"},
     "breeze": {"pypi_mirror": "所有 pip 安装改走清华镜像"},
+    "bgm": {"pypi_mirror": "所有 pip 安装改走清华镜像", "source_hf": "改从 hf-mirror 下载模型"},
 }
 NET_ERR = re.compile(r"time[d ]?out|connection|10054|10060|ssl|reset|temporar|getaddrinfo|readerror|remotedisconnected|incompleteread|503|502|429", re.I)
 
@@ -100,8 +101,9 @@ def _media_ready(k):
         return voice.installed(), "权重下好了，用到才启动（约 8GB 显存）"
     if k == "bgm":
         if str(settings.S.get("bgmDir") or "").strip():
-            return bgm.B.configured(), "用的是你自己配的那一份（设置 › 配乐）"
-        return bgm.B.installed(), "程序和模型都在 ace-step\\，用到才启动"
+            return bgm.B.configured(), "用的是你自己配的那一套（设置 › 配乐）"
+        ok = bgm.B.installed()
+        return ok, "Stable Audio 3 的模型和推理环境都在，用到才启动"
     return False, ""
 
 
@@ -688,9 +690,9 @@ async def s_breeze(opts):
 
 
 async def s_bgm(opts):
-    if not paths.IS_WIN and not os.environ.get("AGENT_ACE_URLS"):
-        return True, "不是 Windows，跳过（ACE-Step 的便携包只有 Windows 版）"
-    code = await _run("bgm", [sys.executable, paths.ROOT / "scripts" / "install_bgm.py"])
+    tok = settings.get_secret("hfToken")
+    env = {"HF_TOKEN": tok} if tok else None
+    code = await _run("bgm", [sys.executable, paths.ROOT / "scripts" / "install_bgm.py"], env)
     ok, info = _media_ready("bgm")
     return (True, info) if ok else (False, f"配乐没装好（退出码 {code}，看 setup_bgm.log）")
 

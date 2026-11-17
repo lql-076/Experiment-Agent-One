@@ -38,7 +38,7 @@ case "$1" in
     fi
     # 指向假服务，填一个假 Key（真 Key 永远不放进沙箱）
     curl -s -X PUT -H 'X-Agent: 1' -H 'Content-Type: application/json' http://127.0.0.1:8765/api/settings \
-      -d '{"dsBase":"http://127.0.0.1:8099","hwUrl":"http://127.0.0.1:8085/data.json","blBase":"http://127.0.0.1:8097/api/v1","ttsEngine":"local","imgBase":"http://127.0.0.1:8096/v1","imgOut":"'"$RUN"'/生图输出-测试"}' > /dev/null
+      -d '{"dsBase":"http://127.0.0.1:8099","hwUrl":"http://127.0.0.1:8085/data.json","blBase":"http://127.0.0.1:8097/api/v1","ttsEngine":"local","imgBase":"http://127.0.0.1:8096/v1","imgOut":"'"$RUN"'/生图输出-测试","bgmUrl":"http://127.0.0.1:8001"}' > /dev/null
     curl -s -X PUT -H 'X-Agent: 1' -H 'Content-Type: application/json' http://127.0.0.1:8765/api/secrets \
       -d '{"k":"dsKey","v":"sk-test-0000"}' > /dev/null
     curl -s -X PUT -H 'X-Agent: 1' -H 'Content-Type: application/json' http://127.0.0.1:8765/api/secrets \

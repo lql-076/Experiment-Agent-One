@@ -84,10 +84,15 @@ ROUTES = {
     "/api/events/{eid}/stop": "停下一件正在做的事：正在跑的命令、Claude Code 都停；做好的文件留着，说「继续」能接着做",
     "/api/events/{eid}/say": "中途插一句话：下一步之前告诉它（改方向、补要求）",
     "/api/agent/caps": "Agent 的本事（GET 读、PUT 改，改动记进动作日志）：下载、配音、云端配音、生图、配乐、Claude Code 引擎和它能跑的命令；GET 还带技能和工具箱的清单",
-    "/api/bgm": "配乐（ACE-Step 1.5）的状态：服务在不在、正在出的、最近出的",
-    "/api/bgm/gen": "出一首纯音乐：{prompt 风格描述, seconds 多长}；存进 配乐输出\\日期\\",
+    "/api/ccode": "Claude Code 工作台：状态（找没找到 claude、开关、版本、模型）和当前/上一次任务的步骤、结果",
+    "/api/ccode/run": "工作台里交一件事给本机 Claude Code：{text, session?}；正在跑时不接第二件",
+    "/api/ccode/stop": "停下工作台正在跑的 Claude Code（按进程号停，子进程一起停）",
+    "/api/ccode/continue": "接着上一次的 Claude Code 会话做（--resume）",
+    "/api/ccode/switch": "工作台的 Claude Code 开关：{on}；和 设置 › Agent 能力 里那一个一样，记进动作日志",
+    "/api/bgm": "配乐（Stable Audio 3 Medium）的状态：服务在不在、正在出的、最近出的",
+    "/api/bgm/gen": "出一首纯音乐：{prompt 风格描述, seconds 多长（10~380）}；存进 配乐输出\\日期\\",
     "/api/bgm/stop": "不等这一首了",
-    "/api/bgm/off": "关掉 ACE-Step 服务（腾显存；只停 Agent 自己开的）",
+    "/api/bgm/off": "关掉 Stable Audio 3 服务（腾显存；只停 Agent 自己开的）",
     "/api/bgm/file/{hid}": "听历史里的一首",
     "/api/bgm/tows": "把一首放进 工作区\\素材\\配乐\\",
     "/api/bgm/open": "打开配乐输出文件夹",
@@ -181,7 +186,8 @@ LOOPS = [
     ("QQ 通道（qq.BOT）", "一直连着", "WebSocket 收消息、心跳、断线续连"),
 ]
 PORTS = [(8765, "界面和后端（app/main.py）"), (8090, "本地模型服务（app/model_server.py，在 ai-env 里跑）"),
-         (8091, "Kev 决策模型服务"), (8092, "配音服务（app/tts_server.py，在 tts-env 里跑，用到才启动）"), (8085, "硬件监控助手（app/hw_helper.py，管理员运行）")]
+         (8091, "Kev 决策模型服务"), (8092, "配音服务（app/tts_server.py，在 tts-env 里跑，用到才启动）"),
+         (8094, "配乐服务（app/bgm_server.py，在 bgm-env 里跑，用到才启动）"), (8085, "硬件监控助手（app/hw_helper.py，管理员运行）")]
 
 
 def _flat(routes):
@@ -313,10 +319,10 @@ def generate(app=None, version="", themes=None):
     L += ["## 数据和日志都在哪", "", "| 位置 | 是什么 |", "| --- | --- |",
           "| data/settings.json | 设置 |", "| data/secrets.bin | 加密的密钥 |", "| data/agent.db | 数据库：事件、提醒、送达、花费、判例、类别、改动记录、等你决定 |",
           "| data/window.json | 窗口大小、位置、是否全屏 |", "| data/webview/ | 桌面窗口（WebView2）自己的缓存 |",
-          "| data/logs/backend.log | 后端的输出（平时没有黑窗口，出了问题先看这里） |", "| data/logs/model_server.log、kev.log、tts.log、hw_helper.log | 本地模型服务、Kev、配音服务、硬件监控助手 |", "| data/tts/ | 最近一次生成的配音（试听用，只留一份）；try/ 是云端音色的试听（念过的不再花钱） |",
+          "| data/logs/backend.log | 后端的输出（平时没有黑窗口，出了问题先看这里） |", "| data/logs/window.log | 桌面窗口的输出和闪退记录（pythonw 没有黑窗口；超过 5MB 轮转） |", "| data/logs/crash.log | 后端底层崩溃（访问违例等）的记录；超过 5MB 启动时轮转 |", "| data/logs/model_server.log、kev.log、tts.log、hw_helper.log | 本地模型服务、Kev、配音服务、硬件监控助手 |", "| data/tts/ | 最近一次生成的配音（试听用，只留一份）；try/ 是云端音色的试听（念过的不再花钱） |",
           "| data/logs/setup_*.log | 一键补齐每一步的原始日志 |", "| data/logs/report.jsonl | 进展报告 |",
           "| data/logs/actions.jsonl | 动作日志（哈希链，改不了） |", "| memory/ | 记忆、技能、提示词、Claude 总结（中文 Markdown，git 记录改动） |",
-          "| training/ | 慢成长的样本 |", "| models/ | 底座、嵌入模型、小脑、Kev 权重、配音模型（models/tts） |", "| ai-env/、tts-env/、.venv/ | 三个 Python 环境（本地模型、配音、后端） |", "| 配音输出/ | 保存的配音：一次一个文件夹（WAV、时间轴、字幕、文案） |",
+          "| training/ | 慢成长的样本 |", "| models/ | 底座、嵌入模型、小脑、Kev 权重、配音模型（models/tts）、配乐模型（models/bgm） |", "| ai-env/、tts-env/、bgm-env/、.venv/ | 四个 Python 环境（本地模型、配音、配乐、后端；配乐复用 ai-env 的 torch） |", "| 配音输出/ | 保存的配音：一次一个文件夹（WAV、时间轴、字幕、文案） |",
           "| tools/ | 便携版 Git、PyTorch 安装包、下载缓存、临时文件 |"]
     if paths.LOGS.exists():
         L += ["", "现在 data/logs 里有：" + "、".join(sorted(p.name for p in paths.LOGS.iterdir() if p.is_file())[:30])]

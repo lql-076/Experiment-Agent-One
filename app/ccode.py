@@ -21,6 +21,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -310,3 +311,76 @@ async def run(eid, text, steps, say=None, session=None, extra=""):
     if st["denied"]:
         st["text"] += f"\n\n（有 {st['denied']} 个动作没被允许——它想跑的命令不在允许的名单里：设置 › Agent 能力 › Claude Code 能改名单。）"
     return dict(st, stopped=False)
+
+
+# ---------------- 界面工作台（v3.4）----------------
+# 主页指令条旁边 / 侧栏「Claude Code」开一个专属窗口：直接下任务、实时看步骤、停下、继续。
+# 和聊天里的「动手干活用 Claude Code」走同一个 run()，只是 eid 用负数（不是聊天事件），步骤存这里给界面轮询。
+_JOB = {"id": 0, "st": "idle", "text": "", "steps": [], "msg": "", "result": "", "err": "", "session": "",
+        "model": "", "turns": 0, "tools": 0, "usd": 0.0, "t0": 0.0, "t1": 0.0, "stop": False}
+_JOB_LOCK = threading.Lock()
+
+
+def job_state():
+    with _JOB_LOCK:
+        j = dict(_JOB)
+        j["steps"] = [list(x) for x in (_JOB.get("steps") or [])]
+        j["sec"] = round(((j["t1"] or time.time()) - j["t0"]), 1) if j["t0"] else 0.0
+        j["running"] = j["st"] == "run"
+        return j
+
+
+async def start_ui(text, session=""):
+    """从界面工作台交一件事。返回当前 job 状态；正在跑时不接第二件。"""
+    text = str(text or "").strip()
+    if not text:
+        raise RuntimeError("写一句要它做的事")
+    if _JOB["st"] == "run":
+        raise RuntimeError("Claude Code 正在跑，先等它做完或点「停下」")
+    asyncio.get_running_loop().create_task(_ui_run(text, session))
+    await asyncio.sleep(0.05)
+    return job_state()
+
+
+async def _ui_run(text, session=""):
+    jid = int(time.time() * 1000)
+    with _JOB_LOCK:
+        _JOB.update(id=jid, st="run", text=text, steps=[], msg="准备中", result="", err="", session=session or "",
+                    model="", turns=0, tools=0, usd=0.0, t0=time.time(), t1=0.0, stop=False)
+        if session:
+            _JOB["steps"].append(["继续", "接着上次的会话"])
+
+    def say(m):
+        with _JOB_LOCK:
+            _JOB["msg"] = str(m or "")[:240]
+
+    try:
+        r = await run(-jid, text, _JOB["steps"], say, session=session or None)
+        with _JOB_LOCK:
+            _JOB.update(st="stopped" if r.get("stopped") else ("done" if r.get("ok") else "err"),
+                        result=r.get("text") or "", session=r.get("session") or _JOB["session"],
+                        model=r.get("model") or "", turns=int(r.get("turns") or 0), tools=int(r.get("tools") or 0),
+                        usd=float(r.get("usd") or 0.0))
+    except Exception as e:
+        with _JOB_LOCK:
+            _JOB.update(st="err", err=str(e)[:600])
+    finally:
+        with _JOB_LOCK:
+            _JOB["t1"] = time.time()
+
+
+def stop_ui():
+    with _JOB_LOCK:
+        running = _JOB["st"] == "run"
+        jid = _JOB["id"]
+    return request_stop(-jid, "你点了停下") if running else False
+
+
+async def continue_ui():
+    with _JOB_LOCK:
+        session = _JOB.get("session") or ""
+    if not session:
+        raise RuntimeError("还没有可继续的会话：先交一件事给它")
+    return await start_ui("继续", session)
+
+

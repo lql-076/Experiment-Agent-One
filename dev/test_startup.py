@@ -127,6 +127,8 @@ k, msg = monitor.exit_reason({"pid": 1, "start": now - 9000, "beat": now - 8000}
 check(k == "reboot", f"运行标记比这次开机还早：随电脑关机或重启停的（{msg[:24]}…）")
 k, msg = monitor.exit_reason({"pid": 1, "start": now - 900, "beat": now - 60}, now - 86400, "Fatal Python error: Segmentation fault\n...")
 check(k == "crash" and "Segmentation" in msg, "crash.log 里有底层报错：崩溃了")
+k, msg = monitor.exit_reason({"pid": 1, "start": now - 900, "beat": now - 60}, now - 86400, "Windows fatal exception: access violation\n...")
+check(k == "crash" and "access violation" in msg, "crash.log 里有 Windows fatal exception：也算崩溃")
 k, msg = monitor.exit_reason({"pid": 1, "start": now - 900, "beat": now - 60}, now - 86400, "")
 check(k == "killed" and "任务管理器" in msg, "开机后、没崩溃记录：被结束了（或者崩溃了没留下记录）")
 

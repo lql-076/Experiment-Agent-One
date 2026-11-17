@@ -8,6 +8,7 @@
   kev.log            Kev
   tts.log            配音服务
   setup_*.log        一键补齐的每一步
+  window.log         桌面窗口（pythonw 没有黑窗口，闪退原因看这里）
   crash.log          后端底层崩溃的记录（正常时只有每次启动的一行）
 """
 import os
@@ -24,7 +25,7 @@ T0 = time.time()
 LOG_RE = re.compile(r"^[\w.\-]+\.log$")
 LABEL = {"setup_git.log": "补齐 1 · Git", "setup_aienv.log": "补齐 2 · 模型环境", "setup_models.log": "补齐 3 · 下载模型",
          "setup_start.log": "补齐 4 · 启动服务", "setup_kev.log": "补齐 5 · Kev 权重", "setup_hwmon.log": "补齐 6 · 硬件监控",
-         "backend.log": "后端", "crash.log": "崩溃记录", "model_server.log": "模型服务", "kev.log": "Kev", "tts.log": "配音服务", "hw_helper.log": "硬件监控助手", "osd.log": "游戏内显示"}
+         "backend.log": "后端", "crash.log": "崩溃记录", "window.log": "桌面窗口", "model_server.log": "模型服务", "kev.log": "Kev", "tts.log": "配音服务", "hw_helper.log": "硬件监控助手", "osd.log": "游戏内显示"}
 
 
 # ---------- 后端有没有正常退出 ----------
@@ -45,8 +46,8 @@ def exit_reason(flag, boot_time, crash_text):
     when = datetime.fromtimestamp(beat).strftime("%m-%d %H:%M") if beat else "不知道什么时候"
     if beat and boot_time and beat < boot_time:
         return "reboot", f"上次 Agent 在 {when} 前后随电脑关机或重启停了"
-    if crash_text and "Fatal Python error" in crash_text:
-        line = next((x for x in crash_text.splitlines() if "Fatal Python error" in x), "").strip()
+    if crash_text and ("Fatal Python error" in crash_text or "Windows fatal exception" in crash_text):
+        line = next((x for x in crash_text.splitlines() if "Fatal Python error" in x or "Windows fatal exception" in x), "").strip()
         return "crash", f"上次 Agent 在 {when} 前后崩溃了：{line[:120]}（详细记在 data\\logs\\crash.log）"
     return "killed", (f"上次 Agent 在 {when} 前后停了，不是点「退出 Agent」停的：可能是在任务管理器里结束了 Python 进程，"
                       "也可能是崩溃了没留下记录。它开的模型服务这些子进程，这次启动时会先清理掉")
@@ -63,6 +64,11 @@ def start_guard():
         prev_crash = txt.rsplit("===== ", 1)[-1] if "===== " in txt else txt
     except Exception:
         pass
+    try:   # 太大了就轮转，别让一次访问违例把 crash.log 写成几十 MB
+        if crash.exists() and crash.stat().st_size > 5 << 20:
+            crash.replace(crash.with_suffix(".old.log"))
+    except Exception as e:
+        print("轮转崩溃记录失败：", e)
     try:
         f = open(crash, "a", encoding="utf-8")
         f.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} 后端启动 · 进程 {os.getpid()}\n")

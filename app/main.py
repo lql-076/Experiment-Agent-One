@@ -20,7 +20,7 @@ from . import (agent, agentkit, agentstate, autostart, bgm, ccode, checks, db, d
 from .models import M
 from .qq import BOT
 
-VERSION = "3.3.1"
+VERSION = "3.4.0"
 PORT = 8765
 _bg = []
 
@@ -81,7 +81,7 @@ async def housekeeping():
             data = await hw.sample()
             M.tick(data)
             tts.T.tick()                          # 配音服务：让路时关掉、闲置久了关掉
-            bgm.B.tick()                          # 配乐服务（ACE-Step）、语音服务（Breeze TTS 2）：一样的规矩
+            bgm.B.tick()                          # 配乐服务、语音服务（Breeze TTS 2）：一样的规矩
             voice.V.tick()
             if n % 15 == 0 and M._health:
                 await router.embed_missing()
@@ -648,6 +648,40 @@ def agent_caps_set(body: dict = Body(...)):
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
     return agent_caps(1)
+
+
+# ---------------- Claude Code 工作台（v3.4） ----------------
+@app.get("/api/ccode")
+def ccode_state(deep: int = 1):
+    """工作台状态 + 当前/上一次任务的步骤。deep=1 时顺便跑一次 claude --version。"""
+    return {"status": ccode.status(bool(deep)), "job": ccode.job_state()}
+
+
+@app.post("/api/ccode/run")
+async def ccode_run(body: dict = Body(...)):
+    try:
+        return {"job": await ccode.start_ui(str(body.get("text") or ""), str(body.get("session") or ""))}
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from None
+
+
+@app.post("/api/ccode/stop")
+def ccode_stop():
+    return {"ok": ccode.stop_ui(), "job": ccode.job_state()}
+
+
+@app.post("/api/ccode/continue")
+async def ccode_continue():
+    try:
+        return {"job": await ccode.continue_ui()}
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from None
+
+
+@app.put("/api/ccode/switch")
+def ccode_switch(body: dict = Body(...)):
+    """工作台里的 Claude Code 开关：和 设置 › Agent 能力 里那一个一样，记动作日志。"""
+    return {"caps": agentkit.set_cap("cc", bool(body.get("on"))), "status": ccode.status(False)}
 
 
 @app.get("/api/chat/{token}")

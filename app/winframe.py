@@ -1,4 +1,4 @@
-"""让无边框窗口像普通 Windows 窗口一样：拖到屏幕顶部最大化、拖到两边半屏、顶部的贴靠布局条、
+r"""让无边框窗口像普通 Windows 窗口一样：拖到屏幕顶部最大化、拖到两边半屏、顶部的贴靠布局条、
 Win+方向键、最小化/最大化动画、Win11 圆角和阴影。只在 Windows 上用，任何一步出错都退回老办法。
 
 做法（Chrome、Qt 的无边框窗口也是这么做的）：
@@ -11,10 +11,13 @@ Win+方向键、最小化/最大化动画、Win11 圆角和阴影。只在 Windo
 - 全屏是自己做的：去掉边框样式，铺满当前屏幕，退出时原样恢复。
 
 每块屏幕按它自己的缩放比例算（Per-Monitor V2），窗口拖到另一块屏幕时网页不会排错尺寸。
+出错不再静默吞掉：写进 data\logs\window.log，方便查窗口闪退。
 """
 import ctypes
+import logging
 from ctypes import wintypes
 
+log = logging.getLogger("agent.window")
 user32 = ctypes.windll.user32
 comctl32 = ctypes.windll.comctl32
 dwmapi = ctypes.windll.dwmapi
@@ -83,9 +86,11 @@ def per_monitor_dpi():
     try:
         return bool(user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)))   # PER_MONITOR_AWARE_V2
     except Exception:
+        log.debug("winframe: 设置 Per-Monitor V2 缩放失败，退回老接口", exc_info=True)
         try:
             return ctypes.windll.shcore.SetProcessDpiAwareness(2) == 0
         except Exception:
+            log.exception("winframe: 设置屏幕缩放感知失败")
             return False
 
 
@@ -94,7 +99,7 @@ def app_id(name):
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(ctypes.c_wchar_p(name))
     except Exception:
-        pass
+        log.exception("winframe: 设置任务栏 AppID 失败")
 
 
 class Frame:
@@ -118,7 +123,7 @@ class Frame:
             val = ctypes.c_uint(v)
             dwmapi.DwmSetWindowAttribute(self.hwnd, attr, ctypes.byref(val), 4)
         except Exception:
-            pass
+            log.debug("winframe: 设置窗口属性 %s 失败", attr, exc_info=True)
 
     def _corner(self, v):
         self._dwm(33, v)                            # DWMWA_WINDOW_CORNER_PREFERENCE：2 圆角，1 直角
@@ -161,7 +166,7 @@ class Frame:
                 user32.SetWindowPos(hwnd, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE)
                 return 0
         except Exception:
-            pass
+            log.exception("winframe: 处理窗口消息 0x%x 失败", msg)
         return comctl32.DefSubclassProc(hwnd, msg, wp, lp)
 
     def _monitor(self):
@@ -175,6 +180,7 @@ class Frame:
             r = self._monitor().rcWork
             return r.right - r.left, r.bottom - r.top
         except Exception:
+            log.exception("winframe: 读当前屏幕工作区大小失败")
             return 0, 0
 
     # ---------- 动作（也都在窗口线程里调用） ----------

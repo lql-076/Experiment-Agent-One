@@ -66,8 +66,9 @@ DEFAULTS = {
     # Claude Code 执行引擎（v3.0，app/ccode.py）：把整件事交给他电脑上装的 Claude Code 去做（默认关，他在设置里开）。
     # ccCmd 留空 = 自己找 claude；ccModel 留空 = 用他 Claude Code 自己配的；ccMinutes 一件事最多跑多少分钟
     "ccOn": False, "ccAuto": True, "ccCmd": "", "ccModel": "", "ccMinutes": 60, "ccBash": "python,pip,ffmpeg,ffprobe,node,npm,npx,git",
-    # 配乐（v3.0，app/bgm.py）：本地 ACE-Step 1.5 的接口地址；bgmDir 填了它的文件夹就由 Agent 自己启动、闲置关掉、打游戏让路
-    "bgmUrl": "http://127.0.0.1:8001", "bgmDir": "", "bgmIdle": 10, "bgmOut": "", "bgmSteps": 8, "bgmFormat": "wav",
+    # 配乐（v3.4，app/bgm.py）：本地 Stable Audio 3 Medium 的接口地址（bgm_server.py，默认 8094）；
+    # bgmDir 填自己转换好的模型文件夹就由 Agent 自己拉起；bgmSteps 蒸馏模型固定 8 步最稳
+    "bgmUrl": "http://127.0.0.1:8094", "bgmDir": "", "bgmIdle": 10, "bgmOut": "", "bgmSteps": 8, "bgmFormat": "wav", "bgmMig": 0,
     # 语音对话（v3.0，app/voice.py）：说话的声音用 Breeze TTS 2（只限自己用、非商用；它念的不进要挣钱的视频），听写用本地 Qwen3-ASR
     "voiceOn": False, "voiceUrl": "http://127.0.0.1:8093", "voiceDir": "", "voiceModel": "", "voicePython": "", "voiceIdle": 10,
     "voiceDesc": "二十岁出头的年轻女声，声音清亮温柔，语速自然，像朋友聊天", "voiceCfg": 4.0, "voiceSeed": 20261111,
@@ -116,6 +117,12 @@ def load():
             save()
     if S.get("bright") == 92:          # 旧版默认 92% 会一直盖一层暗色，现在默认不调暗
         S["bright"] = 100
+    if raw.get("bgmMig") != 340:       # v3.4：配乐从旧端口 8001 换成 Stable Audio 3（8094）
+        if str(S.get("bgmUrl") or "").strip() in ("", "http://127.0.0.1:8001"):
+            S["bgmUrl"] = DEFAULTS["bgmUrl"]
+        S["bgmMig"] = 340
+        if raw:
+            save()
     for k in ("nightAuto", "nightStart", "nightEnd", "nightBright", "quietStart", "quietEnd", "nightlyAt", "trainStart",
               "trainEnd", "trainVram", "idleOnly", "ramFreq", "dsCap"):
         S.pop(k, None)                 # 去掉了的设置

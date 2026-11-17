@@ -2,7 +2,9 @@
 
 来源按顺序拼起来：
 1. 硬件监控助手（设置 › 硬件监控 打开，管理员权限，见 hwctl.py）或 LibreHardwareMonitor 自带的网页服务 → CPU 温度/频率/功耗、硬盘温度等
-2. NVIDIA 驱动自带的 NVML → 显卡占用、频率、温度、功耗、显存（不需要管理员）
+2. 硬件监控助手里的 NVML（`AgentNvml`）→ 显卡频率、温度、功耗、显存（设置 › 硬件监控 打开才有）。
+   v3.3.2 起不在后端进程里调 NVML：NVIDIA 驱动偶发访问违例（Windows fatal exception）会把后端卡死、把 crash.log 写爆；
+   放到助手这个独立进程里，最坏也只是助手重启一下，后端照常。
 3. psutil → CPU 占用、内存
 4. Windows 自带的性能计数器（PDH）→ CPU 占用和频率、显卡占用（含视频编码、解码）、每个程序占的显存。
    和任务管理器是同一套算法，不用驱动、不用管理员；有它就以它为准，前面几个只是兜底。
@@ -18,13 +20,6 @@ import httpx
 import psutil
 
 from . import settings
-
-try:
-    import pynvml
-    pynvml.nvmlInit()
-    NV = pynvml.nvmlDeviceGetHandleByIndex(0)
-except Exception:
-    pynvml, NV = None, None
 
 _cache = {"ts": 0, "data": None}
 psutil.cpu_percent(None)
@@ -322,34 +317,6 @@ def parse_lhm(j):
     return out
 
 
-def nvml():
-    if not NV:
-        return {}
-    g = {}
-    try:
-        g["name"] = pynvml.nvmlDeviceGetName(NV)
-        if isinstance(g["name"], bytes):
-            g["name"] = g["name"].decode()
-        g["load3d"] = float(pynvml.nvmlDeviceGetUtilizationRates(NV).gpu)      # 只是图形/计算，不含视频编码、解码
-        g["temp"] = float(pynvml.nvmlDeviceGetTemperature(NV, pynvml.NVML_TEMPERATURE_GPU))
-        g["clock"] = float(pynvml.nvmlDeviceGetClockInfo(NV, pynvml.NVML_CLOCK_GRAPHICS))
-        g["power"] = pynvml.nvmlDeviceGetPowerUsage(NV) / 1000.0
-        mem = pynvml.nvmlDeviceGetMemoryInfo(NV)
-        g["vram"], g["vramTotal"] = mem.used / 2**30, mem.total / 2**30
-    except Exception:
-        pass
-    try:
-        g["enc"] = float(pynvml.nvmlDeviceGetEncoderUtilization(NV)[0])
-        g["dec"] = float(pynvml.nvmlDeviceGetDecoderUtilization(NV)[0])
-    except Exception:
-        pass
-    if g.get("load3d") is not None:          # 和任务管理器一样：最忙的那个引擎就是总占用
-        parts = {"3D": g["load3d"], "视频编码": g.get("enc") or 0.0, "视频解码": g.get("dec") or 0.0}
-        g["top"] = max(parts, key=parts.get)
-        g["load"] = parts[g["top"]]
-    return g
-
-
 def pick_fps(f):
     """硬件监控助手报上来几个正在出画面的程序（cands，前台的排第一）。去掉你在设置里说过"不是游戏"的，剩下第一个就是游戏。
     seen：这些候选都给界面看，设置 › 游戏内显示 里能点「这不是游戏」。"""
@@ -373,7 +340,7 @@ async def sample():
         return _cache["data"]
     s = settings.S
     src = {}
-    lhm, fps = {}, None
+    lhm, fps, nv = {}, None, {}
     if not RAM["tried"] and sys.platform.startswith("win"):
         threading.Thread(target=_ram_info, daemon=True).start()
     if not DISKS["tried"] and sys.platform.startswith("win"):
@@ -384,13 +351,15 @@ async def sample():
             j = r.json()
             lhm = parse_lhm(j)
             fps = j.get("AgentFps") if isinstance(j, dict) else None
+            nv = j.get("AgentNvml") if isinstance(j, dict) else None
+            nv = nv if isinstance(nv, dict) else {}
             src["lhm"] = True
             src["helper"] = isinstance(fps, dict)        # 是我们自己的助手（不是 LibreHardwareMonitor 程序自带的网页服务）
     except Exception:
         src["lhm"] = False
     fps, seen = pick_fps(fps)
     vm = psutil.virtual_memory()
-    # 优先级从低到高：psutil → 传感器（LibreHardwareMonitor）→ Windows 性能计数器（和任务管理器一样）。
+    # 优先级从低到高：psutil → 传感器（LibreHardwareMonitor）→ NVML（助手进程里读的）→ Windows 性能计数器（和任务管理器一样）。
     # 占用和频率以任务管理器的算法为准；传感器只在读不到计数器时兜底（装了 PawnIO 后，传感器的"各核平均频率"
     # 会把睡着的核也平均进去，偏低，v1.8.4 以前它盖掉了正确的读数）。CPU 温度、功耗只有传感器有。
     pd = PDH.read()
@@ -409,7 +378,7 @@ async def sample():
     gpu.update({k: v for k, v in (lhm.get("gpu") or {}).items() if v is not None})
     if gpu.get("load") is not None:
         gpu["load3d"] = gpu["load"]
-    gpu.update({k: v for k, v in nvml().items() if v is not None})
+    gpu.update({k: v for k, v in nv.items() if v is not None})
     ge = gpu_engines(pd.get("eng") or [], pd.get("pmem") or [])
     if ge:
         gpu.update(ge)
@@ -424,7 +393,7 @@ async def sample():
     sysp = ((cp or 0) + (gp or 0) + float(s["sysOther"])) / (float(s["psuEff"]) / 100) if (cp is not None or gp is not None) else None
     data = {"src": "lhm" if src["lhm"] else "basic", "ok": True, "cpu": cpu, "gpu": gpu, "ram": ram, "disks": disks,
             "sys": {"power": sysp, "estimated": True, "parts": {"cpu": cp is not None, "gpu": gp is not None}},
-            "sources": {"sensors": src["lhm"], "nvml": NV is not None, "fps": bool(fps and fps.get("ok")),
+            "sources": {"sensors": src["lhm"], "nvml": bool(nv), "fps": bool(fps and fps.get("ok")),
                         "cpuTemp": bool((lhm.get("cpu") or {}).get("temp")), "cpuPower": cp is not None},
             "fps": fps if fps and fps.get("fps") else None, "fpsSeen": seen}
     _cache.update(ts=time.time(), data=data)

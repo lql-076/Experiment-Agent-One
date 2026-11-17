@@ -6,6 +6,8 @@
    下面的 Agent 状态仪表盘（agentHTML 这些）v2.0 起主页不用了，主页的「Agent 状态」见 home.js；eventSideHTML 是主页「细节」的内容。 */
 var CHAT = { sel: null, tab: 'status', pending: null, more: null, dashMin: false, stick: true, sig: '', atts: [], force: 'auto', engine: 'auto', open: false, tall: false, caps: null, capsTs: 0, barSig: '' };
 var MIC_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/></svg>';
+var SPEAK_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3l4-3v11l-4-3H4z"/><path d="M15 8.5a5 5 0 0 1 0 7M17.5 6a8.5 8.5 0 0 1 0 12"/></svg>';
+var CODE_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"/><path d="M7 9.5l2.5 2L7 13.5M11.5 13.5H16"/></svg>';
 var CLIP_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-7.8 7.8a5 5 0 0 1-7.1-7.1l8.3-8.3a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.6 1.6 0 0 1-2.3-2.3l7.4-7.4"/></svg>';
 var ST_TXT = { ok: '正常', idle: '闲着', warn: '要注意', bad: '缺了', off: '没开' };
 
@@ -41,6 +43,11 @@ function chipHTML(e) {
 /* 做好的文件（v2.3）：这件事在工作区里做出来的视频、音频、图片，回复下面直接能看、能听；「打开」用系统默认的程序，「在文件夹里显示」开资源管理器。
    名字后面「｜」带着时长、分辨率。别的文件（脚本、网页）只列名字。 */
 function isOut(f) { return f.kind === 'out' || f.kind === 'outd' || f.kind === 'outf'; }
+function voiceAutoOn() { return !!(typeof VOICE !== 'undefined' && VOICE.st && VOICE.st.auto !== false); }
+function sayBtn(e) {
+  if (!e || e.status === 'running' || e.status === 'queued' || !e.reply) return '';
+  return '<button class="say-btn" type="button" data-say="' + e.id + '" title="朗读这条回复（Breeze TTS 2；没配好就用本地配音）" aria-label="朗读这条回复">' + SPEAK_ICON + '朗读</button>';
+}
 function outKind(n) { return /\.(mp4|m4v|mov|webm|mkv|3gp)$/i.test(n) ? 'video' : /\.(wav|mp3|m4a|aac|flac|ogg|opus)$/i.test(n) ? 'audio' : /\.(png|jpe?g|gif|webp)$/i.test(n) ? 'image' : ''; }
 function outsHTML(e) {
   var fs = (e.files || []).filter(isOut); if (!fs.length) return '';
@@ -76,7 +83,8 @@ function msgHTML(e) {
   if (e.status === 'running') body = '<div class="bubble typing"><i></i><i></i><i></i><span>' + esc(e.result || '正在处理……') + '</span></div>';
   else if (e.status === 'queued') body = '<div class="bubble queued"><div class="q-tag">排队中 · 涉及隐私，等本地模型能用了再回你</div>' + mdHTML(e.reply || '') + '</div>';
   else body = '<div class="bubble md">' + (e.reply ? mdHTML(e.reply) : '<p class="cap">（没有回复）</p>') + fixHint(e.reply, e) + '</div>';
-  return me + '<div class="msg ai" data-id="' + e.id + '" style="--c:' + ROUTES[e.to].color + '"><span class="ai-dot" aria-hidden="true"></span><div class="ai-col">' + body + (e.status === 'running' ? '' : outsHTML(e)) + rdl + chipHTML(e) + '</div></div>';
+  return me + '<div class="msg ai" data-id="' + e.id + '" style="--c:' + ROUTES[e.to].color + '"><span class="ai-dot" aria-hidden="true"></span><div class="ai-col">' + body + (e.status === 'running' ? '' : outsHTML(e)) + rdl +
+    '<div class="m-foot">' + chipHTML(e) + sayBtn(e) + '</div></div></div>';
 }
 /* 出了问题的回复：直接给"下一步去哪"的按钮（出了什么事、为什么、怎么办） */
 function fixHint(r, e) {
@@ -131,6 +139,8 @@ function renderChat() {
     '<textarea id="cIn" rows="1" title="Enter 发送，Shift + Enter 换行；能 Ctrl+V 粘贴图片" placeholder="' + (live ? '要它做什么？直接说……' : '演示模式：启动.bat 打开后能聊') + '"' + (live ? '' : ' disabled') + '></textarea>' +
     '<div class="c-wave" id="cWave" aria-live="polite"><canvas id="cWaveCv" aria-hidden="true"></canvas><span id="cWaveTx">在听……</span></div>' +
     '<button class="btn c-force' + (CHAT.force !== 'auto' || CHAT.engine !== 'auto' ? ' set' : '') + '" type="button" id="cForce" aria-expanded="' + !!CHAT.routeOpen + '" title="指定这一条交给谁（默认决策脑自己分）">' + esc(forceLabel()) + '</button>' +
+    '<button class="btn c-cc" type="button" id="cCC" title="打开 Claude Code 工作台：把一整件事交给本机 Claude Code 做" aria-label="打开 Claude Code 工作台">' + CODE_ICON + '</button>' +
+    '<button class="btn c-say' + (voiceAutoOn() ? ' on' : '') + '" type="button" id="cSay" aria-pressed="' + (voiceAutoOn() ? 'true' : 'false') + '" title="自动播报：回答好了自动念出来（Breeze TTS 2 / 本地配音）" aria-label="自动播报">' + SPEAK_ICON + '</button>' +
     '<button class="btn c-mic" type="button" id="cMic" aria-pressed="false" title="说话：点一下开始，说完停一下自动发出去；它回的话会念出来（设置 › 语音）" aria-label="说话"' + (live ? '' : ' disabled') + '>' + MIC_ICON + '</button>' +
     '<button class="btn c-open" type="button" id="cOpen" aria-expanded="' + !!CHAT.open + '" title="展开 / 收起对话记录">对话<kbd>Ctrl 空格</kbd></button>' +
     '<button class="btn danger c-stop" type="button" id="cStop" hidden title="停下正在做的这件事：正在跑的命令也停；做好的文件留着，说「继续」能接着做">停下</button>' +
@@ -680,6 +690,25 @@ function chatClick(ev) {
   else if (t.id === 'chatTall') { CHAT.tall = !CHAT.tall; $('#view-chat').classList.toggle('tall', CHAT.tall); t.textContent = CHAT.tall ? '缩回一半' : '拉高'; t.setAttribute('aria-pressed', CHAT.tall); }
   else if (t.id === 'cStop') { var be = chatBusyEv(); if (be && be.id) evStop(be.id, null); else toast('刚发出去，稍等一下再停'); }
   else if (t.id === 'cMic') { if (typeof voiceToggle === 'function') voiceToggle(); }
+  else if (t.id === 'cCC') { if (typeof openTool === 'function') openTool('ccode'); else toast('工作台只在桌面窗口里能开'); }
+  else if (t.id === 'cSay') {
+    voiceLoad(true).then(function (st) {
+      if (!st || !st.on) { toast('语音还没开：在 设置 › 语音 里打开', 5000); openSec('voice'); return; }
+      var on = !voiceAutoOn();
+      return api('PUT', '/api/settings', { voiceAuto: on }).then(function () { return voiceLoad(true); }).then(function () {
+        t.classList.toggle('on', voiceAutoOn()); t.setAttribute('aria-pressed', voiceAutoOn() ? 'true' : 'false');
+        toast(voiceAutoOn() ? '回答好了会自动念' : '自动播报关了');
+      });
+    }).catch(function (e) { toast('改不了自动播报：' + e.message, 5000); });
+  }
+  else if (t.dataset.say) {
+    var sev = chatList().filter(function (x) { return String(x.id) === t.dataset.say; })[0];
+    if (!sev || !sev.reply) return;
+    voiceLoad(true).then(function (st) {
+      if (!st || !st.on) { toast('语音还没开：在 设置 › 语音 里打开', 5000); openSec('voice'); return; }
+      if (typeof voiceSay === 'function') voiceSay(sev.reply);
+    }).catch(function () { toast('朗读失败：看 后台 › 日志 里的 tts.log / voice.log', 5000); });
+  }
   else if (t.dataset.engine) {
     CHAT.engine = t.dataset.engine;
     $$('#cRoute [data-engine]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.engine === CHAT.engine); });
