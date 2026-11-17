@@ -726,9 +726,11 @@ function studioPublish() {
 }
 function saveLayout() {
   clearTimeout(STUDIO.layoutT);
+  var pid = studioProj() && studioProj().id;
   STUDIO.layoutT = setTimeout(function () {
+    if (!pid || (studioProj() && studioProj().id) !== pid) return;
     if (typeof saveUI === 'function') saveUI({ studioCanvas: { x: STUDIO.canvas.x, y: STUDIO.canvas.y, s: STUDIO.canvas.s, nodes: STUDIO.nodes } });
-    if (useLive()) studioPatch({ node_layout: STUDIO.nodes }).catch(function () {});
+    if (useLive()) studioPatch({ pid: pid, node_layout: STUDIO.nodes }).catch(function () {});
   }, 650);
 }
 function applyProjectLayout(p) {
@@ -830,7 +832,14 @@ function studioFetch() {
     STUDIO.st = j;
     if (j.project && j.project.id !== oldPid) {
       STUDIO.lastPid = j.project.id;
+      clearTimeout(STUDIO.layoutT); STUDIO.layoutT = null;
       applyProjectLayout(j.project);
+      if (!j.project.node_layout || !Object.keys(j.project.node_layout).length) {
+        STUDIO.nodes = stNodesDefault();
+        STUDIO.canvas.auto = true;
+        STUDIO.fitted = false;
+        setTimeout(function () { fitCanvas(); renderStudio(true); }, 30);
+      }
       STUDIO.sig = {};
     }
     var nav = $('.nav[data-tool="studio"]'); if (nav) nav.classList.toggle('on-busy', !!(j.job && j.job.st === 'run'));

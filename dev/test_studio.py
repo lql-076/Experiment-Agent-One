@@ -538,6 +538,14 @@ def main():
         test_stop()
     finally:
         settings.S["wsDir"] = old_ws
+        keep = ""
+        if old_active:
+            try:
+                video_maker.load_project(old_active)
+                keep = old_active
+            except Exception:
+                keep = ""
+        db.kv_set("studio_active", keep)
     print("\n" + ("全部通过" if not BAD else "没通过：" + "；".join(BAD)))
     return 1 if BAD else 0
 

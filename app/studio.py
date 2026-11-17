@@ -800,8 +800,24 @@ class Studio:
         active = str(pid or db.kv_get("studio_active") or "").strip()
         if not active and projects:
             active = projects[0]["id"]
-        p = None
-        if active:
+        # 没有任何项目时，开箱就建一个草稿项目：节点 2/3 立刻有默认可测节点，不用先拆剧本
+        if not active and not projects:
+            try:
+                voice = voice_config("local:preset:Vivian")
+                p = video_maker.new_project(safe_title("视频工坊草稿"), "9:16", STYLE_TAG, 75, topic="", voice=voice)
+                p["settings"]["voice"] = voice
+                p["settings"]["img_model"] = settings.S.get("imgModel") or imagegen.DEFAULT_MODEL
+                _init_role_voices(p, voice)
+                p["shots"] = [_default_shot(p, 1)]
+                p["placeholder"] = True
+                video_maker.save_project(p)
+                active = p["id"]
+                projects = video_maker.list_projects()
+                db.kv_set("studio_active", active)
+            except Exception:
+                p = None
+        p = p if 'p' in locals() and p else None
+        if active and p is None:
             try:
                 p = video_maker.load_project(active)
                 self._recover(p)
