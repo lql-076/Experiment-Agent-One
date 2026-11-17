@@ -65,6 +65,9 @@ function sectionBody(sec) {
     return h + '<div class="fields">' +
       '<div class="field row"><div><label for="f-demo">显示演示数据</label><div class="help">' + (LIVE ? '看看界面效果用，不影响真实数据' : '没接后端时只能看演示数据') + '</div></div><button class="switch" role="switch" id="f-demo" data-k="demo" aria-checked="' + !!S.set.demo + '"' + (LIVE ? '' : ' disabled') + '></button></div>' +
       '<div class="field"><label>备份设置</label><div class="btnrow"><button class="btn" id="exp">导出为文件</button><label class="btn" style="display:inline-flex;align-items:center" for="imp">从文件导入</label><input type="file" id="imp" accept=".json,application/json" class="sr"></div><div class="help">导出的文件不包含 API Key 和 AppSecret</div></div>' +
+      '<div class="field row"><div><label>日志保留周期</label><div class="help">到期先提炼《重要事项永久备份》，再把过期原始日志压缩到 data\\logs\\archive；最近 30 天热日志和永久备份不动</div></div><div class="seg" role="group" aria-label="日志保留周期">' +
+        '<button data-retain="180" aria-pressed="' + (+S.set.logRetainDays !== 365) + '">半年（180 天）</button><button data-retain="365" aria-pressed="' + (+S.set.logRetainDays === 365) + '">一年（365 天）</button></div></div>' +
+      '<div class="field"><label>日志归档</label><div class="btnrow"><button class="btn" data-archive="1">立即执行一次归档整理</button></div><div class="help" id="arcHelp">先提炼重要事项永久备份（Markdown + JSON），再压缩/清理过期原始日志；完成后进度写在「进展报告」和 data\\logs\\archive。</div></div>' +
       '<div class="field"><label>恢复默认</label><div class="btnrow"><button class="btn danger" id="reset">恢复所有默认设置</button></div><div class="help">不会删除事件、记忆和提醒</div></div>' +
       '<div class="field"><label>文件夹</label><div class="help">数据库和日志：' + esc(P('logs').replace(/[\\/]logs$/, '')) + '<br>记忆文件：' + esc(P('memory')) + '<br>训练样本：' + esc(P('training')) + '</div></div>' +
       '<div class="field"><label>快捷键</label><div class="help">R 进入或退出常驻 · F 全屏或回到窗口 · T 切换风格 · Esc 退出常驻或关闭详情</div></div></div>';
@@ -483,6 +486,19 @@ sv.addEventListener('click', function (ev) {
     setVal('fpsSkip', l.join(','));
     toast(t.dataset.fpsSkip ? '记下了：「' + nm.replace(/\.exe$/i, '') + '」不算游戏' : '取消了排除：「' + nm.replace(/\.exe$/i, '') + '」');
     var f = $('#fpsSeen'); if (f) f.innerHTML = fpsSeenHTML();
+  }
+  else if (t.dataset.retain) {
+    setVal('logRetainDays', +t.dataset.retain);
+    $$('[data-retain]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.retain === String(t.dataset.retain)); });
+    toast('日志保留：' + (t.dataset.retain === '365' ? '一年' : '半年'));
+  }
+  else if (t.dataset.archive) {
+    var old = t.textContent; t.disabled = true; t.textContent = '整理中…';
+    api('POST', '/api/logs/archive', {}, 300000).then(function (j) {
+      var h = $('#arcHelp'); if (h) h.textContent = j.msg || '归档完成';
+      toast(j.msg || '日志归档完成', 6000);
+    }).catch(function (e) { toast('归档没成：' + e.message, 6000); })
+      .then(function () { t.disabled = false; t.textContent = old; });
   }
   else if (t.classList.contains('switch')) setVal(t.dataset.k, t.getAttribute('aria-checked') !== 'true');
   else if (t.dataset.man) {

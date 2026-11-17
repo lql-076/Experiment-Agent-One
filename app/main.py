@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import os
+import random
 import re
 import time
 from datetime import datetime
@@ -15,12 +16,12 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import (agent, agentkit, agentstate, autostart, bgm, ccode, checks, db, deepseek, docs, events, exam, feed, files, growth, hw, hwctl, imagegen, media_batch, memory,
-               monitor, nightly, osd, paths, publish, reminders, reports, router, safety, settings, setup, tts, tts_install, voice, websearch, workspace)
+from . import (agent, agentkit, agentstate, autostart, bgm, ccode, checks, db, deepseek, docs, events, exam, feed, files, growth, hw, hwctl, imagegen, log_archive, media_batch, memory,
+               monitor, nightly, osd, paths, publish, reminders, reports, router, safety, settings, setup, telemetry, tts, tts_install, voice, websearch, workspace)
 from .models import M
 from .qq import BOT
 
-VERSION = "3.4.0"
+VERSION = "3.5.0"
 PORT = 8765
 _bg = []
 
@@ -159,6 +160,7 @@ async def lifespan(app):
         BOT.start()
     for fn in (reminders.loop, nightly.loop, housekeeping, live_checks, workspace.loop):
         _bg.append(asyncio.get_event_loop().create_task(fn()))
+    _bg.append(asyncio.get_event_loop().create_task(asyncio.to_thread(log_archive.maybe_run)))   # v3.5：到期先备份重要事项再归档
     if os.environ.get("AGENT_OPEN_UI") == "1":
         _bg.append(asyncio.get_event_loop().create_task(_open_later()))
     print(f"\n  Agent 已启动：http://127.0.0.1:{PORT}\n  文件夹：{paths.show(paths.ROOT)}\n")
@@ -188,11 +190,37 @@ async def guard(request, call_next):
     """只接受本机地址（防 DNS 重绑定）；改东西的请求必须带 X-Agent 头（别的网页发不出这个头，防跨站请求）。"""
     if request.headers.get("host", "") not in ALLOWED_HOSTS:
         return JSONResponse({"detail": "只接受本机访问"}, status_code=403)
-    if request.method in ("POST", "PUT", "DELETE") and request.headers.get("x-agent") != "1":
+    # 遥测上报可能走 sendBeacon（浏览器不让你加自定义头）；只放开这一条本机接口。
+    if (request.method in ("POST", "PUT", "DELETE") and request.url.path != "/api/telemetry/ingest"
+            and request.headers.get("x-agent") != "1"):
         return JSONResponse({"detail": "缺少 X-Agent 头"}, status_code=403)
     resp = await call_next(request)
     if not request.url.path.startswith("/api/"):
         resp.headers["Cache-Control"] = "no-cache"   # 界面文件每次都核对一下，更新后不用清缓存
+    return resp
+
+
+POLL_PATHS = {"/api/ping", "/api/state", "/api/monitor", "/api/hw", "/api/hw/history", "/api/tasks",
+              "/api/voice", "/api/bgm", "/api/report"}
+
+
+@app.middleware("http")
+async def telemetry_middleware(request, call_next):
+    """所有业务接口的 trace/耗时/状态码。高频轮询只采样 3%，慢和出错全记。"""
+    path = request.url.path
+    if not path.startswith("/api/") or path.startswith("/api/telemetry"):
+        return await call_next(request)
+    tr = request.headers.get("X-Trace-Id") or telemetry.new_trace()
+    t0 = time.perf_counter()
+    resp = await call_next(request)
+    dur = (time.perf_counter() - t0) * 1000
+    resp.headers["X-Trace-Id"] = tr
+    if path in POLL_PATHS and dur < 800 and random.random() > 0.03:
+        return resp
+    status = "err" if resp.status_code >= 500 or dur >= 3000 else "warn" if resp.status_code >= 400 or dur >= 800 else "ok"
+    telemetry.log("api", request.method, path, status, dur,
+                  {"code": resp.status_code, "poll": path in POLL_PATHS},
+                  f"{request.method} {path} {resp.status_code} · {dur:.0f}ms", tr)
     return resp
 
 
@@ -253,6 +281,29 @@ def get_themes_js():
 @app.get("/api/ping")
 def ping():
     return {"ok": True, "version": VERSION, "root": paths.show(paths.ROOT), "windows": paths.IS_WIN}
+
+
+# ---------------- 行为遥测 / 日志归档（v3.5） ----------------
+@app.post("/api/telemetry/ingest")
+async def telemetry_ingest(body: dict = Body(...)):
+    """前端批量上报。sendBeacon 也能发（guard 单独放开了这一条，仍然只接受本机 Host）。"""
+    return {"ok": True, "n": telemetry.ingest(body.get("events") or [])}
+
+
+@app.get("/api/telemetry")
+def telemetry_list(limit: int = 300, cat: str = "", q: str = "", bad: int = 0, trace: str = ""):
+    return {"items": telemetry.read(limit, cat, q, bool(bad), trace), "now": time.time()}
+
+
+@app.get("/api/logs/archive")
+def logs_archive_state():
+    return log_archive.status()
+
+
+@app.post("/api/logs/archive")
+async def logs_archive_run():
+    """设置 › 数据 的「立即执行一次归档整理」。先提炼重要事项，再把过期原始日志压缩/清理。"""
+    return await asyncio.to_thread(log_archive.run, True)
 
 
 # ---------------- 设置 ----------------

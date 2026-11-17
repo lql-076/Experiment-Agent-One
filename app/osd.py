@@ -110,7 +110,7 @@ class Ctl:
             exe = sys.executable
             pyw = os.path.join(os.path.dirname(exe), "pythonw.exe")
             try:
-                self.proc.start([pyw if os.path.exists(pyw) else exe, "-m", "app.osd"], paths.ROOT, dict(os.environ))
+                self.proc.start([pyw if os.path.exists(pyw) else exe, "-m", "app.osd"], paths.ROOT, dict(os.environ), "游戏内显示")
             except Exception as e:
                 print("游戏内显示没起来：", e)
         elif not want and alive:

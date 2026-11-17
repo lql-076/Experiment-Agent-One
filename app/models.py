@@ -13,7 +13,7 @@ import time
 import httpx
 import psutil
 
-from . import paths, settings
+from . import paths, settings, telemetry
 
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -23,9 +23,19 @@ class Proc:
         self.name, self.p, self.started, self.cmd = name, None, 0.0, []
 
     def alive(self):
-        return self.p is not None and self.p.poll() is None
+        if self.p is not None and self.p.poll() is not None:
+            code = self.p.returncode
+            if not getattr(self, "_stopped", False):
+                try:
+                    telemetry.log("proc", "crash", self.name, "err", 0,
+                                  {"pid": self.p.pid, "exit_code": code, "vram_after_gb": telemetry.snapshot().get("gpu", {}).get("vram_gb")},
+                                  f"{self.name} 意外退出（退出码 {code}）")
+                except Exception:
+                    pass
+            self.p = None
+        return self.p is not None
 
-    def start(self, cmd, cwd, env):
+    def start(self, cmd, cwd, env, reason=""):
         if self.alive():
             return
         paths.LOGS.mkdir(parents=True, exist_ok=True)
@@ -33,17 +43,45 @@ class Proc:
         log.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} 启动：{' '.join(map(str, cmd))}\n")
         log.flush()
         self.cmd = cmd
+        self._stopped = False
+        before = telemetry.snapshot().get("gpu", {}).get("vram_gb")
         self.p = subprocess.Popen([str(c) for c in cmd], cwd=str(cwd), env=env, stdout=log, stderr=subprocess.STDOUT,
                                   stdin=subprocess.DEVNULL, creationflags=NOWIN)
         self.started = time.time()
+        telemetry.log("proc", "start", self.name, "ok", 0, {"pid": self.p.pid, "reason": reason, "cmd": " ".join(map(str, cmd))[:300],
+                                                             "vram_before_gb": before}, f"{self.name} 启动" + (f"：{reason}" if reason else ""))
+
+    def mark_ready(self, dur_ms=None, reason=""):
+        """服务等 /health 好了以后调：冷启动就绪耗时 + 当前显存。"""
+        try:
+            telemetry.log("proc", "ready", self.name, "ok", dur_ms, {"pid": self.p.pid if self.alive() else 0,
+                                                                     "reason": reason, "vram_after_gb": telemetry.snapshot().get("gpu", {}).get("vram_gb")},
+                          f"{self.name} 就绪" + (f" · {int(dur_ms)}ms" if dur_ms is not None else ""))
+        except Exception:
+            pass
 
     def stop(self):
+        p = self.p
+        code = p.poll() if p else None
+        self._stopped = True
         if self.alive():
-            self.p.terminate()
+            p.terminate()
             try:
-                self.p.wait(10)
+                p.wait(10)
             except subprocess.TimeoutExpired:
-                self.p.kill()
+                p.kill()
+                try:
+                    p.wait(3)
+                except Exception:
+                    pass
+        code = p.returncode if p else code
+        if p is not None:
+            try:
+                telemetry.log("proc", "exit", self.name, "ok", 0,
+                              {"pid": p.pid, "exit_code": code, "vram_after_gb": telemetry.snapshot().get("gpu", {}).get("vram_gb")},
+                              f"{self.name} 正常关闭（退出码 {code}）")
+            except Exception:
+                pass
         self.p = None
 
     def tail(self, n=12):
@@ -151,6 +189,11 @@ class Manager:
         except Exception:
             self._health = None
         self._health_ts = time.time()
+        if self._health and self.server.alive() and not getattr(self, "_srv_ready", False):
+            self._srv_ready = True
+            self.server.mark_ready((time.time() - self.server.started) * 1000, "本地模型服务")
+        if not self._health:
+            self._srv_ready = False
         return self._health
 
     def start_server(self):
@@ -159,7 +202,8 @@ class Manager:
         cmd = [self.aipy(), paths.APP / "model_server.py", "--port", self.s["modelPort"], "--embed", self.embed_dir(),
                "--base", self.base_dir(), "--loras", self.lora_dir(), "--quant", self.s["baseQuant"],
                "--idle", self.s["idleUnload"]]
-        self.server.start(cmd, paths.ROOT, self.env())
+        self._srv_ready = False
+        self.server.start(cmd, paths.ROOT, self.env(), "本地模型服务（嵌入/底座）")
 
     async def ensure_server(self, timeout=120):
         h = await self.health(fresh=True)
@@ -231,6 +275,11 @@ class Manager:
         except Exception:
             ok = False
         self._kev_ok, self._kev_ts = ok, time.time()
+        if ok and self.kevp.alive() and not getattr(self, "_kev_ready", False):
+            self._kev_ready = True
+            self.kevp.mark_ready((time.time() - self.kevp.started) * 1000, "Kev")
+        if not ok:
+            self._kev_ready = False
         if ok and not self._kev_seen:
             self._kev_seen = True
             from . import db
@@ -290,7 +339,8 @@ class Manager:
         self._kev_offline, self._kev_seen = self.kev_cached(), False
         if self._kev_offline:
             env.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
-        self.kevp.start(cmd, self.kev_dir(), env)
+        self._kev_ready = False
+        self.kevp.start(cmd, self.kev_dir(), env, "Kev 决策脑第二票")
 
     async def ensure_kev(self, wait=False, timeout=600):
         if self.s["kevMode"] == "off":
@@ -408,6 +458,14 @@ class Manager:
         want, others = yield_want(total, used, ours, reserve, need, bool(game))
         self.vram_info = {"total": round(total, 1), "used": round(used, 1), "ours": round(ours, 1), "others": round(others, 1),
                           "reserve": reserve, "want": want}
+        try:
+            if time.time() - getattr(self, "_vram_tel", 0) > 60:
+                self._vram_tel = time.time()
+                telemetry.log("vram", "sample", "显存", "ok", 0,
+                              {"vram_gb": round(used, 1), "vram_total_gb": round(total, 1), "ours_gb": round(ours, 1), "others_gb": round(others, 1)},
+                              f"显存 {used:.1f}/{total:.1f} GB（我们 {ours:.1f}，别的 {others:.1f}）")
+        except Exception:
+            pass
         why = (lambda w: "" if not w else
                f"别的程序占了 {others:.1f} GB 显存，显存全让出来" if w >= 2 else
                f"在玩游戏（{game.replace('.exe', '')}），不装底座和 Kev" if game else
@@ -440,6 +498,13 @@ class Manager:
     def _set_level(self, new, reason):
         old = self.yield_level
         self.yield_level, self.yield_reason = new, (reason if new else "")
+        try:
+            telemetry.log("vram", "yield", "显存让路", "warn" if new > old else "ok", 0,
+                          {"level": new, "old": old, "reason": reason, "vram_gb": (self.vram_info or {}).get("used"),
+                           "others_gb": (self.vram_info or {}).get("others")},
+                          f"显存让路 {old}→{new}" + (f"：{reason}" if reason else ""))
+        except Exception:
+            pass
         loop = asyncio.get_event_loop()
         if new >= 1 and old < 1:
             loop.create_task(self.unload("base"))

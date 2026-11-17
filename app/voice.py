@@ -154,7 +154,9 @@ class Voice:
         return bool(self.cmd()) or (not self.folder() and time.time() - float(db.kv_get("voice_seen") or 0) < 30 * 86400)
 
     async def ensure(self, timeout=600):
+        t0 = time.time()
         if await self.health():
+            self.proc.mark_ready((time.time() - t0) * 1000, "语音服务")
             return
         cmd = self.cmd()
         if not cmd:
@@ -169,13 +171,13 @@ class Voice:
                     tts.T.stop("给语音让显存")
             env = M.env()
             env.update(PYTHONUTF8="1")
-            self.proc.start(cmd, self.cwd(), env)
+            self.proc.start(cmd, self.cwd(), env, "语音朗读")
             self.last = time.time()
             feed.add("语音（Breeze TTS 2）启动中：装模型要几十秒（日志 data\\logs\\voice.log）", "info", job=JOBN)
-        t0 = time.time()
         while time.time() - t0 < timeout:
             await asyncio.sleep(1.5)
             if await self.health():
+                self.proc.mark_ready((time.time() - t0) * 1000, "语音服务")
                 return
             if not self.proc.alive():
                 raise VoiceError("语音服务没起来（看 data\\logs\\voice.log）：\n" + self.proc.tail(6))

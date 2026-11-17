@@ -14,7 +14,7 @@ from datetime import datetime
 
 import numpy as np
 
-from . import db, deepseek, memory, paths, privacy, router, safety, settings
+from . import db, deepseek, log_archive, memory, paths, privacy, router, safety, settings
 from .models import M
 
 LABELS = {"local": "本地处理（日常、提醒、笔记、闲聊、隐私）", "ds": "DeepSeek（查资料、知识、写作、代码、一般难题）",
@@ -195,6 +195,12 @@ async def run_all():
         await memory.index()
     except Exception:
         pass
+    try:
+        arc = await asyncio.to_thread(log_archive.maybe_run)
+        if arc and not arc.get("skipped"):
+            res["archive"] = arc.get("msg") or "日志归档完成"
+    except Exception as e:
+        errs["archive"] = str(e)[:160]
     db.kv_set("nightly_last", {"ts": time.time(), "res": res, "errs": errs})
     feed.add(f"每日差事做完了 · 用时 {feed.dur(time.time() - t0)}" + (f" · {len(errs)} 项有问题" if errs else ""), "head", job="每日差事")
     return {"res": res, "errs": errs}

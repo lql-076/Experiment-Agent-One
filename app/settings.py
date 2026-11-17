@@ -80,6 +80,8 @@ DEFAULTS = {
     # 成长
     "fast": True, "slow": True, "samples": 200, "pass": 85, "trainAsk": 2,
     "nightly": True, "synthetic": True, "realFloor": 25,
+    # v3.5：日志保留周期（天）。到期先提炼重要事项永久备份，再压缩/清理原始日志；180=半年，365=一年
+    "logRetainDays": 180,
     # 送达
     "toastFallback": True, "resCard": True, "renotifyMin": 30, "renotifyMax": 2,
     # 硬件

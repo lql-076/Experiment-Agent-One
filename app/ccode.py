@@ -25,7 +25,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import agentkit, db, paths, settings, workspace
+from . import agentkit, db, paths, settings, telemetry, workspace
 
 LOG = paths.LOGS / "claude_code.log"
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -252,6 +252,10 @@ async def run(eid, text, steps, say=None, session=None, extra=""):
     env.setdefault("PIP_INDEX_URL", "https://pypi.tuna.tsinghua.edu.cn/simple")
     st = {"text": "", "session": session, "turns": 0, "usd": 0.0, "ok": None, "tools": 0, "errors": 0, "denied": 0, "model": "", "result": None}
     RUNNING[eid] = {"p": None, "stop": ""}
+    t_start = time.time()
+    telemetry.log("ccode", "start", "Claude Code", "ok", 0,
+                  {"text_len": len(text), "session": bool(session), "model": settings.S.get("ccModel") or ""},
+                  "Claude Code 开始执行 · " + str(len(text)) + " 字")
     loop = asyncio.get_running_loop()
 
     def on_line(ev):
@@ -301,15 +305,23 @@ async def run(eid, text, steps, say=None, session=None, extra=""):
         db.update("events", eid, {"engine": {"name": "cc", "session": st["session"], "model": st["model"]}})
     if stop:
         steps.append(["停下", stop])
+        telemetry.log("ccode", "done", "Claude Code", "warn", (time.time() - t_start) * 1000,
+                      {"stopped": True, "turns": st["turns"], "tools": st["tools"], "usd": st["usd"], "model": st["model"]},
+                      f"Claude Code 停下：{stop}")
         return dict(st, stopped=True, text=(st["text"] + "\n\n" if st["text"] else "") + f"（{stop}。做好的都在工作文件夹里；要接着做就说「继续」。）")
     if st["ok"] is None:                                         # 没等到结果就退出了：多半是没登录、模型配置不对、版本太旧
         why = errtxt.strip() or f"退出码 {code}"
         steps.append(["Claude Code", f"没跑起来：{_short(why, 60)}"])
+        telemetry.log("ccode", "done", "Claude Code", "err", (time.time() - t_start) * 1000,
+                      {"ok": False, "exit_code": code, "model": st.get("model") or ""}, "Claude Code 没跑起来：" + _short(why, 160))
         raise RuntimeError("Claude Code 没跑起来：" + why[:300] + "（完整的在 data\\logs\\claude_code.log）")
     steps.append(["Claude Code", f"{'做完了' if st['ok'] else '没做完'} · {st['turns']} 轮 · 用了 {st['tools']} 次工具" +
                   (f" · {st['errors']} 次出错" if st["errors"] else "") + (f" · {st['denied']} 个动作没被允许" if st["denied"] else "")])
     if st["denied"]:
         st["text"] += f"\n\n（有 {st['denied']} 个动作没被允许——它想跑的命令不在允许的名单里：设置 › Agent 能力 › Claude Code 能改名单。）"
+    telemetry.log("ccode", "done", "Claude Code", "ok" if st["ok"] else "err", (time.time() - t_start) * 1000,
+                  {"ok": bool(st["ok"]), "turns": st["turns"], "tools": st["tools"], "usd": st["usd"], "denied": st["denied"], "model": st["model"]},
+                  f"Claude Code {'做完了' if st['ok'] else '没做完'} · {st['turns']} 轮 · {st['tools']} 次工具")
     return dict(st, stopped=False)
 
 

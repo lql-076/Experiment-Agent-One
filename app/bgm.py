@@ -31,7 +31,7 @@ import httpx
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse
 
-from . import db, feed, mediainfo, paths, privacy, settings
+from . import db, feed, mediainfo, paths, privacy, settings, telemetry
 from .models import M, Proc
 
 OUT = paths.ROOT / "配乐输出"
@@ -123,7 +123,9 @@ class Bgm:
         return ok
 
     async def ensure(self, say=None, timeout=900):
+        t0 = time.time()
         if await self.health():
+            self.proc.mark_ready((time.time() - t0) * 1000, "配乐服务")
             return
         cmd = self.cmd()
         if not cmd:
@@ -134,13 +136,13 @@ class Bgm:
             env = M.env()
             env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8", HF_HUB_OFFLINE="1", TOKENIZERS_PARALLELISM="false",
                        PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True")
-            self.proc.start(cmd, paths.ROOT, env)
+            self.proc.start(cmd, paths.ROOT, env, "配乐出曲")
             self.last = time.time()
             feed.add("配乐服务（Stable Audio 3）启动中：第一次要加载模型，会久一点（日志 data\\logs\\bgm.log）", "info", job=JOBN)
-        t0 = time.time()
         while time.time() - t0 < timeout:
             await asyncio.sleep(1.5)
             if await self.health():
+                self.proc.mark_ready((time.time() - t0) * 1000, "配乐服务")
                 return
             if not self.proc.alive():
                 raise BgmError("配乐服务没起来（看 data\\logs\\bgm.log）：\n" + self.proc.tail(6))
@@ -225,6 +227,10 @@ class Bgm:
                 job.update(st="done", t1=time.time(), msg=f"好了：{r['name']}", file=r["name"])
                 feed.add(f"配乐好了：{paths.show(Path(r['path']))}（{mediainfo.clock(r['duration'] or seconds)}，用了 {r['sec']:.0f} 秒）", "ok", job=JOBN)
                 feed.done(f"配乐 · {prompt[:20]} · {mediainfo.clock(r['duration'] or seconds)}", "本地 Stable Audio 3", r["sec"], "", "bgm")
+                telemetry.log("bgm", "done", "配乐", "ok", r["sec"] * 1000,
+                              {"seconds": seconds, "duration": r.get("duration"), "format": self.s.get("bgmFormat") or "wav",
+                               "model": "stable-audio-3-medium", "prompt_len": len(prompt)},
+                              f"配乐完成 · {mediainfo.clock(r['duration'] or seconds)} · 用了 {r['sec']:.0f} 秒")
                 return r
             except BgmError as e:
                 job.update(st="err", t1=time.time(), err=str(e), msg=str(e))

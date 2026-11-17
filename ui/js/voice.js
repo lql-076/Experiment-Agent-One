@@ -136,16 +136,41 @@ function voiceHush() {                                    // 别念了
   if (VOICE.play) { try { VOICE.play.ctx.close(); } catch (e) {} VOICE.play = null; }
   if (VOICE.mode === 'speak') voiceMode('');
 }
-/* 把一段话念出来：后端一块一块回 16 位 PCM，这边接一块排一块（不等整段） */
+/* 把一段话念出来：后端一块一块回 16 位 PCM，这边接一块排一块（不等整段）。
+   v3.5：留 180ms 预缓冲，后续每块至少提前 150ms 排期；记录 TTFA、断流次数/停顿、RTF，进遥测。 */
 function voiceSay(text, thenListen) {
   voiceHush();
   if (!useLive() || !String(text || '').trim()) return Promise.resolve(false);
+  var engine = (VOICE.st && VOICE.st.engine) || 'local';
+  var engineName = engine === 'breeze' ? 'Breeze' : '本地配音';
+  var tr = '';
+  try { if (typeof TEL !== 'undefined') tr = TEL.setTrace(TEL.newTrace(), 120000); } catch (e) {}
+  var t0 = performance.now(), textLen = String(text).length;
+  try { if (typeof TEL !== 'undefined') TEL.event('voice', 'stream_start', engineName, 'ok', 0, { engine: engine, text_len: textLen }, '开始朗读 · ' + engineName + ' · ' + textLen + ' 字', tr); } catch (e) {}
   var ab = new AbortController(); VOICE.abort = ab;
   voiceMode('speak');
   return fetch('/api/voice/speak', { method: 'POST', headers: { 'X-Agent': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text }), signal: ab.signal }).then(function (r) {
     if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { throw new Error(j.detail || ('出错了 ' + r.status)); });
     var sr = +r.headers.get('X-Sr') || 24000, AC = window.AudioContext || window.webkitAudioContext, ctx = new AC();
-    var P = { ctx: ctx, at: ctx.currentTime + .12, left: null, an: ctx.createAnalyser(), n: 0, ended: false }; VOICE.play = P;
+    try { ctx.resume(); } catch (e) {}
+    var P = { ctx: ctx, at: ctx.currentTime + .18, left: null, an: ctx.createAnalyser(), n: 0, ended: false,
+      t0: t0, firstAt: 0, chunks: 0, lastChunkAt: 0, maxChunkGap: 0, underruns: 0, stallMs: 0, maxSchedGap: 0,
+      sr: sr, engine: engine, engineName: engineName, textLen: textLen, trace: tr, reported: false };
+    VOICE.play = P;
+    var report = function (why) {
+      if (P.reported) return; P.reported = true;
+      var wall = (performance.now() - P.t0) / 1000, audio = P.n / P.sr;
+      var ttfa = P.firstAt ? (P.firstAt - P.t0) : (performance.now() - P.t0);
+      var rtf = audio > 0 ? wall / audio : 0;
+      var m = { ttfa_ms: Math.round(ttfa), total_audio_s: +audio.toFixed(2), total_wall_s: +wall.toFixed(2), rtf: +rtf.toFixed(2),
+        chunk_count: P.chunks, max_chunk_gap_ms: Math.round(P.maxChunkGap), underrun_count: P.underruns,
+        total_stall_ms: Math.round(P.stallMs), max_sched_gap_ms: Math.round(P.maxSchedGap), engine: P.engine };
+      var bad = P.underruns > 0 || ttfa > 2500 || why === 'error';
+      var msg = P.engineName + ' 首包 ' + Math.round(ttfa) + 'ms · 播放 ' + audio.toFixed(1) + 's 音频' +
+        (P.underruns ? '共断续 ' + P.underruns + ' 次（停顿 ' + Math.round(P.stallMs) + 'ms，' : '（') + 'RTF=' + rtf.toFixed(2) + '）';
+      try { if (typeof TEL !== 'undefined') TEL.event('voice', P.underruns ? 'underrun' : 'stream_done', P.engineName,
+        bad ? 'warn' : 'ok', Math.round(wall * 1000), m, msg, P.trace); } catch (e) {}
+    };
     P.an.fftSize = 256; P.an.connect(ctx.destination);
     var data = new Uint8Array(P.an.fftSize);
     (function meter() {
@@ -156,24 +181,40 @@ function voiceSay(text, thenListen) {
       requestAnimationFrame(meter);
     })();
     var push = function (bytes) {                          // 一块 PCM（可能是奇数个字节：留一个到下一块）
+      var now = performance.now();
+      if (P.lastChunkAt) P.maxChunkGap = Math.max(P.maxChunkGap, now - P.lastChunkAt);
+      P.lastChunkAt = now; P.chunks += 1;
+      if (!P.firstAt) {
+        P.firstAt = now;
+        var ttfa = now - P.t0;
+        try { if (typeof TEL !== 'undefined') TEL.event('voice', 'first_chunk', P.engineName, ttfa > 2500 ? 'warn' : 'ok', Math.round(ttfa),
+          { ttfa_ms: Math.round(ttfa), text_len: P.textLen, engine: P.engine }, '首包 ' + Math.round(ttfa) + 'ms · ' + P.engineName, P.trace); } catch (e) {}
+      }
       if (P.left) { var m = new Uint8Array(P.left.length + bytes.length); m.set(P.left); m.set(bytes, P.left.length); bytes = m; P.left = null; }
       if (bytes.length % 2) { P.left = bytes.slice(bytes.length - 1); bytes = bytes.slice(0, bytes.length - 1); }
       var n = bytes.length / 2; if (!n) return;
       var buf = ctx.createBuffer(1, n, sr), ch = buf.getChannelData(0), dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       for (var i = 0; i < n; i++) ch[i] = dv.getInt16(i * 2, true) / 32768;
+      var ct = ctx.currentTime;
+      if (P.chunks > 1 && P.at < ct) {                       // 第一块之前是 TTFA，不算“断续”；之后队列播空才算
+        var gap = (ct - P.at) * 1000;
+        P.underruns += 1; P.stallMs += gap; P.maxSchedGap = Math.max(P.maxSchedGap, gap);
+      }
+      P.at = Math.max(P.at, ct + .15);                      // v3.5：至少提前 150ms 排期，避免贴边导致断续
       var src = ctx.createBufferSource(); src.buffer = buf; src.connect(P.an);
-      P.at = Math.max(P.at, ctx.currentTime + .03); src.start(P.at); P.at += buf.duration; P.n += n;
+      src.start(P.at); P.at += buf.duration; P.n += n;
     };
     var rd = r.body.getReader();
     return (function pump() {
       return rd.read().then(function (x) {
         if (VOICE.play !== P) { try { rd.cancel(); } catch (e) {} return false; }
-        if (x.done) { P.ended = true; return P.n > 0; }
+        if (x.done) { P.ended = true; report('done'); return P.n > 0; }
         push(x.value); return pump();
       });
     })();
   }).catch(function (e) {
     if (e.name !== 'AbortError') toast('没念出来：' + e.message, 6000);
+    try { if (typeof TEL !== 'undefined' && !ab.signal.aborted) TEL.event('voice', 'stream_error', engineName, 'err', Math.round(performance.now() - t0), { error: String(e.message || e).slice(0, 200), engine: engine }, '朗读失败：' + String(e.message || e).slice(0, 120), tr); } catch (_) {}
     if (VOICE.abort === ab) { VOICE.abort = null; VOICE.play = null; voiceMode(''); }
     return false;
   });

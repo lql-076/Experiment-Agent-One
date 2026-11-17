@@ -659,17 +659,19 @@ class TTS:
     async def ensure(self, timeout=240):
         h = await self.health(fresh=True)
         if h:
+            self.proc.mark_ready(0, "配音服务")
             return h
         if not self.env_ok():
             raise RuntimeError("还没装配音：到 设置 › 本地模型 点「安装配音」")
         if not self.proc.alive():
-            self.proc.start(self.cmd(), paths.ROOT, self.env())
+            self.proc.start(self.cmd(), paths.ROOT, self.env(), "配音生成/时间轴对齐")
             self.last = time.time()
         t0 = time.time()
         while time.time() - t0 < timeout:
             await asyncio.sleep(1)
             h = await self.health(fresh=True)
             if h:
+                self.proc.mark_ready((time.time() - t0) * 1000, "配音服务")
                 return h
             if not self.proc.alive():
                 raise RuntimeError("配音服务没起来（看 data\\logs\\tts.log）：\n" + self.proc.tail(6))
