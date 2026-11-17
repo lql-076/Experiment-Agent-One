@@ -21,7 +21,7 @@ from . import (agent, agentkit, agentstate, autostart, bgm, ccode, checks, db, d
 from .models import M
 from .qq import BOT
 
-VERSION = "3.6.0"
+VERSION = "3.7.0"
 PORT = 8765
 _bg = []
 

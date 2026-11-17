@@ -1,4 +1,4 @@
-"""v3.6 视频工坊：工程目录、AI 拆解结构化解析、FFmpeg 合成、单步重跑、停下中断。
+"""v3.7 视频工坊：工程目录、AI 拆解、三合一风格、生图模型、双角色逐句配音、Gemini 策划包、FFmpeg 合成、单步重跑、停下中断。
 
 不连后端、不用显卡、不花钱：图用 ffmpeg 生成纯色，配音和配乐用 Python 写正弦波 WAV。
 只在 dev/.run/studio_test 里折腾，跑完留着方便排查。
@@ -101,11 +101,11 @@ def test_project():
 
 def test_plan_project():
     print("\nAI 拆解 → 新项目：分镜、标题、话题、配乐描述都落进 project.json")
-    async def fake(topic, text, ratio, style, seconds):
+    async def fake(topic, text, ratio, seconds):
         return {"title": "拆解测试标题", "desc": "简介", "tags": ["AI", "测试"],
                 "bgm_prompt": "calm piano, no vocals",
-                "shots": [{"text": "第一镜", "tone": "轻松", "image_prompt": "画面一", "seconds_hint": 5},
-                          {"text": "第二镜", "tone": "平静", "image_prompt": "画面二", "seconds_hint": 6}]}, 0.001
+                "shots": [{"text": "第一镜", "role": "白页", "tone": "冷静吐槽", "image_prompt": "画面一", "seconds_hint": 5},
+                          {"text": "第二镜", "role": "紫苏", "tone": "夸张惊呼", "image_prompt": "画面二", "seconds_hint": 6}]}, 0.001
     old = studio._ask_plan
     studio._ask_plan = fake
     try:
@@ -117,15 +117,101 @@ def test_plan_project():
         check(p["steps"]["plan"]["st"] == "ok", "plan 这一步标成好了")
         check(p["settings"]["voice"]["speaker"] == "Vivian", "音色配置")
         check(p["bgm_prompt"] == "calm piano, no vocals", "配乐描述")
+        check(p["style"] == studio.STYLE_TAG, "固定三合一风格")
+        check([x["role"] for x in p["shots"]] == ["白页", "紫苏"], "白页/紫苏双角色")
+        check(p["shots"][0]["speaker"] and p["shots"][1]["speaker"], "每句都有音色")
     finally:
         studio._ask_plan = old
+
+
+def test_style_models():
+    print("\n固定三合一风格 + 生图模型透传")
+    check(studio.STYLE_TAG == "知识科普 × 科技数码 × 搞笑段子", "三合一固定标签")
+    S = studio.Studio()
+    st = S.new_project({"topic": "模型测试", "ratio": "9:16", "seconds": 75, "voice_id": "local:preset:Vivian",
+                        "img_model": "gpt-image-2.5-sunburst-vip"})
+    p = st["project"]
+    check(p["style"] == studio.STYLE_TAG, "新项目用固定风格")
+    check(p["img_model"] == "gpt-image-2.5-sunburst-vip", "生图模型进 project.json")
+    check(len(studio.image_models()) >= 5, "能列出可用生图模型")
+    q = S.update({"pid": p["id"], "settings": {"img_model": "gemini-3.1-flash-image"}})
+    check(q["img_model"] == "gemini-3.1-flash-image" and q["steps"]["images"]["st"] == "stale", "换模型 → 图要重出")
+
+
+def test_dual_role_voice():
+    print("\n白页/紫苏双角色逐句配音：按句拼接时间轴")
+    p = make_project("双角色配音", shots=2, image_count=2, seconds=1.0)
+    d = Path(p["dir"])
+    wav(d / "tts" / "shot01.wav", 1.0, 440)
+    wav(d / "tts" / "shot02.wav", 1.0, 550)
+    for i, s in enumerate(p["shots"]):
+        s["tts"] = f"tts/shot{i + 1:02d}.wav"; s["tts_st"] = "ok"
+    p["files"].pop("voice", None); p["files"].pop("srt", None)
+    video_maker.save_project(p)
+    S = studio.Studio()
+    asyncio.run(S._build_voice(video_maker.load_project(p["id"])))
+    q = video_maker.load_project(p["id"])
+    meta = json.loads((d / "tts" / "timeline.json").read_text("utf-8"))
+    check((d / "tts" / "voice.wav").is_file(), "拼出 voice.wav")
+    check([x["role"] for x in meta["shots"]] == ["白页", "紫苏"], "时间轴保留双角色")
+    check([x["speaker"] for x in meta["shots"]] == ["local:preset:Vivian", "local:preset:Serena"], "时间轴保留逐句音色")
+    check(abs(meta["total_seconds"] - 2.25) < 0.2, "两段 + 停顿的总长")
+
+
+def test_gemini_pack():
+    print("\nGemini 策划包：固定风格、时长、钩子、双角色、严格格式")
+    s = studio.prompt_pack({"topic": "AI 手机", "title": "测试"})
+    check(studio.STYLE_TAG in s, "包含三合一风格")
+    check("65~85" in s and "2 秒" in s, "包含时长和 2 秒钩子")
+    check("白页" in s and "紫苏" in s and "百炼" in s, "包含双角色和百炼语气")
+    check("下期暗号" in s, "包含结尾互动暗号")
+    check('"role"' in s and '"tone"' in s and '"image_prompt"' in s and '"bgm_prompt"' in s, "包含严格 JSON 字段")
+    check("[笑]" in s and "不要写" in s, "提醒台词里不要写音效词")
+
+
+def test_import_script():
+    print("\nGemini 剧本导入：JSON 和 Markdown 都能回填")
+    js = '```json\n{"title":"JSON 剧本","tags":["AI"],"shots":[{"role":"白页","tone":"冷静","text":"甲","image_prompt":"图一"},{"role":"紫苏","tone":"夸张","text":"乙","image_prompt":"图二"}]}\n```'
+    j = studio.parse_script(js)
+    check(j["title"] == "JSON 剧本" and [x["role"] for x in j["shots"]] == ["白页", "紫苏"], "JSON 剧本")
+    md = """# Markdown 剧本
+简介：一句话
+话题：科技 搞笑
+配乐提示词：calm piano, no vocals
+
+## 分镜 1
+角色：白页
+语气：冷静吐槽
+台词：第一句。
+画面提示词：画面一
+
+## 分镜 2
+角色：紫苏
+语气：夸张惊呼
+台词：第二句。
+画面提示词：画面二
+"""
+    m = studio.parse_script(md)
+    check(m["title"] == "Markdown 剧本" and m["tags"] == ["科技", "搞笑"], "Markdown 标题和话题")
+    check([x["text"] for x in m["shots"]] == ["第一句。", "第二句。"], "Markdown 台词")
+    S = studio.Studio()
+    st = S.new_project({"topic": "导入测试", "voice_id": "local:preset:Vivian"})
+    pid = st["project"]["id"]
+    st = S.import_script({"pid": pid, "text": md})
+    p = st["project"]
+    check(p["title"] == "Markdown 剧本" and len(p["shots"]) == 2, "导入落到项目")
+    check([x["role"] for x in p["shots"]] == ["白页", "紫苏"], "导入保留角色")
+    check(p["steps"]["plan"]["st"] == "ok", "导入后 plan 节点完成")
 
 
 def make_project(name, shots=2, image_count=1, seconds=3.0, ratio="9:16"):
     p = video_maker.new_project(name, ratio, "知识科普", 30, topic=name)
     p["shots"] = []
     for i in range(shots):
-        p["shots"].append({"id": f"s{i + 1}", "text": f"第 {i + 1} 段测试口播。", "tone": "平静",
+        role = "白页" if i % 2 == 0 else "紫苏"
+        p["shots"].append({"id": f"s{i + 1}", "text": f"第 {i + 1} 段测试口播。", "role": role,
+                           "speaker": "local:preset:Vivian" if role == "白页" else "local:preset:Serena",
+                           "tone": "冷静吐槽" if role == "白页" else "夸张惊呼",
                            "image_prompt": f"第 {i + 1} 个画面", "seconds_hint": seconds, "image_st": "idle", "tts_st": "idle"})
     d = Path(p["dir"])
     ff = ffmpeg()
@@ -202,6 +288,7 @@ def test_single_step():
         check(q["steps"]["video"]["st"] == "ok", "video 这一步标成好了")
         check(q["steps"]["images"]["st"] == "idle", "图这一步没被重跑")
         check(q["steps"]["tts"]["st"] == "idle", "配音这一步没被重跑")
+        check(all(k in q["steps"] for k in ("plan", "images", "tts", "bgm", "video")), "五个节点步骤状态都在")
     finally:
         video_maker.compose_video = old
     # 改台词只让配音和视频过期；改画面提示词只让图和视频过期
@@ -240,6 +327,10 @@ def main():
         test_parse()
         test_project()
         test_plan_project()
+        test_style_models()
+        test_dual_role_voice()
+        test_gemini_pack()
+        test_import_script()
         test_compose()
         test_single_step()
         test_stop()

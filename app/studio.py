@@ -1,14 +1,16 @@
-r"""自媒体视频工坊（v3.6，R06）：文案拆解 → 生图 → 配音 → 配乐 → 视频合成 → 送去发布。
+r"""自媒体视频工坊（v3.7，R07）：ComfyUI 风格六节点工作流。
 
-一条流水线，四步：
-  ① 创意与拆解：主题 / 完整口播文案 + 画幅 + 风格 + 目标时长 → DeepSeek 一次给出四份联动脚本
-     （分镜口播与语气、逐镜画面提示词、配乐英文提示词、标题与话题）。
-  ② 素材生成：生图（复用 app/imagegen.py 的低层调用，不碰生图页的清单）、配音（复用配音服务）、配乐（复用 Stable Audio 3）。
-     显存调度：本地配音和本地配乐不同时占显存——配音出完先停配音服务，再起配乐服务。
-  ③ 视频合成：app/video_maker.py，时间轴按配音实际时长对齐，Ken Burns、字幕、配乐闪避、可停下。
-  ④ 预览与发布：成片和封面填进「发布」模块的待确认队列，绝不绕过人工确认直接发抖音。
+六个节点串成一条流水线：
+  ① 剧本与策划：主题 / 完整口播；导出 Gemini 策划包；导入 Gemini .md/.json；DeepSeek 一键拆解。
+  ② 分镜生图：项目级选生图模型、画幅；逐镜画面提示词；单镜 / 批量生成。
+  ③ 角色配音：白页 / 紫苏 / 旁白默认音色；逐句 role/speaker/tone；单句试听与重配。
+  ④ 背景配乐：Stable Audio 3 提示词、时长、步数；单独生成。
+  ⑤ 视频合成：字幕、画幅、配乐闪避音量；app/video_maker.py。
+  ⑥ 成片预览与发布：成片、封面、送去「发布」待确认队列。
 
-工程都存在 工作区\视频工坊\<项目名_时间戳>\project.json（不进仓库）。单步重跑只动点名的那一步，其余成果保留。
+固定风格「知识科普 × 科技数码 × 搞笑段子」；白页负责理性科普、紫苏负责夸张吐槽。
+生图复用 app/imagegen.py 的低层调用，不碰生图页清单；本地配音和本地配乐串行，换模型前释放显存。
+工程都存在 工作区\视频工坊\<项目名_时间戳>\project.json（不进仓库），单步重跑只动点名的那一步。
 """
 import asyncio
 import json
@@ -21,18 +23,21 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from . import bgm, db, deepseek, feed, imagegen, paths, publish, settings, telemetry, tts, tts_cloud, video_maker
 
 JOBS = "视频工坊"
 RATIOS = [("9:16", "竖屏 9:16（抖音）"), ("16:9", "横屏 16:9")]
-STYLES = ["知识科普", "科技数码", "情感故事", "搞笑段子", "生活记录", "影视解说", "职场干货", "历史人文"]
+STYLE_TAG = "知识科普 × 科技数码 × 搞笑段子"
+ROLES = ("白页", "紫苏", "旁白")
+ROLE_DEFAULT_VOICES = {"白页": "local:preset:Serena", "紫苏": "local:preset:Vivian", "旁白": "local:preset:Uncle_Fu"}
 GAP = video_maker.GAP
 MAX_SHOTS = 15
 MEDIA_EXT = {".png", ".jpg", ".jpeg", ".webp", ".wav", ".mp3", ".flac", ".mp4", ".mov", ".mkv", ".webm", ".srt", ".json"}
 
-PLAN_SYS = """你是短视频编导，负责把一个主题（或用户写好的完整口播文案）拆成能直接生产的竖屏/横屏分镜。
+PLAN_SYS = """你是「白页 × 紫苏」短视频账号的编导。账号固定风格是：知识科普 × 科技数码 × 搞笑段子。
+内核必须硬核：科技原理、产品逻辑、数据或反常识结论要讲清楚；外壳必须好笑：白页和紫苏用漫剧式的拌嘴、抬杠、夸张反应把知识演出来。
 只回 JSON，不要 Markdown、不要解释。格式：
 {
   "title": "视频标题，30 字以内，有信息量、不夸张",
@@ -40,24 +45,27 @@ PLAN_SYS = """你是短视频编导，负责把一个主题（或用户写好的
   "tags": ["3~6 个话题，不带 #"],
   "bgm_prompt": "English prompt for Stable Audio 3: style, mood, instruments, tempo, no vocals, suitable under narration",
   "shots": [
-    {"text": "这一镜的口播，口语、顺口，20~60 字", "tone": "这一镜的语气，比如 轻松/兴奋/平静/稳重",
+    {"role": "白页 或 紫苏 或 旁白", "tone": "百炼语气指令，比如 冷静吐槽 / 轻松调侃 / 夸张惊呼 / 怒气冲冲",
+     "text": "这一镜要念的台词，口语、顺口，20~55 字；正文里不要写 [笑] [叹气] 这类音效词",
      "image_prompt": "这一镜的画面提示词，中文 40~120 字：主体、动作、构图、光线、色调、画风、镜头角度；画面里不要文字/logo/水印",
      "seconds_hint": 6}
   ]
 }
-规则：
-- 4~10 个分镜，总口播字数接近「目标时长 × 4 字/秒」，别太长也别太短。
-- 如果用户给了完整口播文案：原文一个字都不要改，只在句子之间分段，给它配画面和语气。
-- 如果只给主题：口播由你写，开头 3 秒就要抓住人，结尾给一句自然的收束或互动。
+硬性要求：
+- 时长必须 65~85 秒（严格超过 1 分钟）；总口播字数约 270~350 字，按 4~4.5 字/秒估算。
+- 开头 2 秒必须有钩子：反常识结论、冲突、夸张提问，不要寒暄。
+- 白页负责理性拆解、讲原理、下结论；紫苏负责情绪化捧哏、抬杠、夸张吐槽；旁白只在开头或转场少量使用。
+- 结尾最后一句必须带互动暗号「下期暗号：白页紫苏」，并自然收束。
+- 每条台词只写要念的字；语气写在 tone 里，tone 是给阿里云百炼 TTS 的自然语言指令。
+- 如果用户给了完整口播文案：原文一个字都不要改，只在句子之间分段，补 role / tone / image_prompt。
 - 画面提示词按整条视频的画幅来写：竖屏以中景/近景为主，主体放中间偏上，底部给字幕留空间；横屏注意左右构图。
 - 每个分镜的画面要能独立看懂，前后镜头不要重复；风格统一。
-- bgm_prompt 必须是英文，只写纯音乐（no vocals）。"
-"""
+- bgm_prompt 必须是英文，只写纯音乐（no vocals）。"""
 
 PLAN_USER = """主题：{topic}
+固定风格：{style}
 画幅：{ratio}（{ratio_cn}）
-风格：{style}
-目标时长：{seconds} 秒
+目标时长：{seconds} 秒（必须 65~85 秒）
 完整口播文案（如果下面有字，就原样分段，不要改写）：
 {text}
 """
@@ -94,45 +102,213 @@ def _pick(d, *keys):
     return ""
 
 
-def parse_plan(text: str) -> dict:
-    """把 DeepSeek 的回复整理成统一结构；不认识的写法尽量认，认不出就报清楚。"""
-    j = _json_of(text)
-    title = str(_pick(j, "title", "标题") or "未命名视频").strip()
-    desc = str(_pick(j, "desc", "description", "简介") or "").strip()
-    tags = _pick(j, "tags", "话题", "hashtags") or []
+def _clean_field(s) -> str:
+    s = str(s or "").replace("\r\n", "\n").replace("\r", "\n")
+    s = re.sub(r"^\s*(?:[-*+]\s*|\d+[.、)]\s*)", "", s, flags=re.M)
+    s = re.sub(r"\*\*", "", s)
+    return s.strip().strip("`").strip()
+
+
+def normalize_plan(j: dict) -> dict:
+    """把 DeepSeek / Gemini 给的结构整理成统一分镜；JSON 和 Markdown 共用。"""
+    if not isinstance(j, dict):
+        raise StudioError("剧本不是一个对象")
+    title = _clean_field(_pick(j, "title", "标题")) or "未命名视频"
+    desc = _clean_field(_pick(j, "desc", "description", "简介"))
+    tags = _pick(j, "tags", "话题", "hashtags", "标签") or []
     if isinstance(tags, str):
         tags = re.split(r"[\s,，、#＃]+", tags)
     tags = [re.sub(r"^[#＃]+", "", str(x).strip())[:20] for x in tags if str(x).strip()][:10]
-    bgm_prompt = str(_pick(j, "bgm_prompt", "bgm", "配乐提示词", "music_prompt") or "").strip()
-    raw = _pick(j, "shots", "分镜", "storyboard", "segments")
+    bgm_prompt = _clean_field(_pick(j, "bgm_prompt", "bgm", "配乐提示词", "music_prompt"))
+    raw = _pick(j, "shots", "分镜", "storyboard", "segments", "script")
+    if isinstance(raw, dict):
+        raw = raw.get("shots") or raw.get("分镜")
     if not isinstance(raw, list):
-        raise StudioError("DeepSeek 没给分镜列表（shots）")
+        raise StudioError("剧本里没有分镜列表（shots / 分镜）")
     shots = []
     for i, x in enumerate(raw):
         if isinstance(x, str):
             x = {"text": x}
         if not isinstance(x, dict):
             continue
-        body = str(_pick(x, "text", "narration", "voiceover", "口播", "文案", "content", "line") or "").strip()
-        pic = str(_pick(x, "image_prompt", "image", "画面提示词", "画面", "prompt", "visual") or "").strip()
-        tone = str(_pick(x, "tone", "语气", "emotion") or "").strip()[:40]
+        body = _clean_field(_pick(x, "text", "narration", "voiceover", "口播", "台词", "文案", "content", "line"))
+        pic = _clean_field(_pick(x, "image_prompt", "image", "画面提示词", "画面", "prompt", "visual"))
+        role = _clean_field(_pick(x, "role", "角色", "speaker_role"))[:12]
+        speaker = _clean_field(_pick(x, "speaker", "音色", "voice_id", "voice"))[:80]
+        tone = _clean_field(_pick(x, "tone", "语气", "emotion"))[:60]
         if not body:
             continue
+        if not role or role not in ROLES:
+            role = ROLES[i % 2]
+        if not tone:
+            tone = "轻松调侃" if role == "紫苏" else "冷静吐槽"
         if not pic:
             pic = body
         try:
-            hint = float(_pick(x, "seconds_hint", "seconds", "duration", "时长") or 6)
+            hint = float(_pick(x, "seconds_hint", "seconds", "duration", "时长") or 0)
         except (TypeError, ValueError):
-            hint = 6.0
-        shots.append({"text": body[:500], "tone": tone, "image_prompt": pic[:1000],
-                      "seconds_hint": max(2.5, min(20.0, hint))})
+            hint = 0
+        if hint <= 0:
+            hint = len(body) / 4.5
+        shots.append({"text": body[:500], "role": role, "speaker": speaker, "tone": tone,
+                      "image_prompt": pic[:1000], "seconds_hint": max(2.5, min(20.0, hint))})
     if len(shots) < 2:
-        raise StudioError("DeepSeek 只给出不到 2 个分镜：再说清楚一点，或者直接贴口播文案再试")
+        raise StudioError("剧本只认出不到 2 个分镜：检查一下格式，或者直接在 DeepSeek 里拆")
     shots = shots[:MAX_SHOTS]
-    return {"title": title[:30] or "未命名视频", "desc": desc[:300], "tags": tags, "bgm_prompt": bgm_prompt[:1000], "shots": shots}
+    return {"title": title[:30] or "未命名视频", "desc": desc[:300], "tags": tags,
+            "bgm_prompt": bgm_prompt[:1000], "shots": shots}
 
 
-async def _ask_plan(topic, text, ratio, style, seconds):
+def parse_plan(text: str) -> dict:
+    """DeepSeek 的 JSON 回复 → 统一分镜。"""
+    return normalize_plan(_json_of(text))
+
+
+def _md_field(block, *names):
+    """Markdown 分镜里取一个字段（角色： / 语气： / 台词： / 画面提示词：）。"""
+    pat = r"(?m)^\s*(?:\*\*)?(?:" + "|".join(re.escape(x) for x in names) + r")(?:\*\*)?\s*[:：]\s*(.*)$"
+    m = re.search(pat, block)
+    if not m:
+        return ""
+    first = m.group(1)
+    rest = block[m.end():]
+    nxt = re.search(r"(?m)^\s*(?:\*\*)?(?:角色|role|语气|tone|音色|speaker|voice_id|台词|口播|text|文案|line|画面提示词|画面|image_prompt|视觉|prompt|简介|描述|desc|话题|标签|tags|配乐提示词|配乐|bgm_prompt|music_prompt)(?:\*\*)?\s*[:：]", rest)
+    if nxt:
+        rest = rest[:nxt.start()]
+    return _clean_field(first + ("\n" + rest if rest.strip() else ""))
+
+
+def parse_script(text: str) -> dict:
+    """Gemini 导出的剧本：优先认 JSON，再认 Markdown（## 分镜 + 角色/语气/台词/画面提示词）。"""
+    raw = str(text or "").strip()
+    if not raw:
+        raise StudioError("剧本是空的")
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.S | re.I)
+    cand = m.group(1) if m else raw
+    if cand.lstrip().startswith("{"):
+        try:
+            j = json.loads(cand)
+            if isinstance(j, dict) and (j.get("shots") or j.get("分镜")):
+                return normalize_plan(j)
+        except ValueError:
+            pass
+    title_m = re.search(r"(?m)^#\s+(.+)$", raw)
+    title = _clean_field(title_m.group(1)) if title_m else "导入的剧本"
+    first_shot = re.search(r"(?m)^##+\s+", raw)
+    meta = raw[:first_shot.start()] if first_shot else raw
+    desc = _md_field(meta, "简介", "描述", "desc")
+    tags = _md_field(meta, "话题", "标签", "tags")
+    bgm_prompt = _md_field(meta, "配乐提示词", "配乐", "bgm_prompt", "music_prompt")
+    blocks = re.split(r"(?m)^##+\s+.*$", raw)
+    blocks = blocks[1:] if len(blocks) > 1 else []
+    shots = []
+    for i, b in enumerate(blocks):
+        body = _md_field(b, "台词", "口播", "text", "文案", "line")
+        pic = _md_field(b, "画面提示词", "画面", "image_prompt", "视觉", "prompt")
+        role = _md_field(b, "角色", "role")
+        speaker = _md_field(b, "音色", "speaker", "voice_id")
+        tone = _md_field(b, "语气", "tone")
+        if not body:
+            left = re.sub(r"(?m)^\s*(?:\*\*)?(?:角色|role|语气|tone|音色|speaker|画面提示词|画面|image_prompt|台词|口播|text)(?:\*\*)?\s*[:：].*$", "", b)
+            left = _clean_field(left)
+            if left:
+                body = left.split("\n")[0]
+                if not pic and "\n" in left:
+                    pic = "\n".join(left.split("\n")[1:])
+        if not body:
+            continue
+        if not role or role not in ROLES:
+            role = ROLES[i % 2]
+        if not tone:
+            tone = "轻松调侃" if role == "紫苏" else "冷静吐槽"
+        if not pic:
+            pic = body
+        shots.append({"text": body[:500], "role": role, "speaker": speaker[:80], "tone": tone[:60],
+                      "image_prompt": pic[:1000], "seconds_hint": max(2.5, min(20.0, len(body) / 4.5))})
+    if len(shots) < 2:
+        raise StudioError("没认出分镜：用「## 分镜」分隔，每块写「角色：」「语气：」「台词：」「画面提示词：」")
+    return {"title": title[:30] or "导入的剧本", "desc": desc[:300],
+            "tags": [re.sub(r"^[#＃]+", "", x.strip())[:20] for x in re.split(r"[\s,，、#＃]+", tags) if x.strip()][:10],
+            "bgm_prompt": bgm_prompt[:1000], "shots": shots[:MAX_SHOTS]}
+
+
+def prompt_pack(project=None) -> str:
+    """给 Gemini 的策划启动包（Markdown）。"""
+    topic = ""
+    title = ""
+    if isinstance(project, dict):
+        topic = str(project.get("topic") or "").strip()
+        title = str(project.get("title") or "").strip()
+    s = """# 视频工坊 · Gemini 策划启动包
+
+你是一名短视频编导。请为「白页 × 紫苏」账号策划一条 65~85 秒的竖屏短视频，并只输出一个 JSON 代码块。
+
+## 1. 账号固定风格
+**知识科普 × 科技数码 × 搞笑段子**
+- 内核必须硬核：科技原理、产品逻辑、数据或反常识结论要讲清楚。
+- 外壳必须好笑：白页和紫苏用漫剧式拌嘴、抬杠、夸张反应把知识演出来。
+- 不要写成单人口播；每 1~2 句换一次角色，让两个人有来有回。
+
+## 2. 时长与节奏
+- 总时长 **65~85 秒**（严格超过 1 分钟），总口播约 **270~350 字**。
+- 开头 **2 秒**必须有钩子：反常识结论、冲突或夸张提问，不要寒暄。
+- 结尾最后一句必须自然带出互动暗号：**「下期暗号：白页紫苏」**。
+
+## 3. 双角色人设
+- **白页**：理性、冷静、懂技术。负责讲原理、拆逻辑、下结论；吐槽时一针见血。
+- **紫苏**：情绪外放、爱抬杠、反应夸张。负责接梗、质疑、惊呼、把观众想问的话问出来。
+- **旁白**：只在开头或转场少量使用，声音平稳，不抢两个人的戏。
+
+## 4. 阿里云百炼语气指令
+- `tone` 写自然语言语气指令，例如：`冷静吐槽`、`轻松调侃`、`夸张惊呼`、`怒气冲冲`、`压低声音卖关子`、`无奈叹气式吐槽`。
+- **台词正文 `text` 里不要写 `[笑]`、`[叹气]`、`[咳嗽]` 这类音效词**；需要笑、叹气、停顿，都写进 `tone`。
+- 每条 `text` 是一句完整的口播，不要一句里塞两个人。
+
+## 5. 严格输出格式
+只输出一个 JSON 代码块，不要额外解释：
+```json
+{
+  "title": "标题，30 字以内",
+  "desc": "发布简介，80 字以内",
+  "tags": ["3~6 个话题，不带 #"],
+  "bgm_prompt": "English prompt for Stable Audio 3: style, mood, instruments, tempo, no vocals",
+  "shots": [
+    {
+      "role": "白页",
+      "tone": "冷静吐槽",
+      "text": "这一句要念的台词",
+      "image_prompt": "这一镜的画面提示词：主体、动作、构图、光线、色调、画风、镜头角度；画面里不要文字/logo/水印",
+      "seconds_hint": 6
+    }
+  ]
+}
+```
+字段必须齐全：`role` 只能是「白页」「紫苏」「旁白」之一；`tone` 是百炼语气指令；`text` 只写要念的字；`image_prompt` 要能独立生成一张画面；`seconds_hint` 是这一镜大概几秒。
+
+## 6. Markdown 备选格式（不想输出 JSON 时）
+```
+# 视频标题
+简介：一句话
+话题：AI 科技 搞笑
+配乐提示词：upbeat electronic, no vocals
+
+## 分镜 1
+角色：白页
+语气：冷静吐槽
+台词：这一句要念的台词
+画面提示词：这一镜的画面
+```
+每个分镜一个 `##` 块，四个字段都要有。
+
+## 7. 本次主题
+{topic}
+"""
+    if title:
+        s += "\n当前项目标题（可沿用或改得更好）：" + title + "\n"
+    return s.replace("{topic}", topic or "（请在下面补充主题或完整口播文案）")
+
+
+async def _ask_plan(topic, text, ratio, seconds):
     if not settings.get_secret("dsKey"):
         raise HTTPException(400, "还没填 DeepSeek Key：到 设置 › 云端 填好，再来拆解分镜")
     topic = str(topic or "").strip()
@@ -146,7 +322,7 @@ async def _ask_plan(topic, text, ratio, style, seconds):
     except (TypeError, ValueError):
         seconds = 60
     ratio_cn = dict(RATIOS).get(ratio, "竖屏 9:16（抖音）")
-    user = PLAN_USER.format(topic=topic or "（见下面的完整文案）", ratio=ratio, ratio_cn=ratio_cn, style=style, seconds=seconds,
+    user = PLAN_USER.format(topic=topic or "（见下面的完整文案）", ratio=ratio, ratio_cn=ratio_cn, style=STYLE_TAG, seconds=seconds,
                             text=text or "（没有，按主题创作）")
     try:
         r = await deepseek.chat([{"role": "system", "content": PLAN_SYS}, {"role": "user", "content": user}],
@@ -210,6 +386,55 @@ def voice_config(vid) -> dict:
     raise HTTPException(400, "不认识的音色")
 
 
+def image_models() -> list:
+    """生图节点能选的模型：imagegen 认识的 + 用 Key 拉过的，按厂商分好再摊平。"""
+    try:
+        cat = imagegen.catalog()
+    except Exception:
+        return []
+    out = []
+    for g in cat.get("groups") or []:
+        for m in g.get("models") or []:
+            out.append({"id": m.get("id"), "name": m.get("name") or m.get("id"), "vendor": g.get("name") or "",
+                        "price": m.get("price"), "route": m.get("route") or "", "d": m.get("d") or "",
+                        "listed": m.get("listed"), "known": m.get("known"), "tiers": m.get("tiers") or []})
+    return out
+
+
+def _default_voice(p) -> dict:
+    v = (p.get("settings") or {}).get("voice")
+    if isinstance(v, dict) and (v.get("id") or v.get("speaker") or v.get("voice")):
+        return v
+    return {"engine": "local", "mode": "preset", "speaker": "Vivian", "label": "Vivian", "id": "local:preset:Vivian"}
+
+
+def _init_role_voices(p, voice=None):
+    """给项目补上白页 / 紫苏 / 旁白的默认音色；已有不动。"""
+    st = p.setdefault("settings", {})
+    st.setdefault("bgm_seconds", 0)
+    st.setdefault("bgm_steps", 8)
+    st.setdefault("img_model", settings.S.get("imgModel") or imagegen.DEFAULT_MODEL)
+    rv = st.setdefault("role_voices", {})
+    v = voice if isinstance(voice, dict) else _default_voice(p)
+    base = str(v.get("id") or "local:preset:Vivian")
+    alt = "local:preset:Serena" if "Vivian" in base else "local:preset:Vivian"
+    for role, d in (("白页", base), ("紫苏", alt if v.get("engine") != "cloud" else base), ("旁白", base)):
+        rv.setdefault(role, d)
+
+
+def _shot_voice(p, s) -> dict:
+    """这一句用哪个音色：逐句 speaker > 角色预设 > 项目音色。"""
+    rv = (p.get("settings") or {}).get("role_voices") or {}
+    vid = str(s.get("speaker") or rv.get(s.get("role") or "") or (p.get("settings", {}).get("voice") or {}).get("id") or "").strip()
+    try:
+        return voice_config(vid)
+    except HTTPException:
+        try:
+            return voice_config(str((p.get("settings", {}).get("voice") or {}).get("id") or "local:preset:Vivian"))
+        except HTTPException:
+            return {"engine": "local", "mode": "preset", "speaker": "Vivian", "label": "Vivian", "id": "local:preset:Vivian"}
+
+
 # ---------------- 流水线 ----------------
 class Studio:
     def __init__(self):
@@ -270,6 +495,13 @@ class Studio:
             tp = d / (s.get("tts") or "") if s.get("tts") else None
             item = dict(s)
             item["n"] = i + 1
+            role = item.get("role") if item.get("role") in ROLES else ROLES[i % 2]
+            item["role"] = role
+            rv = (p.get("settings") or {}).get("role_voices") or {}
+            if not item.get("speaker"):
+                item["speaker"] = rv.get(role) or ""
+            if not item.get("tone"):
+                item["tone"] = "轻松调侃" if role == "紫苏" else "冷静吐槽"
             item["image_ok"] = bool(ip and ip.is_file())
             item["tts_ok"] = bool(tp and tp.is_file())
             item["image_url"] = self._url(p["id"], img, ip.stat().st_mtime if item["image_ok"] else 0) if img else ""
@@ -285,8 +517,9 @@ class Studio:
             total = sum(float(s.get("duration") or s.get("seconds_hint") or 0) for s in shots)
         return {"id": p["id"], "name": p.get("name") or p["id"], "title": p.get("title") or "", "desc": p.get("desc") or "",
                 "tags": p.get("tags") or [], "created": p.get("created") or "", "updated": p.get("updated") or "",
-                "ratio": p.get("ratio") or "9:16", "style": p.get("style") or "知识科普",
-                "target_seconds": p.get("target_seconds") or 60, "topic": p.get("topic") or "",
+                "ratio": p.get("ratio") or "9:16", "style": STYLE_TAG, "style_tag": STYLE_TAG,
+                "img_model": (p.get("settings") or {}).get("img_model") or settings.S.get("imgModel") or imagegen.DEFAULT_MODEL,
+                "target_seconds": p.get("target_seconds") or 75, "topic": p.get("topic") or "",
                 "source_text": p.get("source_text") or "", "bgm_prompt": p.get("bgm_prompt") or "",
                 "settings": p.get("settings") or {}, "steps": steps, "files": files, "shots": shots,
                 "total_seconds": round(total or 0, 2), "duration": round(float(p.get("duration") or 0), 2),
@@ -304,12 +537,16 @@ class Studio:
             try:
                 p = video_maker.load_project(active)
                 self._recover(p)
+                _init_role_voices(p)
+                p["settings"].setdefault("img_model", settings.S.get("imgModel") or imagegen.DEFAULT_MODEL)
                 db.kv_set("studio_active", active)
             except video_maker.MakerError:
                 p = None
         return {"projects": projects, "active": active, "project": self.project_view(p) if p else None,
                 "job": self.public(), "voices": voice_options(), "ratios": [{"id": a, "label": b} for a, b in RATIOS],
-                "styles": STYLES, "slot": [{"id": k, "label": v} for k, v in video_maker.SIZES.items()]}
+                "style_tag": STYLE_TAG, "roles": list(ROLES), "models": image_models(),
+                "default_model": settings.S.get("imgModel") or imagegen.DEFAULT_MODEL,
+                "slot": [{"id": k, "label": v} for k, v in video_maker.SIZES.items()]}
 
     def select(self, pid):
         p = video_maker.load_project(pid)
@@ -319,35 +556,102 @@ class Studio:
 
     # ---------- 工程 ----------
     async def plan(self, body) -> dict:
-        ratio = body.get("ratio") if body.get("ratio") in video_maker.SIZES else "9:16"
-        style = str(body.get("style") or "知识科普")[:40]
+        pid = str(body.get("pid") or "").strip()
+        old = video_maker.load_project(pid) if pid else None
+        ratio = body.get("ratio") if body.get("ratio") in video_maker.SIZES else ((old or {}).get("ratio") or "9:16")
         topic = str(body.get("topic") or "").strip()
         text = str(body.get("text") or "").strip()
-        voice = voice_config(body.get("voice_id"))
-        j, cny = await _ask_plan(topic, text, ratio, style, body.get("seconds") or 60)
-        name = safe_title(j["title"] or topic or text or "视频项目")
-        p = video_maker.new_project(name, ratio, style, body.get("seconds") or 60, topic=topic or text[:4000], voice=voice)
-        p["title"] = j["title"]
-        p["desc"] = j["desc"]
-        p["tags"] = j["tags"]
-        p["bgm_prompt"] = j["bgm_prompt"]
-        p["source_text"] = text
+        voice = _default_voice(old) if old else voice_config(body.get("voice_id"))
+        try:
+            seconds = max(65, min(85, int(body.get("seconds") or (old or {}).get("target_seconds") or 75)))
+        except (TypeError, ValueError):
+            seconds = 75
+        j, cny = await _ask_plan(topic or (old or {}).get("topic") or "", text or (old or {}).get("source_text") or "",
+                                ratio or (old or {}).get("ratio") or "9:16", seconds)
+        if old:
+            p = old
+            p["ratio"] = ratio
+            p["target_seconds"] = seconds
+        else:
+            name = safe_title(j["title"] or topic or text or "视频项目")
+            p = video_maker.new_project(name, ratio, STYLE_TAG, seconds, topic=topic or text[:4000], voice=voice)
+        p["title"], p["desc"], p["tags"], p["bgm_prompt"] = j["title"], j["desc"], j["tags"], j["bgm_prompt"]
+        p["source_text"] = text or p.get("source_text") or ""
         p["cost"]["plan_cny"] = round(cny, 4)
+        p["settings"]["voice"] = voice
+        p["settings"]["img_model"] = body.get("img_model") or (p.get("settings") or {}).get("img_model") or settings.S.get("imgModel") or imagegen.DEFAULT_MODEL
+        _init_role_voices(p, voice)
         self._apply_plan(p, j)
         db.kv_set("studio_active", p["id"])
         telemetry.log("app", "studio_plan", "视频工坊", "ok", 0,
-                      {"shots": len(p["shots"]), "ratio": ratio, "seconds": p["target_seconds"], "cny": round(cny, 4)},
+                      {"shots": len(p["shots"]), "ratio": p["ratio"], "seconds": seconds, "cny": round(cny, 4)},
                       f"拆好分镜：{len(p['shots'])} 镜 · {p['title']}")
-        feed.add(f"视频工坊拆好分镜「{p['title']}」：{len(p['shots'])} 镜，预估 {p['target_seconds']} 秒", "ok", job=JOBS)
+        feed.add(f"视频工坊拆好分镜「{p['title']}」：{len(p['shots'])} 镜，约 {seconds} 秒", "ok", job=JOBS)
+        return self.state(p["id"])
+
+    def new_project(self, body) -> dict:
+        ratio = body.get("ratio") if body.get("ratio") in video_maker.SIZES else "9:16"
+        topic = str(body.get("topic") or "").strip()
+        try:
+            seconds = max(65, min(85, int(body.get("seconds") or 75)))
+        except (TypeError, ValueError):
+            seconds = 75
+        voice = voice_config(body.get("voice_id"))
+        p = video_maker.new_project(safe_title(topic or "未命名视频"), ratio, STYLE_TAG, seconds, topic=topic, voice=voice)
+        p["settings"]["voice"] = voice
+        p["settings"]["img_model"] = body.get("img_model") or settings.S.get("imgModel") or imagegen.DEFAULT_MODEL
+        _init_role_voices(p, voice)
+        video_maker.save_project(p)
+        db.kv_set("studio_active", p["id"])
+        return self.state(p["id"])
+
+    def import_script(self, body) -> dict:
+        text = str(body.get("text") or body.get("md") or body.get("script") or "").strip()
+        if not text:
+            raise StudioError("没有剧本内容：把 Gemini 的输出贴进来，或者选一个 .md / .json 文件")
+        j = parse_script(text)
+        pid = str(body.get("pid") or "").strip()
+        old = video_maker.load_project(pid) if pid else None
+        if old:
+            p = old
+        else:
+            voice = voice_config(body.get("voice_id"))
+            p = video_maker.new_project(safe_title(j["title"]), body.get("ratio") if body.get("ratio") in video_maker.SIZES else "9:16",
+                                        STYLE_TAG, 75, topic=str(body.get("topic") or "").strip()[:4000], voice=voice)
+            p["settings"]["voice"] = voice
+            p["settings"]["img_model"] = body.get("img_model") or settings.S.get("imgModel") or imagegen.DEFAULT_MODEL
+            _init_role_voices(p, voice)
+        p["title"], p["desc"], p["tags"], p["bgm_prompt"] = j["title"], j["desc"], j["tags"], j["bgm_prompt"]
+        p["source_text"] = text[:60000]
+        p["style"] = STYLE_TAG
+        self._apply_plan(p, j)
+        p["steps"]["plan"].update(msg=f"导入剧本：{len(p['shots'])} 个分镜")
+        video_maker.save_project(p)
+        db.kv_set("studio_active", p["id"])
+        feed.add(f"视频工坊导入剧本「{p['title']}」：{len(p['shots'])} 镜，可以直接跑", "ok", job=JOBS)
         return self.state(p["id"])
 
     def _apply_plan(self, p, j):
+        had = bool(p.get("shots"))
+        _init_role_voices(p)
+        rv = (p.get("settings") or {}).get("role_voices") or {}
+        p["style"] = STYLE_TAG
         p["shots"] = []
         for i, s in enumerate(j["shots"]):
-            p["shots"].append({"id": f"s{i + 1}", "text": s["text"], "tone": s["tone"], "image_prompt": s["image_prompt"],
-                               "seconds_hint": s["seconds_hint"], "image": "", "tts": "", "duration": 0.0,
-                               "start": 0.0, "end": 0.0, "image_st": "idle", "tts_st": "idle",
-                               "image_err": "", "tts_err": "", "image_ver": 0, "tts_ver": 0})
+            role = s.get("role") if s.get("role") in ROLES else ROLES[i % 2]
+            speaker = str(s.get("speaker") or rv.get(role) or _default_voice(p).get("id") or "")
+            p["shots"].append({"id": f"s{i + 1}", "text": s["text"], "role": role, "speaker": speaker,
+                               "tone": s.get("tone") or ("轻松调侃" if role == "紫苏" else "冷静吐槽"),
+                               "image_prompt": s.get("image_prompt") or s["text"],
+                               "seconds_hint": s.get("seconds_hint") or max(2.5, min(20.0, len(s["text"]) / 4.5)),
+                               "image": "", "tts": "", "duration": 0.0, "start": 0.0, "end": 0.0,
+                               "image_st": "idle", "tts_st": "idle", "image_err": "", "tts_err": "",
+                               "image_ver": 0, "tts_ver": 0})
+        if had:
+            for k in ("voice", "srt", "timeline", "bgm", "video", "cover"):
+                p.get("files", {}).pop(k, None)
+            for k in ("images", "tts", "bgm", "video"):
+                _mark(p, k, "stale", "剧本换了：这一步要重做")
         s = p["steps"]["plan"]
         s.update(st="ok", msg=f"{len(p['shots'])} 个分镜", pct=100, t1=time.time(), err="")
         video_maker.save_project(p)
@@ -355,6 +659,8 @@ class Studio:
     def update(self, body) -> dict:
         pid = str(body.get("pid") or db.kv_get("studio_active") or "")
         p = video_maker.load_project(pid)
+        _init_role_voices(p)
+        p["settings"].setdefault("img_model", settings.S.get("imgModel") or imagegen.DEFAULT_MODEL)
         old_ratio = p.get("ratio")
         ratio = body.get("ratio")
         if ratio in video_maker.SIZES and ratio != old_ratio:
@@ -363,8 +669,7 @@ class Studio:
                 s["image_st"] = "stale"
             _mark(p, "images", "stale", "画幅改了：要重出图")
             _mark(p, "video", "stale", "画幅改了：要重新合成")
-        if "style" in body:
-            p["style"] = str(body.get("style") or "知识科普")[:40]
+        p["style"] = STYLE_TAG
         if "target_seconds" in body:
             try:
                 p["target_seconds"] = max(10, min(600, int(body["target_seconds"])))
@@ -400,6 +705,47 @@ class Studio:
                         _mark(p, "video", "stale", "配乐音量改了：要重新合成")
                 except (TypeError, ValueError):
                     pass
+            if st.get("img_model"):
+                mid = str(st["img_model"]).strip()[:120]
+                if mid and mid != ((p.get("settings") or {}).get("img_model") or ""):
+                    p["settings"]["img_model"] = mid
+                    for x in p.get("shots") or []:
+                        x["image_st"] = "stale"
+                    _mark(p, "images", "stale", "换生图模型了：要重出图")
+                    _mark(p, "video", "stale", "换生图模型了：要重新合成")
+            if isinstance(st.get("role_voices"), dict):
+                rv = p["settings"].setdefault("role_voices", {})
+                touched = False
+                for role in ROLES:
+                    vid = str(st["role_voices"].get(role) or "").strip()
+                    if not vid or vid == rv.get(role):
+                        continue
+                    voice_config(vid)
+                    old = rv.get(role)
+                    rv[role] = vid
+                    for x in p.get("shots") or []:
+                        if x.get("role") == role and (not x.get("speaker") or x.get("speaker") == old):
+                            x["speaker"] = vid
+                            x["tts_st"] = "stale"
+                    touched = True
+                if touched:
+                    _mark(p, "tts", "stale", "角色音色改了：要重配")
+                    _mark(p, "video", "stale", "角色音色改了：要重新合成")
+            if "bgm_seconds" in st:
+                try:
+                    old = int((p.get("settings") or {}).get("bgm_seconds") or 0)
+                    p["settings"]["bgm_seconds"] = max(10, min(380, int(st["bgm_seconds"] or 0)))
+                    if p["settings"]["bgm_seconds"] != old:
+                        _mark(p, "bgm", "stale", "配乐时长改了：要重做配乐")
+                        _mark(p, "video", "stale", "配乐时长改了：要重新合成")
+                except (TypeError, ValueError):
+                    pass
+            if "bgm_steps" in st:
+                try:
+                    p["settings"]["bgm_steps"] = max(1, min(32, int(st["bgm_steps"] or 8)))
+                    _mark(p, "bgm", "stale", "配乐步数改了：要重做配乐")
+                except (TypeError, ValueError):
+                    pass
             if st.get("voice_id"):
                 cur = (p["settings"].get("voice") or {}).get("id")
                 if str(st["voice_id"]) != str(cur):
@@ -415,6 +761,25 @@ class Studio:
                 q = by_id.get(s["id"])
                 if not q:
                     continue
+                if "role" in q and str(q["role"]).strip() != (s.get("role") or ""):
+                    role = str(q["role"]).strip()[:12]
+                    if role not in ROLES:
+                        role = s.get("role") or "白页"
+                    s["role"] = role
+                    rv = (p.get("settings") or {}).get("role_voices") or {}
+                    if not q.get("speaker") and rv.get(role):
+                        s["speaker"] = rv[role]
+                    s["tts_st"] = "stale"
+                    _mark(p, "tts", "stale", "角色改了：要重配")
+                    _mark(p, "video", "stale", "角色改了：要重新合成")
+                if "speaker" in q:
+                    sp = str(q.get("speaker") or "").strip()[:80]
+                    if sp and sp != (s.get("speaker") or ""):
+                        voice_config(sp)
+                        s["speaker"] = sp
+                        s["tts_st"] = "stale"
+                        _mark(p, "tts", "stale", "逐句音色改了：要重配")
+                        _mark(p, "video", "stale", "逐句音色改了：要重新合成")
                 if "text" in q and str(q["text"]).strip() != s["text"]:
                     s["text"] = str(q["text"]).strip()[:500]
                     s["tts_st"] = "stale"
@@ -448,8 +813,12 @@ class Studio:
             if mode != "all" or not (topic or text):
                 raise HTTPException(400, "还没有项目：先在左边写主题，再一键全自动")
             ratio = body.get("ratio") if body.get("ratio") in video_maker.SIZES else "9:16"
-            p = video_maker.new_project(safe_title(topic or text), ratio, str(body.get("style") or "知识科普")[:40],
-                                        body.get("seconds") or 60, topic=topic or text[:4000], voice=voice_config(body.get("voice_id")))
+            voice = voice_config(body.get("voice_id"))
+            p = video_maker.new_project(safe_title(topic or text), ratio, STYLE_TAG,
+                                        max(65, min(85, int(body.get("seconds") or 75))), topic=topic or text[:4000], voice=voice)
+            p["settings"]["voice"] = voice
+            p["settings"]["img_model"] = body.get("img_model") or settings.S.get("imgModel") or imagegen.DEFAULT_MODEL
+            _init_role_voices(p, voice)
             p["source_text"] = text
             video_maker.save_project(p)
         else:
@@ -547,7 +916,7 @@ class Studio:
     async def _all(self, p):
         if not p.get("shots"):
             self.job.update(stage=1, msg="第一步：拆解分镜", pct=2)
-            j, cny = await _ask_plan(p.get("topic") or "", p.get("source_text") or "", p.get("ratio"), p.get("style"), p.get("target_seconds"))
+            j, cny = await _ask_plan(p.get("topic") or "", p.get("source_text") or "", p.get("ratio"), p.get("target_seconds"))
             p["title"], p["desc"], p["tags"], p["bgm_prompt"] = j["title"], j["desc"], j["tags"], j["bgm_prompt"]
             p["cost"]["plan_cny"] = round(cny, 4)
             self._apply_plan(p, j)
@@ -606,7 +975,8 @@ class Studio:
         key = settings.get_secret("imgKey")
         if not key:
             raise HTTPException(400, "还没填 API易 的 Key：到 设置 › 云端 填好，再生成画面")
-        cd = imagegen.card()
+        mid = (p.get("settings") or {}).get("img_model") or settings.S.get("imgModel") or imagegen.DEFAULT_MODEL
+        cd = imagegen.card(mid)
         tiers = imagegen.tiers_of(cd)
         tier = settings.S.get("imgRes") if settings.S.get("imgRes") in tiers else (tiers[0] if tiers else "2k")
         quality = settings.S.get("imgQuality") or "high"
@@ -623,7 +993,7 @@ class Studio:
                 self._progress(k / max(1, len(targets)) * 100, f"正在生图 {k + 1}/{len(targets)}：第 {p['shots'].index(s) + 1} 镜")
                 self._save(p, True)
                 prompt = imagegen.build_prompt({"prompt": s["image_prompt"] or s["text"], "ratio": p["ratio"], "transparent": False},
-                                               p.get("style") or "", False, True, kind)
+                                               STYLE_TAG, False, True, kind)
                 try:
                     img, usage, _sent = await imagegen.CALL.get(cd["proto"], imagegen._call_openai)(
                         c, base, key, cd, prompt, p["ratio"], tier, quality, False, [])
@@ -646,10 +1016,10 @@ class Studio:
                     else:
                         usd = cd["price"] if cd["price"] is not None else (imagegen.est_usd(cd, p["ratio"], tier, quality) or 0.0)
                     s.update(image=f"images/{name}", image_st="ok", image_err="", image_ver=int(time.time() * 1000),
-                             image_w=pi["w"], image_h=pi["h"])
+                             image_w=pi["w"], image_h=pi["h"], image_model=cd["id"])
                     p["cost"]["images_usd"] = round(float(p["cost"].get("images_usd") or 0) + float(usd), 4)
                     telemetry.log("app", "studio_image", "视频工坊", "ok", 0,
-                                  {"shot": s["id"], "ratio": p["ratio"], "w": pi["w"], "h": pi["h"], "usd": round(float(usd), 4)},
+                                  {"shot": s["id"], "model": cd["id"], "ratio": p["ratio"], "w": pi["w"], "h": pi["h"], "usd": round(float(usd), 4)},
                                   f"视频工坊生图：第 {p['shots'].index(s) + 1} 镜")
                 except imagegen.ImgError as e:
                     s.update(image_st="err", image_err=str(e)[:300])
@@ -671,7 +1041,7 @@ class Studio:
 
     # ---------- 配音 ----------
     async def _gen_tts(self, p, ids=None):
-        self._step_start(p, "tts", "准备配音")
+        self._step_start(p, "tts", "准备逐句配音")
         shots = p["shots"]
         if ids:
             targets = [s for s in shots if s["id"] in ids]
@@ -681,112 +1051,98 @@ class Studio:
             await self._build_voice(p)
             _mark(p, "tts", "ok", "配音都在", 100)
             return
-        v = p["settings"].get("voice") or {"engine": "local", "mode": "preset", "speaker": "Vivian", "label": "Vivian"}
+        cfgs = []
+        for s in targets:
+            cfg = _shot_voice(p, s)
+            if cfg.get("engine") == "local":
+                req = {"mode": cfg.get("mode") or "preset", "speaker": cfg.get("speaker"), "desc": cfg.get("desc"),
+                       "name": cfg.get("name"), "seed": cfg.get("seed"), "tone": ""}
+                try:
+                    cfg["_vv"] = tts.T.voice(req)
+                except HTTPException as e:
+                    raise StudioError(str(e.detail)) from None
+            cfgs.append((s, cfg))
         self._span = (35, 30)
-        if v.get("engine") == "cloud":
-            await self._tts_cloud(p, targets, v)
-        else:
-            await self._tts_local(p, targets, v)
-        self._check_stop()
-        await self._build_voice(p)
-        _mark(p, "tts", "ok", f"配好 {len(shots)} 段，总长 {p.get('total_seconds', 0):.1f} 秒", 100)
-        self.job.update(stage=2, pct=self._span[0] + self._span[1])
-        self._save(p, True)
-
-    async def _tts_local(self, p, targets, v):
-        # 换模型前先放显存：配乐服务要是开着（上一轮或配乐页），先关掉
-        try:
-            bgm.B.stop("视频工坊：换配音模型，先释放显存")
-        except Exception:
-            pass
-        try:
-            req = {"mode": v.get("mode") or "preset", "speaker": v.get("speaker"), "desc": v.get("desc"),
-                   "name": v.get("name"), "seed": v.get("seed"), "tone": ""}
-            vv = tts.T.voice(req)
-        except HTTPException as e:
-            raise StudioError(str(e.detail)) from None
-        try:
-            await tts.T.ensure()
-        except Exception as e:
-            raise StudioError(f"配音服务没起来：{str(e)[:300]}") from None
+        need_local = any(c.get("engine") == "local" for _, c in cfgs)
+        if need_local:
+            try:
+                bgm.B.stop("视频工坊：换配音模型，先释放显存")
+            except Exception:
+                pass
+            try:
+                await tts.T.ensure()
+            except Exception as e:
+                raise StudioError(f"配音服务没起来：{str(e)[:300]}") from None
+        seed = int(time.time()) % 65535 or 1
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=900.0, write=30.0, pool=None)) as c:
-            for k, s in enumerate(targets):
+            for k, (s, cfg) in enumerate(cfgs):
                 self._check_stop()
+                idx = p["shots"].index(s) + 1
+                text = (s.get("text") or "").strip()
+                if not text:
+                    raise StudioError(f"第 {idx} 句的台词是空的")
                 s["tts_st"] = "run"
                 if self.job:
                     self.job["shot"] = s["id"]
-                self._progress(k / max(1, len(targets)) * 100, f"正在配音 {k + 1}/{len(targets)}：第 {p['shots'].index(s) + 1} 镜")
+                self._progress(k / max(1, len(cfgs)) * 100,
+                               f"正在配音 {s.get('role') or '旁白'}（{k + 1}/{len(cfgs)}）：{text[:14]}")
                 self._save(p, True)
-                text = (s.get("text") or "").strip()
-                if not text:
-                    raise StudioError(f"第 {p['shots'].index(s) + 1} 镜的台词是空的")
-                try:
-                    r = await c.post(tts.T.url("/generate"), json={
-                        "kind": vv["kind"], "text": text, "speaker": vv.get("speaker"),
-                        "instruct": (s.get("tone") or vv.get("instruct") or "")[:200],
-                        "language": vv.get("lang") or "Chinese", "seed": vv.get("seed")})
-                except httpx.HTTPError as e:
-                    if self._stop.is_set():
-                        raise StopRequested() from None
-                    raise StudioError(f"配音服务断了：{type(e).__name__}") from None
-                if r.status_code != 200:
-                    if self._stop.is_set():
-                        raise StopRequested()
+                tone = (s.get("tone") or "")[:120]
+                if cfg.get("engine") == "cloud":
+                    if not tts_cloud.key():
+                        raise StudioError("还没填百炼 API Key：到 设置 › 云端 填好，或者把音色换成本地的")
                     try:
-                        why = r.json().get("detail") or r.text
+                        r, _asked = await tts_cloud.synth_once_more(text, cfg["voice"], tone, seed,
+                                                                    stop=lambda: self._stop.is_set())
+                    except tts_cloud.Cancelled:
+                        raise StopRequested() from None
+                    except tts_cloud.CloudError as e:
+                        raise StudioError(f"第 {idx} 句没配成：{str(e)[:300]}") from None
+                    sr, pcm = int(r["sr"]), r["pcm"]
+                    try:
+                        _bill, cny = tts_cloud.record(cfg["voice"], text, r.get("usage"), "视频工坊", len(pcm) / 2 / sr)
+                        p["cost"]["tts_cny"] = round(float(p["cost"].get("tts_cny") or 0) + float(cny), 4)
                     except Exception:
-                        why = r.text
-                    raise StudioError(f"第 {p['shots'].index(s) + 1} 镜没配成：{str(why)[:300]}")
-                try:
-                    sr, pcm = tts.read_wav(r.content)
-                except Exception as e:
-                    raise StudioError(f"配音服务回来的音频不对：{str(e)[:200]}") from None
-                idx = p["shots"].index(s) + 1
+                        pass
+                else:
+                    vv = cfg["_vv"]
+                    try:
+                        r = await c.post(tts.T.url("/generate"), json={
+                            "kind": vv["kind"], "text": text, "speaker": vv.get("speaker"),
+                            "instruct": tone or vv.get("instruct") or "", "language": vv.get("lang") or "Chinese",
+                            "seed": vv.get("seed")})
+                    except httpx.HTTPError as e:
+                        if self._stop.is_set():
+                            raise StopRequested() from None
+                        raise StudioError(f"配音服务断了：{type(e).__name__}") from None
+                    if r.status_code != 200:
+                        if self._stop.is_set():
+                            raise StopRequested()
+                        try:
+                            why = r.json().get("detail") or r.text
+                        except Exception:
+                            why = r.text
+                        raise StudioError(f"第 {idx} 句没配成：{str(why)[:300]}")
+                    try:
+                        sr, pcm = tts.read_wav(r.content)
+                    except Exception as e:
+                        raise StudioError(f"配音服务回来的音频不对：{str(e)[:200]}") from None
                 dest = Path(p["dir"]) / "tts" / f"shot{idx:02d}.wav"
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 tts.write_wav(dest, sr, pcm)
-                s.update(tts=f"tts/shot{idx:02d}.wav", tts_st="ok", tts_err="", tts_ver=int(time.time() * 1000),
-                         duration=round(len(pcm) / 2 / sr, 2))
+                dur = len(pcm) / 2 / sr
+                s.update(tts=f"tts/shot{idx:02d}.wav", tts_st="ok", tts_err="",
+                         tts_ver=int(time.time() * 1000), duration=round(dur, 2))
                 telemetry.log("app", "studio_tts", "视频工坊", "ok", 0,
-                              {"shot": s["id"], "seconds": s["duration"], "engine": "local"}, f"视频工坊配音：第 {idx} 镜")
+                              {"shot": s["id"], "role": s.get("role"), "speaker": cfg.get("label") or cfg.get("voice"),
+                               "seconds": round(dur, 2), "engine": cfg.get("engine")},
+                              f"视频工坊配音：{s.get('role') or '旁白'} 第 {idx} 句")
                 self._save(p)
-        self.job.update(pct=self._span[0] + self._span[1])
-
-    async def _tts_cloud(self, p, targets, v):
-        if not tts_cloud.key():
-            raise StudioError("还没填百炼 API Key：到 设置 › 云端 填好，或者把音色换成本地的")
-        seed = int(v.get("seed") or (int(time.time()) % 65535))
-        for k, s in enumerate(targets):
-            self._check_stop()
-            s["tts_st"] = "run"
-            if self.job:
-                self.job["shot"] = s["id"]
-            self._progress(k / max(1, len(targets)) * 100, f"正在云端配音 {k + 1}/{len(targets)}：第 {p['shots'].index(s) + 1} 镜")
-            self._save(p, True)
-            text = (s.get("text") or "").strip()
-            try:
-                r, _asked = await tts_cloud.synth_once_more(text, v["voice"], (s.get("tone") or "")[:100], seed,
-                                                            stop=lambda: self._stop.is_set())
-            except tts_cloud.Cancelled:
-                raise StopRequested() from None
-            except tts_cloud.CloudError as e:
-                raise StudioError(f"第 {p['shots'].index(s) + 1} 镜没配成：{str(e)[:300]}") from None
-            sr, pcm = int(r["sr"]), r["pcm"]
-            idx = p["shots"].index(s) + 1
-            dest = Path(p["dir"]) / "tts" / f"shot{idx:02d}.wav"
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            tts.write_wav(dest, sr, pcm)
-            dur = len(pcm) / 2 / sr
-            try:
-                _bill, cny = tts_cloud.record(v["voice"], text, r.get("usage"), "视频工坊", dur)
-                p["cost"]["tts_cny"] = round(float(p["cost"].get("tts_cny") or 0) + float(cny), 4)
-            except Exception:
-                pass
-            s.update(tts=f"tts/shot{idx:02d}.wav", tts_st="ok", tts_err="", tts_ver=int(time.time() * 1000), duration=round(dur, 2))
-            telemetry.log("app", "studio_tts", "视频工坊", "ok", 0, {"shot": s["id"], "seconds": round(dur, 2), "engine": "cloud"},
-                          f"视频工坊云端配音：第 {idx} 镜")
-            self._save(p)
-        self.job.update(pct=self._span[0] + self._span[1])
+        self._check_stop()
+        await self._build_voice(p)
+        _mark(p, "tts", "ok", f"配好 {len(shots)} 句，总长 {p.get('total_seconds', 0):.1f} 秒", 100)
+        self.job.update(stage=2, pct=self._span[0] + self._span[1])
+        self._save(p, True)
 
     async def _build_voice(self, p):
         """把每段配音拼成一条 voice.wav，并按实际时长写 subtitles.srt、每个分镜的 start/end。"""
@@ -849,8 +1205,9 @@ class Studio:
                 at = en
         (d / "subtitles.srt").write_text(tts.to_srt(tl), "utf-8")
         meta = {"created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "sample_rate": sr, "total_seconds": round(total, 3),
-                "voice": p["settings"].get("voice"), "shots": [{"id": s["id"], "start": s["start"], "end": s["end"],
-                                                                 "duration": s["duration"], "text": s.get("text")} for s in shots]}
+                "voice": p["settings"].get("voice"), "role_voices": p["settings"].get("role_voices"),
+                "shots": [{"id": s["id"], "role": s.get("role"), "speaker": s.get("speaker"), "tone": s.get("tone"),
+                           "start": s["start"], "end": s["end"], "duration": s["duration"], "text": s.get("text")} for s in shots]}
         (d / "timeline.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), "utf-8")
         p["files"].update(voice="tts/voice.wav", srt="tts/subtitles.srt", timeline="tts/timeline.json")
         p["total_seconds"] = round(total, 3)
@@ -863,10 +1220,18 @@ class Studio:
         if total <= 0:
             await self._build_voice(p)
             total = float(p.get("total_seconds") or 0)
-        seconds = max(10, min(bgm.MAX_S, int(round(total or p.get("target_seconds") or 60))))
+        try:
+            seconds = int((p.get("settings") or {}).get("bgm_seconds") or 0) or int(round(total or p.get("target_seconds") or 75))
+        except (TypeError, ValueError):
+            seconds = int(round(total or 75))
+        seconds = max(10, min(bgm.MAX_S, seconds))
         prompt = (p.get("bgm_prompt") or "").strip()
         if not prompt:
-            prompt = f"{p.get('style') or '知识科普'}风格短视频背景音乐，纯音乐，无人声，情绪贴合旁白，节奏舒缓"
+            prompt = f"{STYLE_TAG} 风格短视频背景音乐，纯音乐，无人声，情绪贴合旁白，节奏舒缓"
+        try:
+            steps = max(1, min(32, int((p.get("settings") or {}).get("bgm_steps") or 8)))
+        except (TypeError, ValueError):
+            steps = 8
         self._span = (65, 15)
         # 换模型前先放显存：本地配音服务出完先关掉
         try:
@@ -877,7 +1242,7 @@ class Studio:
         try:
             r = await bgm.B.generate(prompt, seconds, say=lambda m: self._progress(10, m),
                                      stopped=lambda: self._stop.is_set(),
-                                     dest=Path(p["dir"]) / "bgm" / "bgm.wav")
+                                     dest=Path(p["dir"]) / "bgm" / "bgm.wav", steps=steps)
         except bgm.BgmError as e:
             if self._stop.is_set():
                 raise StopRequested() from None
@@ -1025,6 +1390,39 @@ def studio_select(body: dict = Body(...)):
     pid = str(body.get("pid") or "")
     try:
         return S.select(pid)
+    except video_maker.MakerError as e:
+        raise HTTPException(404, str(e)) from None
+
+
+@api.post("/api/studio/new")
+def studio_new(body: dict = Body(default={})):
+    try:
+        return S.new_project(body)
+    except HTTPException:
+        raise
+    except video_maker.MakerError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@api.get("/api/studio/export_prompt_pack")
+def studio_export_prompt_pack(pid: str = ""):
+    p = None
+    if pid:
+        try:
+            p = video_maker.load_project(pid)
+        except video_maker.MakerError:
+            p = None
+    text = prompt_pack(p)
+    return Response(text, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="gemini_prompt_pack.md"'})
+
+
+@api.post("/api/studio/import_script")
+def studio_import_script(body: dict = Body(...)):
+    try:
+        return S.import_script(body)
+    except StudioError as e:
+        raise HTTPException(400, str(e)) from None
     except video_maker.MakerError as e:
         raise HTTPException(404, str(e)) from None
 

@@ -37,7 +37,7 @@ check(theme_script >= 0, "index.html <head> 里同步读取 agent_theme")
 check(css >= 0 and theme_script < css, "主题脚本在第一个 CSS 之前执行（零 FOUC）")
 check('data-theme="dark"' in html, "静态 index.html 的默认主题仍是深色")
 main_py = (ROOT / "app" / "main.py").read_text("utf-8")
-check('VERSION = "3.6.0"' in main_py, "app/main.py VERSION 是 3.6.0")
+check('VERSION = "3.7.0"' in main_py, "app/main.py VERSION 是 3.7.0")
 check("data-theme=\"{theme}\"" in main_py or 'f\'data-theme="{theme}"\'' in main_py or 'f"data-theme=\\"{theme}\\""' in main_py,
       "后端把当前主题注入首页 <html data-theme>（新窗口/清缓存也不先闪深色）")
 

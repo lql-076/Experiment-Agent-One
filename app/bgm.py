@@ -206,7 +206,7 @@ class Bgm:
             feed.add(f"配乐描述没转成英文，按原文送模型：{str(e)[:80]}", "info", job=JOBN)
         return prompt
 
-    async def generate(self, prompt, seconds=60, say=None, stopped=None, dest=None):
+    async def generate(self, prompt, seconds=60, say=None, stopped=None, dest=None, steps=None):
         """出一首纯音乐。返回 {id, path, name, duration, sec, prompt}。一次只出一首（排队）。
         dest：存成哪个文件（批量用：配乐输出\\日期_清单名\\名字.wav，同名的旧文件挪进「旧版」）；不给就存 配乐输出\\日期\\时分秒_描述.wav。"""
         prompt = str(prompt or "").strip()
@@ -221,7 +221,8 @@ class Bgm:
         say = say or (lambda _m: None)
         async with self._lock:
             job = self.job = {"id": int(time.time() * 1000), "st": "run", "prompt": prompt, "seconds": seconds,
-                              "t0": time.time(), "t1": 0.0, "msg": "准备中", "stop": "", "err": "", "file": ""}
+                              "t0": time.time(), "t1": 0.0, "msg": "准备中", "stop": "", "err": "", "file": "",
+                              "steps": steps}
             try:
                 r = await self._gen(job, say, stopped, dest)
                 job.update(st="done", t1=time.time(), msg=f"好了：{r['name']}", file=r["name"])
@@ -242,7 +243,7 @@ class Bgm:
     async def _gen(self, job, say, stopped, dest=None):
         await self.ensure(lambda m: (job.update(msg=m), say(m)))
         fmt = "wav" if (self.s.get("bgmFormat") or "wav") not in ("mp3", "flac") else self.s["bgmFormat"]
-        steps = max(1, min(32, int(self.s.get("bgmSteps") or 8)))
+        steps = max(1, min(32, int(job.get("steps") or self.s.get("bgmSteps") or 8)))
         prompt_en = await self._english(job["prompt"])
         job["prompt_en"] = prompt_en
         body = {"prompt": prompt_en, "duration": job["seconds"], "format": fmt, "num_inference_steps": steps,

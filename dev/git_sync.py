@@ -26,8 +26,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 DEFAULT_REMOTE = "https://github.com/lql-076/Experiment-Agent-One"
-DEFAULT_MESSAGE = ("v3.6.0：新增「视频工坊」一体化工作台（文案拆解、生图、配音、配乐、"
-                   "FFmpeg 合成、送去发布待确认队列）；原有生图 / 配音 / 配乐 / 发布页面保持不变")
+DEFAULT_MESSAGE = ("v3.7.0：视频工坊升级 ComfyUI 风格节点工作流；硬件状态条、Gemini 策划包导入导出、"
+                   "生图选模型、白页×紫苏双角色逐句配音；原有页面保持不变")
 
 # ---------- 黑名单：路径 ----------
 DIRS = (

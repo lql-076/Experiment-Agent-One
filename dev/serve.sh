@@ -20,6 +20,23 @@ stop1() {
 
 case "$1" in
   start)
+    # v3.7 安全锁：本机 data\secrets.bin 是真的密钥。测试脚本会把 Key 写成假值，
+    # 所以默认拒绝启动；确实要用测试假 Key，先显式设 AGENT_ALLOW_OVERWRITE_DATA=1。
+    # 允许时也会先把 data\secrets.bin / settings.json 备份到 dev/.run/data_backup，stop 时还原。
+    if [ -f "$ROOT/data/secrets.bin" ] && [ "$AGENT_ALLOW_OVERWRITE_DATA" != "1" ]; then
+      echo "拒绝启动测试环境：检测到本机真实 data/secrets.bin。"
+      echo "测试会把 Key 写成假值。确定要覆盖的话，先运行："
+      echo "  AGENT_ALLOW_OVERWRITE_DATA=1 dev/serve.sh start"
+      echo "（允许后也会先备份，dev/serve.sh stop 会还原。）"
+      exit 3
+    fi
+    if [ -f "$ROOT/data/secrets.bin" ]; then
+      mkdir -p "$RUN/data_backup"
+      cp -f "$ROOT/data/secrets.bin" "$RUN/data_backup/secrets.bin"
+      [ -f "$ROOT/data/settings.json" ] && cp -f "$ROOT/data/settings.json" "$RUN/data_backup/settings.json"
+      : > "$RUN/restore_data.flag"
+      echo "已备份 data 到 dev/.run/data_backup（stop 时还原）"
+    fi
     stop1 backend; stop1 mocks
     rm -f "$RUN"/fake_*.flag
     MOCKARGS="--no-model"
@@ -51,6 +68,13 @@ case "$1" in
     stop1 backend; stop1 mocks
     # 测试后端开的假配音服务有时会留下来（后端被停的时候它正开着）：占着端口，下一轮测试就不准了。只停本项目 dev 里这一个脚本。
     pkill -f "$DEV/fake_tts.py" 2>/dev/null
+    if [ -f "$RUN/restore_data.flag" ]; then
+      sleep 1
+      [ -f "$RUN/data_backup/secrets.bin" ] && cp -f "$RUN/data_backup/secrets.bin" "$ROOT/data/secrets.bin"
+      [ -f "$RUN/data_backup/settings.json" ] && cp -f "$RUN/data_backup/settings.json" "$ROOT/data/settings.json"
+      mv -f "$RUN/restore_data.flag" "$RUN/restore_data.done"
+      echo "已还原测试前的 data（密钥和设置）"
+    fi
     echo "停了"
     ;;
   status)

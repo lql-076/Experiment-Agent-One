@@ -37,7 +37,7 @@ step "配音：切句子、拼接停顿、时间轴、保存、我的音色、�
 step "配音的百炼云端引擎：只发文案、字级时间戳、分块、用量、出错说明、Key 不外泄" "$PY" dev/test_tts_cloud.py
 step "配音页点一遍（本地和百炼云端）、设置里的安装配音、百炼 Key 和开机自启" "$PY" dev/ui/tts.py dev/.run/shots
 step "配音、语音、配乐进整备一键装好（真跑一遍装配乐，假下载站）；配音批量、配乐批量：认清单、每段的音色、按名字存、旧版、停下、打包" "$PY" dev/test_media.py
-step "视频工坊：工程目录、AI 拆解解析、FFmpeg 合成、单步重跑、停下中断" "$PY" dev/test_studio.py
+step "视频工坊：三合一风格、生图模型、双角色逐句配音、Gemini 策划包导入导出、节点单步、FFmpeg 合成、停下" "$PY" dev/test_studio.py
 step "配音批量、配乐批量点一遍：贴清单、改一段、开始、听、选文件" "$PY" dev/ui/batch.py dev/.run/shots
 step "发布到抖音（假抖音）：真代码导得进来、扫码登录、cookie 加密、发之前的检查、发、验证码、停下、Agent 交来等确认" "$PY" dev/test_publish.py
 step "「发布」窗口点一遍；下边栏精简、设置里的其他页面和外观开关" "$PY" dev/ui/publish.py dev/.run/shots
