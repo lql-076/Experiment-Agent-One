@@ -809,3 +809,48 @@ html[data-orient="portrait"] .st-projsel{max-width:13rem}
 html[data-orient="portrait"] .st-hw{gap:.6rem}
 .st-mini-prompt{grid-column:2/-1;min-height:1.55rem!important;font-size:.66rem!important;margin-top:-.1rem}
 .st .btn,.st .linkbtn,.st-nrun{white-space:nowrap}
+
+/* ================= 视频工坊 v3.8 · 八节点 / 动态子工作流 / 可调大小 ================= */
+.st-node.collapsed{height:auto!important;min-height:0}
+.st-node.collapsed .st-node-body,.st-node.collapsed .st-node-f{display:none}
+.st-fold{flex:none;width:1.35rem;height:1.35rem;border:1px solid var(--line2);background:transparent;color:var(--text3);font-size:.72rem;line-height:1;padding:0}
+.st-fold:hover{color:var(--hud);border-color:var(--hud)}
+.st-rs{position:absolute;right:0;bottom:0;width:1rem;height:1rem;cursor:nwse-resize;z-index:3;background:
+  linear-gradient(135deg,transparent 45%,var(--line2) 46%,var(--line2) 55%,transparent 56%),
+  linear-gradient(135deg,transparent 62%,var(--line2) 63%,var(--line2) 72%,transparent 73%);opacity:.85}
+.st-rs:hover{background:linear-gradient(135deg,transparent 45%,var(--hud) 46%,var(--hud) 55%,transparent 56%),linear-gradient(135deg,transparent 62%,var(--hud) 63%,var(--hud) 72%,transparent 73%)}
+.st-group .st-node-body{padding:.4rem .5rem;gap:.3rem}
+.st-group-bar{flex:none;display:flex;align-items:center;gap:.35rem;font-size:.66rem;color:var(--text3);padding:.15rem 0 .25rem;border-bottom:1px solid var(--line);margin-bottom:.2rem}
+.st-group-bar .btn{min-height:1.7rem;font-size:.68rem;padding:.1rem .4rem}
+.st-sublist{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:.35rem;padding-right:.15rem}
+.st-sub{flex:none;border:1px solid var(--line2);background:color-mix(in srgb,var(--bg2) 62%,transparent);padding:.35rem .4rem;display:flex;flex-direction:column;gap:.25rem;min-width:0}
+.st-sub-h{display:flex;align-items:center;gap:.28rem;min-width:0}
+.st-sub-h b{font-size:.72rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:7rem}
+.st-sub-h .st-tag{font-size:.58rem}
+.st-subrun{flex:none;min-height:1.35rem;padding:.02rem .3rem;border:1px solid var(--line2);background:transparent;color:var(--hud);font-size:.62rem}
+.st-subrun:hover{border-color:var(--hud)}
+.st-thumbs{display:flex;gap:.25rem;min-height:2.7rem;overflow-x:auto;padding-bottom:.1rem}
+.st-thumb-pick{flex:none;width:2.1rem;height:2.8rem;padding:0;border:1px solid var(--line2);background:transparent;overflow:hidden}
+.st-thumb-pick img{width:100%;height:100%;object-fit:cover;display:block}
+.st-thumb-pick.on{border-color:var(--hud);box-shadow:0 0 0 1px var(--hud)}
+.st-subrow{display:flex;align-items:center;gap:.25rem;min-width:0}
+.st-subrow>*{min-width:0}
+.st-subrow select,.st-subrow input[data-f]{flex:1;min-height:1.5rem;font-size:.64rem;padding:.05rem .2rem}
+.st-subrow .st-num2{flex:none;width:3rem}
+.st-chk{display:flex;align-items:center;gap:.2rem;font-size:.64rem;color:var(--text2);white-space:nowrap;flex:none}
+.st-sub textarea[data-f="text"]{height:2rem;min-height:2rem;font-size:.68rem;resize:none}
+.st-sub .st-file{min-height:1.55rem;font-size:.62rem;padding:.05rem .35rem}
+.st-sub .linkbtn{font-size:.62rem}
+.st-n5 .st-node-body,.st-n6 .st-node-body,.st-n7 .st-node-body,.st-n8 .st-node-body{gap:.3rem}
+.st-n5 .st-row2 .btn,.st-n6 .st-row2 .btn{min-height:1.9rem;font-size:.7rem}
+.st-n5 .inp,.st-n6 .inp,.st-n7 .inp,.st-n8 .inp{min-height:1.8rem;font-size:.72rem}
+.st-n8 .st-video{max-height:7rem}
+.st-n8 .st-vempty{height:4.8rem}
+.st-n8 textarea{min-height:2.2rem;resize:none}
+.st-n8 .st-check{font-size:.66rem}
+.st-n7 .st-vol{margin:.1rem 0}
+.st-n7 .st-vol label{font-size:.66rem}
+.st-pptrow{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;align-items:center;gap:.28rem;padding:.22rem 0;border-bottom:1px solid color-mix(in srgb,var(--line) 65%,transparent);min-width:0}
+.st-pptrow .st-mini-x b{font-size:.7rem}
+.st-pptrow .st-mini-x em{font-size:.6rem;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-style:normal}
+.st-pptrow .linkbtn{font-size:.62rem}

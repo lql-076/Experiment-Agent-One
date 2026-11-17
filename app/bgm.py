@@ -206,7 +206,7 @@ class Bgm:
             feed.add(f"配乐描述没转成英文，按原文送模型：{str(e)[:80]}", "info", job=JOBN)
         return prompt
 
-    async def generate(self, prompt, seconds=60, say=None, stopped=None, dest=None, steps=None):
+    async def generate(self, prompt, seconds=60, say=None, stopped=None, dest=None, steps=None, seed=None):
         """出一首纯音乐。返回 {id, path, name, duration, sec, prompt}。一次只出一首（排队）。
         dest：存成哪个文件（批量用：配乐输出\\日期_清单名\\名字.wav，同名的旧文件挪进「旧版」）；不给就存 配乐输出\\日期\\时分秒_描述.wav。"""
         prompt = str(prompt or "").strip()
@@ -222,7 +222,7 @@ class Bgm:
         async with self._lock:
             job = self.job = {"id": int(time.time() * 1000), "st": "run", "prompt": prompt, "seconds": seconds,
                               "t0": time.time(), "t1": 0.0, "msg": "准备中", "stop": "", "err": "", "file": "",
-                              "steps": steps}
+                              "steps": steps, "seed": seed}
             try:
                 r = await self._gen(job, say, stopped, dest)
                 job.update(st="done", t1=time.time(), msg=f"好了：{r['name']}", file=r["name"])
@@ -247,7 +247,7 @@ class Bgm:
         prompt_en = await self._english(job["prompt"])
         job["prompt_en"] = prompt_en
         body = {"prompt": prompt_en, "duration": job["seconds"], "format": fmt, "num_inference_steps": steps,
-                "seed": int(time.time() * 1000) & 0x7FFFFFFF}
+                "seed": int(job.get("seed") or (int(time.time() * 1000) & 0x7FFFFFFF))}
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=120, write=30, pool=None)) as c:
                 r = await c.post(self.url("/release_task"), json=body)

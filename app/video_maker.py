@@ -1,4 +1,4 @@
-r"""视频合成引擎（v3.6 起，v3.7 节点工坊继续用）。
+r"""视频合成引擎（v3.6 起，v3.8 支持网页/PPT/GIF 双轨）。
 
 把「分镜图片 + 分镜配音 + 字幕 + 配乐」合成一条能直接发的成片：
 - 工程结构：工作区\视频工坊\<项目名_时间戳>\（不进仓库）：
@@ -199,7 +199,8 @@ def _srt_escape(p: Path) -> str:
     return s.replace(":", "\\:").replace("'", "\\'")
 
 
-def compose_video(project_dir, srt=True, bgm_volume=0.18, kenburns=True, stopped=None, progress=None) -> dict:
+def compose_video(project_dir, srt=True, bgm_volume=0.18, kenburns=True, stopped=None, progress=None,
+                 duck_depth=0.16, fade=2.0) -> dict:
     """把项目文件夹里的素材合成 output/成片.mp4。
 
     stopped() 返回真 → 结束自己开的 ffmpeg，返回 {"stopped": True}。
@@ -223,21 +224,25 @@ def compose_video(project_dir, srt=True, bgm_volume=0.18, kenburns=True, stopped
     if not voice_p.exists() and not srt_p.exists():
         raise MakerError("还没有配音：先点「配音」或「一键全自动」")
 
-    # 每个分镜用哪张图：自己的图缺失就按顺序循环用已有的图（图片比配音段少也能铺满）
-    imgs = []
+    # 每个分镜用哪一轨：网页动效视频 / PPT 卡片图 / 生图（GIF 也能当动态轨）；缺失就循环用已有的
+    visuals = []
     for s in shots:
-        q = s.get("image") or ""
+        v = None
+        q = s.get("render_clip") or ""
         if q and _abs(d, q).exists():
-            imgs.append(_abs(d, q))
-        else:
-            imgs.append(None)
-    have = [x for x in imgs if x]
+            v = {"kind": "video", "path": _abs(d, q)}
+        if v is None:
+            q = s.get("render_image") or s.get("image") or ""
+            if q and _abs(d, q).exists():
+                v = {"kind": "video" if str(q).lower().endswith(".gif") else "image", "path": _abs(d, q)}
+        visuals.append(v)
+    have = [x for x in visuals if x]
     if not have:
-        raise MakerError("还没有分镜图：先点「生图」或「一键全自动」")
+        raise MakerError("还没有画面：先点「生图」、网页动效或 PPT 卡片")
     rr = 0
-    for i in range(len(imgs)):
-        if imgs[i] is None:
-            imgs[i] = have[rr % len(have)]
+    for i in range(len(visuals)):
+        if visuals[i] is None:
+            visuals[i] = have[rr % len(have)]
             rr += 1
 
     # 每段时长：优先用配音段的时间轴（start/end），没有就按 duration / 预估
@@ -267,28 +272,33 @@ def compose_video(project_dir, srt=True, bgm_volume=0.18, kenburns=True, stopped
             pass
 
     cmd = [ff, "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1"]
-    for q in imgs:
-        cmd += ["-i", str(q)]
+    for v in visuals:
+        if v["kind"] == "video":
+            cmd += ["-stream_loop", "-1", "-i", str(v["path"])]
+        else:
+            cmd += ["-i", str(v["path"])]
     vi = None
     if voice_p.exists():
-        vi = len(imgs)
+        vi = len(visuals)
         cmd += ["-i", str(voice_p)]
     bi = None
     if bgm_p is not None and bgm_p.exists() and bgm_volume > 0:
-        bi = len(imgs) + (1 if vi is not None else 0)
+        bi = len(visuals) + (1 if vi is not None else 0)
         cmd += ["-stream_loop", "-1", "-i", str(bgm_p)]
 
     parts, labels = [], []
-    for i, (q, dur) in enumerate(zip(imgs, spans)):
+    for i, (v, dur) in enumerate(zip(visuals, spans)):
         frames = max(2, int(round(dur * FPS)))
-        if kenburns:
+        if v["kind"] == "video":
+            vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS},"
+                  f"trim=duration={dur:.3f},setpts=PTS-STARTPTS,setsar=1,format=yuv420p")
+        elif kenburns:
             z, x, y = _zoom_expr(i)
             vf = (f"scale={W * 2}:{H * 2}:force_original_aspect_ratio=increase,crop={W * 2}:{H * 2},"
-                  f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={W}x{H}:fps={FPS}")
+                  f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={W}x{H}:fps={FPS},setsar=1,format=yuv420p")
         else:
             vf = (f"scale={W * 2}:{H * 2}:force_original_aspect_ratio=increase,crop={W * 2}:{H * 2},"
-                  f"zoompan=z='1.0':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s={W}x{H}:fps={FPS}")
-        vf += ",setsar=1,format=yuv420p"
+                  f"zoompan=z='1.0':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s={W}x{H}:fps={FPS},setsar=1,format=yuv420p")
         parts.append(f"[{i}:v]{vf}[v{i}]")
         labels.append(f"[v{i}]")
     parts.append("".join(labels) + f"concat=n={len(labels)}:v=1:a=0[vc]")
@@ -309,28 +319,31 @@ def compose_video(project_dir, srt=True, bgm_volume=0.18, kenburns=True, stopped
     if vi is not None and bi is not None:
         parts.append(f"[{vi}:a]aresample=48000,apad,asplit=2[va][vsc]")
         parts.append(f"[{bi}:a]aresample=48000,volume={max(0.0, float(bgm_volume)):.3f},afade=t=in:st=0:d=0.6[b0]")
-        parts.append("[b0][vsc]sidechaincompress=threshold=0.03:ratio=8:attack=30:release=550[bd]")
-        fo = max(0.0, total - BGM_FADE)
-        parts.append(f"[va][bd]amix=inputs=2:duration=first:normalize=0,afade=t=out:st={fo:.3f}:d={BGM_FADE:.1f}[a]")
+        ratio = max(1.0, min(20.0, 2.0 + max(0.0, min(1.0, float(duck_depth))) * 30.0))
+        parts.append(f"[b0][vsc]sidechaincompress=threshold=0.03:ratio={ratio:.1f}:attack=30:release=550[bd]")
+        fad = max(0.0, min(6.0, float(fade)))
+        fo = max(0.0, total - fad)
+        parts.append(f"[va][bd]amix=inputs=2:duration=first:normalize=0,afade=t=out:st={fo:.3f}:d={max(0.1, fad):.1f}[a]")
         audio = "[a]"
     elif vi is not None:
         parts.append(f"[{vi}:a]aresample=48000,apad[a]")
         audio = "[a]"
     elif bi is not None:
-        fo = max(0.0, total - BGM_FADE)
+        fad = max(0.0, min(6.0, float(fade)))
+        fo = max(0.0, total - fad)
         parts.append(f"[{bi}:a]aresample=48000,volume={max(0.0, float(bgm_volume)):.3f},"
-                     f"afade=t=in:st=0:d=0.6,afade=t=out:st={fo:.3f}:d={BGM_FADE:.1f}[a]")
+                     f"afade=t=in:st=0:d=0.6,afade=t=out:st={fo:.3f}:d={max(0.1, fad):.1f}[a]")
         audio = "[a]"
     else:
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono"]
-        ai = len(imgs) + (1 if vi is not None else 0) + (1 if bi is not None else 0)
+        ai = len(visuals) + (1 if vi is not None else 0) + (1 if bi is not None else 0)
         parts.append(f"[{ai}:a]atrim=duration={total:.3f}[a]")
         audio = "[a]"
 
     cmd += ["-filter_complex", ";".join(parts), "-map", vout, "-map", audio,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-t", f"{total:.3f}", str(tmp)]
-    say({"stage": "compose", "pct": 0, "msg": f"开始合成：{len(imgs)} 个分镜、{total:.1f} 秒、{W}×{H}"})
+    say({"stage": "compose", "pct": 0, "msg": f"开始合成：{len(visuals)} 个分镜、{total:.1f} 秒、{W}×{H}"})
     errs = []
 
     def read_err(pipe):
@@ -403,7 +416,7 @@ def compose_video(project_dir, srt=True, bgm_volume=0.18, kenburns=True, stopped
     sec = time.time() - t0
     say({"stage": "compose", "pct": 100, "msg": "合成好了"})
     telemetry.log("proc", "compose_video", "视频工坊", "ok", sec * 1000,
-                  {"shots": len(imgs), "seconds": round(total, 1), "w": info.get("w"), "h": info.get("h"),
+                  {"shots": len(visuals), "seconds": round(total, 1), "w": info.get("w"), "h": info.get("h"),
                    "bgm": bool(bi), "srt": bool(srt and srt_p.exists())}, f"成片合成好了 · {total:.1f} 秒 · {time.time() - t0:.0f} 秒")
     return {"stopped": False, "path": str(out), "rel": _rel(d, out), "cover": str(cover) if cover else "",
             "cover_rel": _rel(d, cover) if cover else "", "duration": info.get("duration") or total,

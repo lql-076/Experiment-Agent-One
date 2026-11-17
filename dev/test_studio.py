@@ -7,6 +7,7 @@ import asyncio
 import json
 import math
 import struct
+import shutil
 import subprocess
 import sys
 import threading
@@ -18,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 RUN = ROOT / "dev" / ".run" / "studio_test"
 
-from app import settings, studio, video_maker  # noqa: E402
+from app import imagegen, render_ppt, render_web, settings, studio, studio_cache as cache, video_maker  # noqa: E402
 
 BAD = []
 
@@ -268,7 +269,7 @@ def test_single_step():
     calls = []
     old = video_maker.compose_video
 
-    def fake(d, srt=True, bgm_volume=0.18, kenburns=True, stopped=None, progress=None):
+    def fake(d, srt=True, bgm_volume=0.18, kenburns=True, stopped=None, progress=None, **kw):
         calls.append(str(d))
         out = Path(d) / "output" / "成片.mp4"
         out.write_bytes(b"fake" * 1000)
@@ -319,7 +320,168 @@ def test_stop():
     check(time.time() - t0 < 20, "很快就停下来了")
 
 
+def test_image_params():
+    print("\n生图全参数：n / 自定义尺寸 / 透明度 / GIF 帧 / 复杂度 / 参考图透传")
+    import base64
+    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lzq4WQAAAABJRU5ErkJggg==")
+    seen = {}
+
+    async def fake_post(c, url, k, **kw):
+        seen["url"], seen["json"] = url, kw.get("json") or {}
+        return {"data": [{"b64_json": base64.b64encode(png).decode()}, {"b64_json": base64.b64encode(png).decode()}]}
+
+    old = imagegen._post
+    imagegen._post = fake_post
+    try:
+        cd = imagegen.card("gpt-image-2.6-sunburst")
+        imgs, _, _ = asyncio.run(imagegen.call_images(None, "http://x", "sk-x", cd, "p", "9:16", "2k", "high", True, [],
+                                                      n=2, custom_w=720, custom_h=1280, complexity="high",
+                                                      gif_frames=8, gif_delay_ms=150))
+    finally:
+        imagegen._post = old
+    f = seen.get("json") or {}
+    check(len(imgs) == 2, "一次回 2 张")
+    check(f.get("size") == "720x1280", "自定义宽高透传")
+    check(f.get("n") == 2 and f.get("background") == "transparent", "n / 透明背景")
+    check(f.get("output_format") == "gif" and f.get("gif_frames") == 8 and f.get("gif_delay_ms") == 150, "GIF 帧参数")
+    check(f.get("complexity") == "high", "规划复杂度")
+
+
+def test_cache_scheduler():
+    print("\n内容寻址缓存 + 三路并发调度")
+    p = video_maker.new_project("缓存调度测试", "9:16", studio.STYLE_TAG, 20, topic="缓存")
+    p["shots"] = [
+        {"id": "s1", "text": "缓存第一句。", "role": "白页", "speaker": "local:preset:Vivian", "tone": "冷静吐槽",
+         "image_prompt": "图一", "seconds_hint": 3, "image_st": "idle", "tts_st": "idle"},
+        {"id": "s2", "text": "缓存第二句。", "role": "紫苏", "speaker": "local:preset:Serena", "tone": "夸张惊呼",
+         "image_prompt": "图二", "seconds_hint": 3, "image_st": "idle", "tts_st": "idle"}]
+    p["settings"]["bgm_volume"] = .18
+    video_maker.save_project(p)
+    import base64
+    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lzq4WQAAAABJRU5ErkJggg==")
+    calls = []
+
+    async def fake_images(c, base, k, cd, prompt, ratio, tier, quality, transparent, refs, **kw):
+        calls.append(prompt)
+        return [png], {}, {}
+
+    old = imagegen.call_images
+    old_get = settings.get_secret
+    imagegen.call_images = fake_images
+    settings.get_secret = lambda k: "sk-test-0000" if k == "imgKey" else old_get(k)
+    try:
+        S = studio.Studio()
+        asyncio.run(S._gen_images(video_maker.load_project(p["id"])))
+        q = video_maker.load_project(p["id"])
+        check(len(calls) == 2, "第一遍两镜都请求 API")
+        check(all(s.get("image_st") == "ok" for s in q["shots"]), "两镜都出图")
+        for s in q["shots"]:
+            s["image_st"] = "stale"
+        video_maker.save_project(q)
+        asyncio.run(S._gen_images(video_maker.load_project(p["id"])))
+        q = video_maker.load_project(p["id"])
+        check(len(calls) == 2, "第二遍没有重复请求付费 API")
+        check(all(s.get("image_cache_hit") for s in q["shots"]), "两镜都标缓存命中")
+        for i, s in enumerate(q["shots"]):
+            wav(Path(q["dir"]) / "tts" / f"shot{i + 1:02d}.wav", 1.0, 440 + i * 50)
+            cfg = studio._shot_voice(q, s)
+            fp = studio._tts_fp(q, s, cfg)
+            cache.put(fp, Path(q["dir"]) / "tts" / f"shot{i + 1:02d}.wav", "tts", {"test": True})
+        for s in q["shots"]:
+            s["tts_st"] = "stale"
+        video_maker.save_project(q)
+        asyncio.run(studio.Studio()._gen_tts(video_maker.load_project(p["id"])))
+        q = video_maker.load_project(p["id"])
+        check((Path(q["dir"]) / "tts" / "voice.wav").is_file(), "配音缓存拼出 voice.wav")
+        check(all(s.get("tts_cache_hit") for s in q["shots"]), "逐句配音都缓存命中")
+        events = []
+
+        async def gi(_p):
+            events.append(("img_start", time.time())); await asyncio.sleep(.12); events.append(("img_end", time.time()))
+
+        async def gt(_p):
+            events.append(("tts_start", time.time())); await asyncio.sleep(.12); events.append(("tts_end", time.time()))
+
+        async def gb(_p):
+            events.append(("bgm_start", time.time())); await asyncio.sleep(.12); events.append(("bgm_end", time.time()))
+
+        async def rt(_p):
+            events.append(("render", time.time()))
+
+        async def cp(_p):
+            events.append(("compose", time.time()))
+
+        S2 = studio.Studio()
+        S2.job = {"st": "run", "pid": q["id"], "t0": time.time(), "t1": 0, "msg": "", "pct": 0, "stage": 2, "step": "images"}
+        for attr, fn in (("_gen_images", gi), ("_gen_tts", gt), ("_gen_bgm", gb), ("_render_tracks", rt), ("_compose", cp)):
+            setattr(S2, attr, fn)
+        q["files"]["voice"] = "tts/voice.wav"
+        video_maker.save_project(q)
+        asyncio.run(S2._all(video_maker.load_project(p["id"])))
+        starts = [t for k, t in events if k.endswith("_start")]
+        ends = [t for k, t in events if k.endswith("_end")]
+        check(len(starts) == 3 and max(starts) - min(starts) < .08, "API / 本地配音 / 配乐同时启动")
+        check(all(t > max(ends) for k, t in events if k in ("render", "compose")), "汇聚屏障后才进入渲染和合成")
+    finally:
+        imagegen.call_images = old
+        settings.get_secret = old_get
+
+
+def test_render_tracks():
+    print("\n网页动效轨道 + PPT 轨道 + FFmpeg 终混")
+    try:
+        import playwright  # noqa: F401
+        import pptx  # noqa: F401
+    except Exception as e:
+        print("  跳过：没装 Playwright / python-pptx：", e)
+        return
+    p = make_project("双轨渲染测试", shots=2, image_count=2, seconds=1.5)
+    p["settings"].update({"web_bg": "tech", "web_sub_size": 44, "web_gif_scale": 1.0})
+    p["shots"][0]["render"] = "web"
+    p["shots"][1]["render"] = "ppt"
+    video_maker.save_project(p)
+    d = Path(p["dir"])
+    render_web.render_all(d, p, say=lambda _m: None)
+    render_ppt.render_all(d, p, say=lambda _m: None)
+    check((d / "render" / "web_s1.mp4").is_file(), "网页动效轨出来了")
+    check((d / "render" / "ppt_s2.png").is_file(), "PPT 卡片图出来了")
+    check((d / "output" / "卡片.pptx").is_file(), "自动生成 .pptx")
+    video_maker.save_project(p)
+    r = video_maker.compose_video(d, srt=True, bgm_volume=.18, progress=lambda _x: None)
+    check(Path(r["path"]).is_file() and r["duration"] > 2, "双轨 + 配音 + 字幕合成成片")
+
+
+def test_publish_matrix():
+    print("\n发布清单：单条送审 / 批量入队 / 定时 / 声明")
+    p = make_project("发布矩阵测试", shots=2, image_count=2, seconds=1.0)
+    d = Path(p["dir"])
+    (d / "output").mkdir(exist_ok=True)
+    (d / "output" / "成片.mp4").write_bytes(b"x" * 2000)
+    p["files"]["video"] = "output/成片.mp4"
+    video_maker.save_project(p)
+    S = studio.Studio()
+    old_check, old_pending, old_ask = studio.publish.check_item, studio.publish.pending, studio.publish.ask
+    got = {}
+    studio.publish.check_item = lambda body, agent=False: dict(body, file=body["file"], name="成片.mp4", cover_kind="portrait")
+    studio.publish.pending = lambda: []
+    studio.publish.ask = lambda item, eid=None: got.update(item) or 123
+    try:
+        r = S.to_publish({"pid": p["id"], "mode": "single", "title": "测试标题", "tags": ["ai漫剧", "搞笑"],
+                          "declaration": "内容由AI生成"})
+        check(r.get("ok") and got.get("title") == "测试标题", "单条送审进 pending")
+        check(got.get("tags") == ["ai漫剧", "搞笑"], "话题完整")
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time() + 3 * 3600))
+        r = S.to_publish({"pid": p["id"], "mode": "batch", "title": "批量标题", "schedule": when,
+                          "tags": ["ai创作浪潮计划"], "declaration": "内容由AI生成"})
+        check(r.get("ok") and r.get("mode") == "batch", "加入批量发布清单")
+    finally:
+        studio.publish.check_item, studio.publish.pending, studio.publish.ask = old_check, old_pending, old_ask
+        from app import db
+        db.kv_set("pub_batch", None)
+
+
 def main():
+    shutil.rmtree(RUN, ignore_errors=True)
     RUN.mkdir(parents=True, exist_ok=True)
     old_ws = settings.S.get("wsDir")
     settings.S["wsDir"] = str(RUN / "ws")
@@ -331,8 +493,12 @@ def main():
         test_dual_role_voice()
         test_gemini_pack()
         test_import_script()
+        test_image_params()
+        test_cache_scheduler()
         test_compose()
+        test_render_tracks()
         test_single_step()
+        test_publish_matrix()
         test_stop()
     finally:
         settings.S["wsDir"] = old_ws

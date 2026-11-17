@@ -1,12 +1,18 @@
-r"""自媒体视频工坊（v3.7，R07）：ComfyUI 风格六节点工作流。
+r"""自媒体视频工坊（v3.8，R08）：动态子工作流 + 内容寻址缓存 + 三路并行 DAG + 双轨渲染。
 
-六个节点串成一条流水线：
+八个顶层节点 + 动态子工作流：
   ① 剧本与策划：主题 / 完整口播；导出 Gemini 策划包；导入 Gemini .md/.json；DeepSeek 一键拆解。
-  ② 分镜生图：项目级选生图模型、画幅；逐镜画面提示词；单镜 / 批量生成。
-  ③ 角色配音：白页 / 紫苏 / 旁白默认音色；逐句 role/speaker/tone；单句试听与重配。
-  ④ 背景配乐：Stable Audio 3 提示词、时长、步数；单独生成。
-  ⑤ 视频合成：字幕、画幅、配乐闪避音量；app/video_maker.py。
-  ⑥ 成片预览与发布：成片、封面、送去「发布」待确认队列。
+  ② 分镜生图：每镜一个独立子节点；项目级/单镜全参数（模型、比例、自定义、1K~4K、n、画质、复杂度、透明、GIF、参考图）。
+  ③ 角色配音：每句一个独立子节点；白页 / 紫苏 / 旁白默认音色；逐句 role/speaker/tone；单句试听与重配。
+  ④ 背景配乐：Stable Audio 3 提示词、时长、步数、种子。
+  ⑤ 网页动效：Playwright 渲染深色毛玻璃 / 粒子 / 动态字幕 / Q 版 GIF 贴纸轨。
+  ⑥ PPT 卡片：python-pptx 自动生成或导入 OnlyOffice .pptx，渲染成幻灯片图。
+  ⑦ FFmpeg 终混：网页/PPT/静态图 + 逐句配音 + 侧链闪避配乐 + 字幕。
+  ⑧ 发布与排期：单条送审 / 批量清单 / 定时 / 话题 / 封面 / 合规声明。
+
+生图 / 云端配音走 API 通道（4 并发），本地配音 / 配乐走 GPU 锁；生图、配音、配乐同时启动，
+全部 ready 后汇聚到双轨渲染和合成。所有原子节点用 SHA-256 指纹查 studio_cache，命中直接复用。
+
 
 固定风格「知识科普 × 科技数码 × 搞笑段子」；白页负责理性科普、紫苏负责夸张吐槽。
 生图复用 app/imagegen.py 的低层调用，不碰生图页清单；本地配音和本地配乐串行，换模型前释放显存。
@@ -25,7 +31,7 @@ import httpx
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse, Response
 
-from . import bgm, db, deepseek, feed, imagegen, paths, publish, settings, telemetry, tts, tts_cloud, video_maker
+from . import bgm, db, deepseek, feed, imagegen, paths, publish, render_ppt, render_web, settings, studio_cache as cache, telemetry, tts, tts_cloud, video_maker
 
 JOBS = "视频工坊"
 RATIOS = [("9:16", "竖屏 9:16（抖音）"), ("16:9", "横屏 16:9")]
@@ -34,7 +40,27 @@ ROLES = ("白页", "紫苏", "旁白")
 ROLE_DEFAULT_VOICES = {"白页": "local:preset:Serena", "紫苏": "local:preset:Vivian", "旁白": "local:preset:Uncle_Fu"}
 GAP = video_maker.GAP
 MAX_SHOTS = 15
-MEDIA_EXT = {".png", ".jpg", ".jpeg", ".webp", ".wav", ".mp3", ".flac", ".mp4", ".mov", ".mkv", ".webm", ".srt", ".json"}
+_GATES = {}
+
+
+def _loop_gate(name, factory):
+    """每个事件循环一套锁，测试里多次 asyncio.run 也不会串。"""
+    loop = asyncio.get_running_loop()
+    key = (id(loop), name)
+    ent = _GATES.get(key)
+    if not ent or ent[0] is not loop:
+        ent = (loop, factory())
+        _GATES[key] = ent
+    return ent[1]
+
+
+def _api_gate():
+    return _loop_gate("api", lambda: asyncio.Semaphore(4))
+
+
+def _gpu_lock():
+    return _loop_gate("gpu", asyncio.Lock)
+MEDIA_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".wav", ".mp3", ".flac", ".mp4", ".mov", ".mkv", ".webm", ".srt", ".json"}
 
 PLAN_SYS = """你是「白页 × 紫苏」短视频账号的编导。账号固定风格是：知识科普 × 科技数码 × 搞笑段子。
 内核必须硬核：科技原理、产品逻辑、数据或反常识结论要讲清楚；外壳必须好笑：白页和紫苏用漫剧式的拌嘴、抬杠、夸张反应把知识演出来。
@@ -397,7 +423,8 @@ def image_models() -> list:
         for m in g.get("models") or []:
             out.append({"id": m.get("id"), "name": m.get("name") or m.get("id"), "vendor": g.get("name") or "",
                         "price": m.get("price"), "route": m.get("route") or "", "d": m.get("d") or "",
-                        "listed": m.get("listed"), "known": m.get("known"), "tiers": m.get("tiers") or []})
+                        "listed": m.get("listed"), "known": m.get("known"), "gif": bool(m.get("gif")),
+                        "tiers": m.get("tiers") or []})
     return out
 
 
@@ -413,7 +440,29 @@ def _init_role_voices(p, voice=None):
     st = p.setdefault("settings", {})
     st.setdefault("bgm_seconds", 0)
     st.setdefault("bgm_steps", 8)
+    st.setdefault("bgm_seed", 20261118)
     st.setdefault("img_model", settings.S.get("imgModel") or imagegen.DEFAULT_MODEL)
+    st.setdefault("img_resolution", settings.S.get("imgRes") or "2k")
+    st.setdefault("img_quality", settings.S.get("imgQuality") or "high")
+    st.setdefault("img_complexity", "")
+    st.setdefault("img_transparent", False)
+    st.setdefault("img_gif", False)
+    st.setdefault("gif_frames", 8)
+    st.setdefault("gif_delay_ms", 150)
+    st.setdefault("img_n", 1)
+    st.setdefault("img_custom_w", 0)
+    st.setdefault("img_custom_h", 0)
+    st.setdefault("web_bg", "dark")
+    st.setdefault("web_sub_pos", "bottom")
+    st.setdefault("web_sub_size", 0)
+    st.setdefault("web_sub_color", "")
+    st.setdefault("web_gif_scale", 1)
+    st.setdefault("web_motion", 1)
+    st.setdefault("web_fps", 24)
+    st.setdefault("ppt_file", "")
+    steps = p.setdefault("steps", {})
+    for k in ("web", "ppt"):
+        steps.setdefault(k, {"st": "idle", "msg": "", "err": "", "pct": 0, "t0": 0, "t1": 0})
     rv = st.setdefault("role_voices", {})
     v = voice if isinstance(voice, dict) else _default_voice(p)
     base = str(v.get("id") or "local:preset:Vivian")
@@ -433,6 +482,161 @@ def _shot_voice(p, s) -> dict:
             return voice_config(str((p.get("settings", {}).get("voice") or {}).get("id") or "local:preset:Vivian"))
         except HTTPException:
             return {"engine": "local", "mode": "preset", "speaker": "Vivian", "label": "Vivian", "id": "local:preset:Vivian"}
+
+
+def _img_cfg(p, s) -> dict:
+    st = p.get("settings") or {}
+    shot = s or {}
+    def pick(name, default):
+        v = shot.get(name)
+        return v if v not in (None, "") else st.get(name, default)
+    cfg = {
+        "model": pick("img_model", st.get("img_model") or settings.S.get("imgModel") or imagegen.DEFAULT_MODEL),
+        "ratio": pick("img_ratio", p.get("ratio") or "9:16"),
+        "resolution": pick("img_resolution", st.get("img_resolution") or settings.S.get("imgRes") or "2k"),
+        "quality": pick("img_quality", st.get("img_quality") or settings.S.get("imgQuality") or "high"),
+        "complexity": pick("img_complexity", st.get("img_complexity") or ""),
+        "transparent": bool(pick("img_transparent", st.get("img_transparent", False))),
+        "gif": bool(pick("img_gif", st.get("img_gif", False))),
+        "gif_frames": int(pick("gif_frames", st.get("gif_frames", 8)) or 8),
+        "gif_delay_ms": int(pick("gif_delay_ms", st.get("gif_delay_ms", 150)) or 150),
+        "n": max(1, min(4, int(pick("img_n", st.get("img_n", 1)) or 1))),
+        "custom_w": int(pick("img_custom_w", st.get("img_custom_w", 0)) or 0),
+        "custom_h": int(pick("img_custom_h", st.get("img_custom_h", 0)) or 0),
+    }
+    if cfg["ratio"] not in imagegen.RATIOS:
+        cfg["ratio"] = p.get("ratio") if p.get("ratio") in imagegen.RATIOS else "9:16"
+    if cfg["resolution"] not in imagegen.TIERS:
+        cfg["resolution"] = "2k"
+    return cfg
+
+
+def _ref_paths(p, s):
+    d = Path(p["dir"])
+    out = []
+    refs = s.get("img_refs")
+    if refs is None:
+        refs = (p.get("settings") or {}).get("img_refs") or []
+    if isinstance(refs, str):
+        refs = [x.strip() for x in re.split(r"[\n,，;；]+", refs) if x.strip()]
+    for q in refs or []:
+        q = str(q or "").strip()
+        if not q:
+            continue
+        if q.startswith("shot:"):
+            sid = q.split(":", 1)[1]
+            other = next((x for x in p.get("shots") or [] if x.get("id") == sid), None)
+            q = (other or {}).get("image") or ""
+            if not q:
+                continue
+        if q.startswith("data:"):
+            continue
+        path = Path(q)
+        if not path.is_absolute():
+            path = d / q
+        if path.is_file() and path.stat().st_size <= 10 << 20:
+            out.append(path)
+    return out
+
+
+def _image_prompt(p, s, cfg):
+    cd = imagegen.card(cfg["model"])
+    kind = "prompt" if cd.get("size") == "prompt" else "official"
+    prompt = imagegen.build_prompt({"prompt": s.get("image_prompt") or s.get("text") or "", "ratio": cfg["ratio"],
+                                    "transparent": bool(cfg["transparent"])}, STYLE_TAG, False, True, kind)
+    if cfg.get("gif"):
+        prompt += "\n\n做成循环 GIF 动图：主体动作轻微循环，背景简洁，帧数约 %d，每帧 %d 毫秒。" % (cfg["gif_frames"], cfg["gif_delay_ms"])
+    return prompt, cd
+
+
+def _image_fps(p, s, cfg=None):
+    cfg = cfg or _img_cfg(p, s)
+    prompt, cd = _image_prompt(p, s, cfg)
+    refs = _ref_paths(p, s)
+    ref_sha = [cache.sha_file(x) for x in refs]
+    base = {"model": cfg["model"], "prompt": prompt, "aspect_ratio": cfg["ratio"], "resolution": cfg["resolution"],
+            "quality": cfg["quality"], "complexity": cfg["complexity"], "custom_w": cfg["custom_w"], "custom_h": cfg["custom_h"],
+            "transparent": bool(cfg["transparent"]), "gif_frames": cfg["gif_frames"], "gif_delay_ms": cfg["gif_delay_ms"],
+            "ref_image_sha256": ref_sha, "n": cfg["n"]}
+    return [cache.fingerprint("image", dict(base, variant=i)) for i in range(cfg["n"])], prompt, cd, refs
+
+
+def _shot_image_dest(p, s, variant, ext="png"):
+    i = (p.get("shots") or []).index(s) + 1
+    suffix = "" if int(_img_cfg(p, s)["n"]) == 1 else f"_v{variant + 1}"
+    return Path(p["dir"]) / "images" / f"shot{i:02d}{suffix}.{(ext or 'png').lower()}"
+
+
+def _tts_fp(p, s, cfg):
+    speaker = cfg.get("speaker") or cfg.get("voice")
+    if not speaker and cfg.get("mode") == "design":
+        speaker = (cfg.get("desc") or "") + "|" + str(cfg.get("seed") or "")
+    speaker = speaker or cfg.get("id") or ""
+    return cache.fingerprint("tts", {"engine": cfg.get("engine"), "speaker": speaker,
+                                     "tone": s.get("tone") or "", "text": s.get("text") or ""})
+
+
+def _wav_duration(path):
+    try:
+        sr, pcm = tts.read_wav(Path(path).read_bytes())
+        return round(len(pcm) / 2 / sr, 2)
+    except Exception:
+        return 0.0
+
+
+def _bgm_fp(p):
+    st = p.get("settings") or {}
+    try:
+        sec = int(st.get("bgm_seconds") or 0) or int(round(float(p.get("total_seconds") or p.get("target_seconds") or 75)))
+    except (TypeError, ValueError):
+        sec = 75
+    sec = max(10, min(bgm.MAX_S, sec))
+    steps = max(1, min(32, int(st.get("bgm_steps") or 8)))
+    seed = int(st.get("bgm_seed") or 20261118)
+    prompt = (p.get("bgm_prompt") or "").strip() or f"{STYLE_TAG} 风格短视频背景音乐，纯音乐，无人声，情绪贴合旁白，节奏舒缓"
+    return cache.fingerprint("bgm", {"prompt_en": prompt, "duration": sec, "steps": steps, "seed": seed}), prompt, sec, steps, seed
+
+
+IMG_SETTING_KEYS = ("img_model", "img_resolution", "img_quality", "img_complexity", "img_transparent",
+                    "img_gif", "gif_frames", "gif_delay_ms", "img_n", "img_custom_w", "img_custom_h")
+
+
+def _norm_img_setting(k, v, cur):
+    if k == "img_model":
+        return str(v or "").strip()[:120]
+    if k == "img_resolution":
+        return v if v in imagegen.TIERS else (cur or "2k")
+    if k in ("img_quality", "img_complexity"):
+        return str(v or "").strip()[:30]
+    if k in ("img_transparent", "img_gif"):
+        return bool(v)
+    if k == "img_n":
+        return max(1, min(4, int(v or 1)))
+    if k == "gif_frames":
+        return max(2, min(60, int(v or 8)))
+    if k == "gif_delay_ms":
+        return max(40, min(2000, int(v or 150)))
+    if k in ("img_custom_w", "img_custom_h"):
+        return max(0, min(4096, int(v or 0)))
+    return v
+
+
+def _stale_images(p, msg):
+    for s in p.get("shots") or []:
+        s["image_st"] = "stale"
+        s["image_cache_hit"] = False
+    _mark(p, "images", "stale", msg)
+    _mark(p, "video", "stale", msg)
+
+
+def _stale_track(p, track, msg):
+    _mark(p, track, "stale", msg)
+    _mark(p, "video", "stale", msg)
+
+
+def _render_mode(s):
+    m = str(s.get("render") or "static").lower()
+    return m if m in ("web", "ppt", "static") else "static"
 
 
 # ---------------- 流水线 ----------------
@@ -505,6 +709,7 @@ class Studio:
             item["image_ok"] = bool(ip and ip.is_file())
             item["tts_ok"] = bool(tp and tp.is_file())
             item["image_url"] = self._url(p["id"], img, ip.stat().st_mtime if item["image_ok"] else 0) if img else ""
+            item["img_variant_urls"] = [self._url(p["id"], x, int(s.get("image_ver") or 0)) for x in (s.get("img_variants") or [])]
             item["tts_url"] = self._url(p["id"], s.get("tts"), tp.stat().st_mtime if item["tts_ok"] else 0) if s.get("tts") else ""
             if s.get("image_st") == "ok" and not item["image_ok"]:
                 item["image_st"] = "missing"
@@ -521,7 +726,8 @@ class Studio:
                 "img_model": (p.get("settings") or {}).get("img_model") or settings.S.get("imgModel") or imagegen.DEFAULT_MODEL,
                 "target_seconds": p.get("target_seconds") or 75, "topic": p.get("topic") or "",
                 "source_text": p.get("source_text") or "", "bgm_prompt": p.get("bgm_prompt") or "",
-                "settings": p.get("settings") or {}, "steps": steps, "files": files, "shots": shots,
+                "settings": p.get("settings") or {}, "node_layout": p.get("node_layout") or {},
+                "steps": steps, "files": files, "shots": shots, "bgm_cache_hit": bool(p.get("bgm_cache_hit")),
                 "total_seconds": round(total or 0, 2), "duration": round(float(p.get("duration") or 0), 2),
                 "resolution": p.get("resolution") or "", "st": p.get("st") or "idle", "error": p.get("error") or "",
                 "cost": p.get("cost") or {}, "dir": paths.show(d),
@@ -546,6 +752,7 @@ class Studio:
                 "job": self.public(), "voices": voice_options(), "ratios": [{"id": a, "label": b} for a, b in RATIOS],
                 "style_tag": STYLE_TAG, "roles": list(ROLES), "models": image_models(),
                 "default_model": settings.S.get("imgModel") or imagegen.DEFAULT_MODEL,
+                "publish": {"pending": len(publish.pending()), "batch": len(((db.kv_get("pub_batch") or {}).get("items") or []))},
                 "slot": [{"id": k, "label": v} for k, v in video_maker.SIZES.items()]}
 
     def select(self, pid):
@@ -636,17 +843,21 @@ class Studio:
         _init_role_voices(p)
         rv = (p.get("settings") or {}).get("role_voices") or {}
         p["style"] = STYLE_TAG
+        p.setdefault("node_layout", {})
         p["shots"] = []
         for i, s in enumerate(j["shots"]):
             role = s.get("role") if s.get("role") in ROLES else ROLES[i % 2]
             speaker = str(s.get("speaker") or rv.get(role) or _default_voice(p).get("id") or "")
+            render = "web" if (i == 0 or i % 5 == 4) else "ppt" if i % 3 == 2 else "static"
             p["shots"].append({"id": f"s{i + 1}", "text": s["text"], "role": role, "speaker": speaker,
                                "tone": s.get("tone") or ("轻松调侃" if role == "紫苏" else "冷静吐槽"),
                                "image_prompt": s.get("image_prompt") or s["text"],
                                "seconds_hint": s.get("seconds_hint") or max(2.5, min(20.0, len(s["text"]) / 4.5)),
                                "image": "", "tts": "", "duration": 0.0, "start": 0.0, "end": 0.0,
                                "image_st": "idle", "tts_st": "idle", "image_err": "", "tts_err": "",
-                               "image_ver": 0, "tts_ver": 0})
+                               "image_ver": 0, "tts_ver": 0, "img_variants": [], "img_selected": 0,
+                               "img_fps": [], "image_cache_hit": False, "tts_cache_hit": False,
+                               "render": render, "render_clip": "", "render_image": "", "ppt_points": []})
         if had:
             for k in ("voice", "srt", "timeline", "bgm", "video", "cover"):
                 p.get("files", {}).pop(k, None)
@@ -670,6 +881,12 @@ class Studio:
             _mark(p, "images", "stale", "画幅改了：要重出图")
             _mark(p, "video", "stale", "画幅改了：要重新合成")
         p["style"] = STYLE_TAG
+        if isinstance(body.get("node_layout"), dict):
+            lay = {}
+            for k, v in body["node_layout"].items():
+                if isinstance(v, dict):
+                    lay[str(k)[:60]] = {kk: v.get(kk) for kk in ("x", "y", "w", "h", "collapsed") if kk in v}
+            p["node_layout"] = lay
         if "target_seconds" in body:
             try:
                 p["target_seconds"] = max(10, min(600, int(body["target_seconds"])))
@@ -705,6 +922,16 @@ class Studio:
                         _mark(p, "video", "stale", "配乐音量改了：要重新合成")
                 except (TypeError, ValueError):
                     pass
+            for k in ("duck_depth", "fade"):
+                if k in st:
+                    try:
+                        old = float((p.get("settings") or {}).get(k) if (p.get("settings") or {}).get(k) is not None else (0.16 if k == "duck_depth" else 2.0))
+                        v = max(0.0, min(1.0 if k == "duck_depth" else 6.0, float(st[k])))
+                        p["settings"][k] = v
+                        if abs(v - old) > 1e-4:
+                            _mark(p, "video", "stale", "混音参数改了：要重新合成")
+                    except (TypeError, ValueError):
+                        pass
             if st.get("img_model"):
                 mid = str(st["img_model"]).strip()[:120]
                 if mid and mid != ((p.get("settings") or {}).get("img_model") or ""):
@@ -713,6 +940,64 @@ class Studio:
                         x["image_st"] = "stale"
                     _mark(p, "images", "stale", "换生图模型了：要重出图")
                     _mark(p, "video", "stale", "换生图模型了：要重新合成")
+            changed_img = False
+            for k in IMG_SETTING_KEYS:
+                if k in st:
+                    old = (p.get("settings") or {}).get(k)
+                    try:
+                        val = _norm_img_setting(k, st[k], old)
+                    except (TypeError, ValueError):
+                        continue
+                    if val != old:
+                        p["settings"][k] = val
+                        changed_img = True
+            if "img_refs" in st:
+                refs = st.get("img_refs")
+                if isinstance(refs, str):
+                    refs = [x.strip() for x in re.split(r"[\n,，;；]+", refs) if x.strip()]
+                p["settings"]["img_refs"] = [str(x)[:300] for x in (refs or [])][:8] if isinstance(refs, list) else []
+                changed_img = True
+            if changed_img:
+                _stale_images(p, "生图参数改了：要按新参数重出")
+            web_changed = False
+            for k in ("web_bg", "web_sub_pos", "web_sub_color"):
+                if k in st and str(st[k] or "")[:60] != str((p.get("settings") or {}).get(k) or ""):
+                    p["settings"][k] = str(st[k] or "")[:60]
+                    web_changed = True
+            for k in ("web_sub_size", "web_fps"):
+                if k in st:
+                    try:
+                        v = max(12, min(120, int(st[k] or 0))) if k == "web_sub_size" else max(12, min(30, int(st[k] or 24)))
+                        if v != int((p.get("settings") or {}).get(k) or 0):
+                            p["settings"][k] = v
+                            web_changed = True
+                    except (TypeError, ValueError):
+                        pass
+            for k in ("web_gif_scale", "web_motion"):
+                if k in st:
+                    try:
+                        v = max(.4, min(2.2, float(st[k] or 1)))
+                        if abs(v - float((p.get("settings") or {}).get(k) or 1)) > 1e-4:
+                            p["settings"][k] = v
+                            web_changed = True
+                    except (TypeError, ValueError):
+                        pass
+            if web_changed:
+                _stale_track(p, "web", "网页动效参数改了：要重新渲染")
+            if "ppt_file" in st:
+                v = str(st["ppt_file"] or "").strip()[:500]
+                if v != str((p.get("settings") or {}).get("ppt_file") or ""):
+                    p["settings"]["ppt_file"] = v
+                    _stale_track(p, "ppt", "PPT 文件改了：要重新渲染")
+            if "bgm_seed" in st:
+                try:
+                    v = int(st["bgm_seed"] or 20261118)
+                    if v != int((p.get("settings") or {}).get("bgm_seed") or 20261118):
+                        p["settings"]["bgm_seed"] = v
+                        _mark(p, "bgm", "stale", "配乐种子改了：要重做配乐")
+                        _mark(p, "video", "stale", "配乐种子改了：要重新合成")
+                except (TypeError, ValueError):
+                    pass
             if isinstance(st.get("role_voices"), dict):
                 rv = p["settings"].setdefault("role_voices", {})
                 touched = False
@@ -761,6 +1046,55 @@ class Studio:
                 q = by_id.get(s["id"])
                 if not q:
                     continue
+                changed_img = False
+                for k in IMG_SETTING_KEYS:
+                    if k in q:
+                        old = s.get(k)
+                        try:
+                            val = _norm_img_setting(k, q[k], old)
+                        except (TypeError, ValueError):
+                            continue
+                        if val != old:
+                            s[k] = val
+                            changed_img = True
+                if "img_refs" in q:
+                    refs = q.get("img_refs")
+                    if isinstance(refs, str):
+                        refs = [x.strip() for x in re.split(r"[\n,，;；]+", refs) if x.strip()]
+                    s["img_refs"] = [str(x)[:300] for x in (refs or [])][:8] if isinstance(refs, list) else []
+                    changed_img = True
+                if "img_selected" in q and s.get("img_variants"):
+                    try:
+                        sel = max(0, min(len(s["img_variants"]) - 1, int(q["img_selected"])))
+                    except (TypeError, ValueError):
+                        sel = 0
+                    s["img_selected"] = sel
+                    s["image"] = s["img_variants"][sel]
+                    s["image_ver"] = int(time.time() * 1000)
+                    _mark(p, "video", "stale", "换了选中的那张图：要重新合成")
+                if changed_img:
+                    s["image_st"] = "stale"
+                    s["image_cache_hit"] = False
+                    _stale_images(p, "某一镜生图参数改了：要重出")
+                if "render" in q:
+                    r = str(q["render"] or "static")
+                    r = r if r in ("web", "ppt", "static") else "static"
+                    if r != (s.get("render") or "static"):
+                        old = s.get("render") or "static"
+                        s["render"] = r
+                        if old in ("web", "ppt"):
+                            _stale_track(p, old, "某一镜换了画面轨道：要重新渲染")
+                        if r in ("web", "ppt"):
+                            _stale_track(p, r, "某一镜换了画面轨道：要重新渲染")
+                        _mark(p, "video", "stale", "画面轨道改了：要重新合成")
+                if "ppt_points" in q:
+                    pts = q.get("ppt_points")
+                    if isinstance(pts, str):
+                        pts = [x.strip() for x in re.split(r"[\n,，;；]+", pts) if x.strip()]
+                    pts = [str(x)[:120] for x in (pts or [])][:5] if isinstance(pts, list) else []
+                    if pts != (s.get("ppt_points") or []):
+                        s["ppt_points"] = pts
+                        _stale_track(p, "ppt", "PPT 卡片要点改了：要重新渲染")
                 if "role" in q and str(q["role"]).strip() != (s.get("role") or ""):
                     role = str(q["role"]).strip()[:12]
                     if role not in ROLES:
@@ -805,7 +1139,7 @@ class Studio:
         pid = str(body.get("pid") or db.kv_get("studio_active") or "")
         mode = "step" if body.get("mode") == "step" else "all"
         step = str(body.get("step") or "").strip()
-        if mode == "step" and step not in ("images", "tts", "bgm", "video"):
+        if mode == "step" and step not in ("images", "tts", "bgm", "web", "ppt", "video"):
             raise HTTPException(400, "单步只能是 images / tts / bgm / video")
         if not pid:
             topic = str(body.get("topic") or "").strip()
@@ -921,33 +1255,65 @@ class Studio:
             p["cost"]["plan_cny"] = round(cny, 4)
             self._apply_plan(p, j)
         self._check_stop()
-        need_img = any(not _shot_ok(p, s, "image") for s in p["shots"]) or p["steps"]["images"].get("st") in ("idle", "stale", "err")
-        if need_img:
-            await self._gen_images(p)
-        else:
-            _mark(p, "images", "ok", f"{len(p['shots'])} 张都在", 100)
-        self._check_stop()
-        need_tts = any(not _shot_ok(p, s, "tts") for s in p["shots"]) or p["steps"]["tts"].get("st") in ("idle", "stale", "err")
-        if need_tts:
-            await self._gen_tts(p)
-        else:
+        tasks = [self._gen_images(p), self._gen_tts(p)]
+        bgm_on = float((p.get("settings") or {}).get("bgm_volume") or 0) > 0
+        if bgm_on:
+            tasks.append(self._gen_bgm(p))
+        res = await asyncio.gather(*tasks, return_exceptions=True)
+        if self._stop.is_set():
+            raise StopRequested()
+        # 生图失败：一张都没有才阻塞；有部分就继续（video_maker 循环使用已有图）
+        if isinstance(res[0], Exception):
+            if not any(_shot_ok(p, s, "image") for s in p["shots"]):
+                raise StudioError(_err_text(res[0]))
+            _mark(p, "images", "warn", f"部分生图失败，先用已有的图：{_err_text(res[0])[:120]}", 100)
+        # 配音失败：阻塞下游（成片必须有完整的逐句配音）
+        if isinstance(res[1], Exception):
+            raise StudioError(_err_text(res[1]))
+        if not p.get("files", {}).get("voice"):
             await self._build_voice(p)
-            _mark(p, "tts", "ok", "配音都在", 100)
+        # 配乐失败：不阻塞，合成无配乐版本
+        if bgm_on and len(res) > 2 and isinstance(res[2], Exception):
+            _mark(p, "bgm", "warn", f"配乐没出成，先合成无配乐版本：{_err_text(res[2])[:120]}", 100)
+            p.get("files", {}).pop("bgm", None)
+            p["settings"]["use_bgm"] = False
         self._check_stop()
-        bgm_ok = bool(p["files"].get("bgm")) and (Path(p["dir"]) / p["files"]["bgm"]).is_file()
-        if float(p["settings"].get("bgm_volume") or 0) > 0 and not bgm_ok:
-            try:
-                await self._gen_bgm(p)
-            except StopRequested:
-                raise
-            except Exception as e:
-                _mark(p, "bgm", "warn", f"配乐没出成，先合成没有配乐的版本：{_err_text(e)[:160]}", 100)
-                p["files"].pop("bgm", None)
-                p["settings"]["use_bgm"] = False
-                feed.add("视频工坊：配乐没出成，先合成没有配乐的版本（配音和画面不受影响）", "warn", job=JOBS)
-        elif bgm_ok:
-            _mark(p, "bgm", "ok", "配乐在", 100)
+        await self._render_tracks(p)
         await self._compose(p)
+
+    async def _render_tracks(self, p, only=None):
+        """网页动效 + PPT 卡片两条视觉轨道；失败降级为静态分镜。only='web'/'ppt' 时只跑一条。"""
+        web = [s for s in p.get("shots") or [] if _render_mode(s) == "web"] if only in (None, "web") else []
+        ppt = [s for s in p.get("shots") or [] if _render_mode(s) == "ppt"] if only in (None, "ppt") else []
+        if web:
+            self._step_start(p, "web", "网页动效渲染")
+            self._span = (55, 10)
+            try:
+                await asyncio.to_thread(render_web.render_all, p["dir"], p, lambda m: self._progress(30, m), self._stop.is_set)
+                _mark(p, "web", "ok", f"{len(web)} 镜网页动效好了", 100)
+            except Exception as e:
+                if self._stop.is_set():
+                    raise StopRequested()
+                _mark(p, "web", "warn", f"网页动效没成，降级静态分镜：{_err_text(e)[:120]}", 100)
+                for s in web:
+                    s["render_clip"] = ""
+        else:
+            _mark(p, "web", "ok", "这次没有网页动效镜头", 100)
+        if ppt:
+            self._step_start(p, "ppt", "PPT 卡片渲染")
+            self._span = (60, 12)
+            try:
+                await asyncio.to_thread(render_ppt.render_all, p["dir"], p, lambda m: self._progress(40, m), self._stop.is_set)
+                _mark(p, "ppt", "ok", f"{len(ppt)} 镜 PPT 卡片好了", 100)
+            except Exception as e:
+                if self._stop.is_set():
+                    raise StopRequested()
+                _mark(p, "ppt", "warn", f"PPT 卡片没成，降级静态分镜：{_err_text(e)[:120]}", 100)
+                for s in ppt:
+                    s["render_image"] = ""
+        else:
+            _mark(p, "ppt", "ok", "这次没有 PPT 卡片镜头", 100)
+        self._save(p, True)
 
     async def _one(self, p, step, ids):
         if step == "images":
@@ -956,192 +1322,312 @@ class Studio:
             await self._gen_tts(p, ids)
         elif step == "bgm":
             await self._gen_bgm(p)
+        elif step in ("web", "ppt"):
+            await self._render_tracks(p, step)
         elif step == "video":
             if not p.get("files", {}).get("voice"):
                 await self._build_voice(p)
             await self._compose(p)
 
     # ---------- 生图 ----------
+    def _image_stale(self, p, s):
+        if not _shot_ok(p, s, "image") or s.get("image_st") in ("idle", "stale", "err", "missing"):
+            return True
+        try:
+            fps, _, _, _ = _image_fps(p, s)
+        except Exception:
+            return True
+        return list(s.get("img_fps") or []) != list(fps)
+
     async def _gen_images(self, p, ids=None):
-        self._step_start(p, "images", "准备生图")
+        self._step_start(p, "images", "准备生图（API 通道）")
         shots = p["shots"]
         if ids:
             targets = [s for s in shots if s["id"] in ids]
         else:
-            targets = [s for s in shots if not _shot_ok(p, s, "image") or s.get("image_st") in ("idle", "stale", "err", "missing")]
+            targets = [s for s in shots if self._image_stale(p, s)]
         if not targets:
             _mark(p, "images", "ok", "都已经出好了", 100)
             return
-        key = settings.get_secret("imgKey")
-        if not key:
-            raise HTTPException(400, "还没填 API易 的 Key：到 设置 › 云端 填好，再生成画面")
-        mid = (p.get("settings") or {}).get("img_model") or settings.S.get("imgModel") or imagegen.DEFAULT_MODEL
-        cd = imagegen.card(mid)
-        tiers = imagegen.tiers_of(cd)
-        tier = settings.S.get("imgRes") if settings.S.get("imgRes") in tiers else (tiers[0] if tiers else "2k")
-        quality = settings.S.get("imgQuality") or "high"
-        base = (settings.S.get("imgBase") or "https://api.apiyi.com/v1").rstrip("/")
-        kind = "prompt" if cd["size"] == "prompt" else "official"
         self._span = (5, 30)
-        fails = []
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=15.0, read=imagegen.TIMEOUT, write=120.0, pool=None)) as c:
-            for k, s in enumerate(targets):
-                self._check_stop()
-                s["image_st"] = "run"
-                if self.job:
-                    self.job["shot"] = s["id"]
-                self._progress(k / max(1, len(targets)) * 100, f"正在生图 {k + 1}/{len(targets)}：第 {p['shots'].index(s) + 1} 镜")
-                self._save(p, True)
-                prompt = imagegen.build_prompt({"prompt": s["image_prompt"] or s["text"], "ratio": p["ratio"], "transparent": False},
-                                               STYLE_TAG, False, True, kind)
-                try:
-                    img, usage, _sent = await imagegen.CALL.get(cd["proto"], imagegen._call_openai)(
-                        c, base, key, cd, prompt, p["ratio"], tier, quality, False, [])
-                    pi = imagegen.png_info(img)
-                    ext = pi["fmt"] if pi["fmt"] in ("png", "jpg", "webp") else "png"
-                    name = f"shot{(p['shots'].index(s) + 1):02d}.{ext}"
-                    dest = Path(p["dir"]) / "images" / name
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    for old in dest.parent.glob(f"shot{(p['shots'].index(s) + 1):02d}.*"):
-                        if old != dest:
-                            try:
-                                old.unlink()
-                            except OSError:
-                                pass
-                    tmp = dest.with_name(dest.name + ".part")
-                    tmp.write_bytes(img)
-                    tmp.replace(dest)
-                    if usage and cd["price"] is None:
-                        usd = float(usage.get("output_tokens") or 0) * imagegen.USD_OUT + float(usage.get("input_tokens") or 0) * imagegen.USD_IN
-                    else:
-                        usd = cd["price"] if cd["price"] is not None else (imagegen.est_usd(cd, p["ratio"], tier, quality) or 0.0)
-                    s.update(image=f"images/{name}", image_st="ok", image_err="", image_ver=int(time.time() * 1000),
-                             image_w=pi["w"], image_h=pi["h"], image_model=cd["id"])
-                    p["cost"]["images_usd"] = round(float(p["cost"].get("images_usd") or 0) + float(usd), 4)
-                    telemetry.log("app", "studio_image", "视频工坊", "ok", 0,
-                                  {"shot": s["id"], "model": cd["id"], "ratio": p["ratio"], "w": pi["w"], "h": pi["h"], "usd": round(float(usd), 4)},
-                                  f"视频工坊生图：第 {p['shots'].index(s) + 1} 镜")
-                except imagegen.ImgError as e:
-                    s.update(image_st="err", image_err=str(e)[:300])
-                    fails.append(f"第 {p['shots'].index(s) + 1} 镜：{str(e)[:100]}")
-                    if getattr(e, "fatal", False):
-                        raise StudioError(f"生图停了：{str(e)[:300]}") from None
-                except Exception as e:
-                    s.update(image_st="err", image_err=f"{type(e).__name__} {str(e)[:200]}")
-                    fails.append(f"第 {p['shots'].index(s) + 1} 镜：{type(e).__name__}")
+        fails, done = [], 0
+        lock = asyncio.Lock()
+
+        async def one(s):
+            nonlocal done
+            try:
+                await self._image_one(p, s)
+            except imagegen.ImgError as e:
+                s.update(image_st="err", image_err=str(e)[:300])
+                fails.append(f"第 {shots.index(s) + 1} 镜：{str(e)[:100]}")
+                if getattr(e, "fatal", False):
+                    raise StudioError(f"生图停了：{str(e)[:300]}") from None
+            except Exception as e:
+                s.update(image_st="err", image_err=f"{type(e).__name__} {str(e)[:200]}")
+                fails.append(f"第 {shots.index(s) + 1} 镜：{type(e).__name__}")
+            finally:
+                async with lock:
+                    done += 1
+                    self._progress(done / max(1, len(targets)) * 100,
+                                   f"分镜生图 {done}/{len(targets)}：第 {shots.index(s) + 1} 镜")
                 self._save(p)
+
+        await asyncio.gather(*(one(s) for s in targets))
         good = sum(1 for s in shots if _shot_ok(p, s, "image"))
         if not good:
             _mark(p, "images", "err", "一张都没出来：" + "；".join(fails[:3]), 0)
             raise StudioError("生图一张都没出来：" + "；".join(fails[:3]))
-        msg = f"出了 {good}/{len(shots)} 张" + (f"，{len(fails)} 张没出来" if fails else "")
+        msg = f"出了 {good}/{len(shots)} 镜" + (f"，{len(fails)} 镜没出来" if fails else "")
         _mark(p, "images", "warn" if fails else "ok", msg, 100)
-        self.job.update(stage=2, pct=self._span[0] + self._span[1])
+        if self.job:
+            self.job.update(stage=2, pct=self._span[0] + self._span[1])
         self._save(p, True)
 
+    async def _image_one(self, p, s):
+        cfg = _img_cfg(p, s)
+        fps, prompt, cd, refs = _image_fps(p, s, cfg)
+        sid = s["id"]
+        variants, all_hit, hit_any = [], True, False
+        for i, fp in enumerate(fps):
+            rel = ""
+            ent = cache.project_get(p["dir"], f"img:{sid}:{i}")
+            if ent and ent.get("fp") == fp:
+                q = Path(p["dir"]) / str(ent.get("path") or "")
+                if q.is_file():
+                    rel = str(ent["path"])
+                    hit_any = True
+            if not rel:
+                cp = cache.lookup(fp, "image")
+                if cp:
+                    ext = cp.suffix.lower().lstrip(".") or "png"
+                    dest = _shot_image_dest(p, s, i, ext)
+                    cache.hit_to(fp, dest, "image")
+                    rel = dest.relative_to(Path(p["dir"])).as_posix()
+                    cache.project_set(p["dir"], f"img:{sid}:{i}", fp, rel, True)
+                    hit_any = True
+            if not rel:
+                all_hit = False
+                break
+            variants.append(rel)
+        if all_hit and len(variants) == len(fps):
+            self._apply_image_variants(p, s, variants, fps, cd, True)
+            return
+        # 有任意一张没命中：整镜按当前参数重新请求（n 张一次）；已有缓存变体仍会被重新缓存
+        s["image_st"] = "run"
+        self._save(p, True)
+        key = settings.get_secret("imgKey")
+        if not key:
+            raise imagegen.ImgError("还没填 API易 的 Key：到 设置 › 云端 填好，再生成画面")
+        base = (settings.S.get("imgBase") or "https://api.apiyi.com/v1").rstrip("/")
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=15.0, read=imagegen.TIMEOUT, write=120.0, pool=None)) as c:
+            async with _api_gate():
+                imgs, usage, _sent = await imagegen.call_images(
+                    c, base, key, cd, prompt, cfg["ratio"], cfg["resolution"], cfg["quality"], bool(cfg["transparent"]),
+                    [x.read_bytes() for x in refs], n=cfg["n"], custom_w=cfg["custom_w"] or None,
+                    custom_h=cfg["custom_h"] or None, complexity=cfg["complexity"] or None,
+                    gif_frames=cfg["gif_frames"] if cfg["gif"] else None, gif_delay_ms=cfg["gif_delay_ms"] if cfg["gif"] else None)
+        if not imgs:
+            raise imagegen.ImgError("没返回图片")
+        variants, fps2 = [], []
+        for i, img in enumerate(imgs[:cfg["n"]]):
+            pi = imagegen.png_info(img)
+            ext = pi["fmt"] if pi["fmt"] in ("png", "jpg", "webp", "gif") else "png"
+            dest = _shot_image_dest(p, s, i, ext)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_name(dest.name + ".part")
+            tmp.write_bytes(img)
+            tmp.replace(dest)
+            rel = dest.relative_to(Path(p["dir"])).as_posix()
+            fp = fps[i]
+            cache.put(fp, dest, "image", {"model": cd["id"], "w": pi.get("w"), "h": pi.get("h"), "fmt": ext})
+            cache.project_set(p["dir"], f"img:{sid}:{i}", fp, rel, False)
+            variants.append(rel)
+            fps2.append(fp)
+        if not variants:
+            raise imagegen.ImgError("没返回可用的图片")
+        self._apply_image_variants(p, s, variants, fps2, cd, all_hit)
+        # 费用按返回的 usage / 模型价格粗算
+        try:
+            if usage and cd["price"] is None:
+                usd = float(usage.get("output_tokens") or 0) * imagegen.USD_OUT + float(usage.get("input_tokens") or 0) * imagegen.USD_IN
+            else:
+                usd = (cd["price"] if cd["price"] is not None else imagegen.est_usd(cd, cfg["ratio"], cfg["resolution"], cfg["quality"])) or 0.0
+            p["cost"]["images_usd"] = round(float(p["cost"].get("images_usd") or 0) + float(usd), 4)
+        except Exception:
+            pass
+        telemetry.log("app", "studio_image", "视频工坊", "ok", 0,
+                      {"shot": sid, "model": cd["id"], "n": len(variants), "cache": all_hit,
+                       "gif": bool(cfg["gif"])}, f"视频工坊生图：{sid}")
+
+    def _apply_image_variants(self, p, s, variants, fps, cd, cache_hit):
+        sel = int(s.get("img_selected") or 0)
+        if sel < 0 or sel >= len(variants):
+            sel = 0
+        q = Path(p["dir"]) / variants[sel]
+        pi = {}
+        try:
+            pi = imagegen.png_info(q.read_bytes()[:65536])
+        except Exception:
+            pass
+        s.update(image=variants[sel], img_variants=variants, img_selected=sel, img_fps=fps, image_model=cd["id"],
+                 image_st="ok", image_err="", image_cache_hit=bool(cache_hit),
+                 image_ver=int(time.time() * 1000), image_w=pi.get("w"), image_h=pi.get("h"))
+
     # ---------- 配音 ----------
+    def _tts_stale(self, p, s):
+        if not _shot_ok(p, s, "tts") or s.get("tts_st") in ("idle", "stale", "err", "missing"):
+            return True
+        try:
+            cfg = _shot_voice(p, s)
+            return s.get("tts_fp") != _tts_fp(p, s, cfg)
+        except Exception:
+            return True
+
     async def _gen_tts(self, p, ids=None):
         self._step_start(p, "tts", "准备逐句配音")
         shots = p["shots"]
         if ids:
             targets = [s for s in shots if s["id"] in ids]
         else:
-            targets = [s for s in shots if not _shot_ok(p, s, "tts") or s.get("tts_st") in ("idle", "stale", "err", "missing")]
+            targets = [s for s in shots if self._tts_stale(p, s)]
         if not targets:
             await self._build_voice(p)
             _mark(p, "tts", "ok", "配音都在", 100)
             return
-        cfgs = []
+        self._span = (35, 30)
+        miss, hits = [], 0
         for s in targets:
             cfg = _shot_voice(p, s)
-            if cfg.get("engine") == "local":
-                req = {"mode": cfg.get("mode") or "preset", "speaker": cfg.get("speaker"), "desc": cfg.get("desc"),
-                       "name": cfg.get("name"), "seed": cfg.get("seed"), "tone": ""}
-                try:
-                    cfg["_vv"] = tts.T.voice(req)
-                except HTTPException as e:
-                    raise StudioError(str(e.detail)) from None
-            cfgs.append((s, cfg))
-        self._span = (35, 30)
-        need_local = any(c.get("engine") == "local" for _, c in cfgs)
-        if need_local:
-            try:
-                bgm.B.stop("视频工坊：换配音模型，先释放显存")
-            except Exception:
-                pass
-            try:
-                await tts.T.ensure()
-            except Exception as e:
-                raise StudioError(f"配音服务没起来：{str(e)[:300]}") from None
-        seed = int(time.time()) % 65535 or 1
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=900.0, write=30.0, pool=None)) as c:
-            for k, (s, cfg) in enumerate(cfgs):
-                self._check_stop()
-                idx = p["shots"].index(s) + 1
-                text = (s.get("text") or "").strip()
-                if not text:
-                    raise StudioError(f"第 {idx} 句的台词是空的")
+            fp = _tts_fp(p, s, cfg)
+            idx = shots.index(s) + 1
+            dest = Path(p["dir"]) / "tts" / f"shot{idx:02d}.wav"
+            rel = f"tts/shot{idx:02d}.wav"
+            ent = cache.project_get(p["dir"], f"tts:{s['id']}")
+            hit = False
+            if ent and ent.get("fp") == fp and (Path(p["dir"]) / rel).is_file():
+                hit = True
+            elif cache.hit_to(fp, dest, "tts"):
+                cache.project_set(p["dir"], f"tts:{s['id']}", fp, rel, True)
+                hit = True
+            if hit:
+                s.update(tts=rel, tts_st="ok", tts_err="", tts_fp=fp, tts_cache_hit=True,
+                         tts_ver=int(time.time() * 1000), duration=_wav_duration(dest))
+                hits += 1
+            else:
                 s["tts_st"] = "run"
-                if self.job:
-                    self.job["shot"] = s["id"]
-                self._progress(k / max(1, len(cfgs)) * 100,
-                               f"正在配音 {s.get('role') or '旁白'}（{k + 1}/{len(cfgs)}）：{text[:14]}")
-                self._save(p, True)
-                tone = (s.get("tone") or "")[:120]
-                if cfg.get("engine") == "cloud":
-                    if not tts_cloud.key():
-                        raise StudioError("还没填百炼 API Key：到 设置 › 云端 填好，或者把音色换成本地的")
-                    try:
-                        r, _asked = await tts_cloud.synth_once_more(text, cfg["voice"], tone, seed,
-                                                                    stop=lambda: self._stop.is_set())
-                    except tts_cloud.Cancelled:
-                        raise StopRequested() from None
-                    except tts_cloud.CloudError as e:
-                        raise StudioError(f"第 {idx} 句没配成：{str(e)[:300]}") from None
-                    sr, pcm = int(r["sr"]), r["pcm"]
-                    try:
-                        _bill, cny = tts_cloud.record(cfg["voice"], text, r.get("usage"), "视频工坊", len(pcm) / 2 / sr)
-                        p["cost"]["tts_cny"] = round(float(p["cost"].get("tts_cny") or 0) + float(cny), 4)
-                    except Exception:
-                        pass
-                else:
-                    vv = cfg["_vv"]
-                    try:
-                        r = await c.post(tts.T.url("/generate"), json={
-                            "kind": vv["kind"], "text": text, "speaker": vv.get("speaker"),
-                            "instruct": tone or vv.get("instruct") or "", "language": vv.get("lang") or "Chinese",
-                            "seed": vv.get("seed")})
-                    except httpx.HTTPError as e:
-                        if self._stop.is_set():
-                            raise StopRequested() from None
-                        raise StudioError(f"配音服务断了：{type(e).__name__}") from None
-                    if r.status_code != 200:
-                        if self._stop.is_set():
-                            raise StopRequested()
-                        try:
-                            why = r.json().get("detail") or r.text
-                        except Exception:
-                            why = r.text
-                        raise StudioError(f"第 {idx} 句没配成：{str(why)[:300]}")
-                    try:
-                        sr, pcm = tts.read_wav(r.content)
-                    except Exception as e:
-                        raise StudioError(f"配音服务回来的音频不对：{str(e)[:200]}") from None
-                dest = Path(p["dir"]) / "tts" / f"shot{idx:02d}.wav"
+                miss.append((s, cfg, fp, idx, dest, rel))
+        if not miss:
+            await self._build_voice(p)
+            _mark(p, "tts", "ok", f"{len(targets)} 句全部缓存命中", 100)
+            if self.job:
+                self.job.update(stage=2, pct=self._span[0] + self._span[1])
+            self._save(p, True)
+            return
+        cloud = [x for x in miss if x[1].get("engine") == "cloud"]
+        local = [x for x in miss if x[1].get("engine") != "cloud"]
+        done = len(targets) - len(miss)
+        lock = asyncio.Lock()
+        fails = []
+        seed = int(time.time()) % 65535 or 1
+
+        async def tick(s, ok=True, why=""):
+            nonlocal done
+            async with lock:
+                done += 1
+                self._progress(done / max(1, len(targets)) * 100,
+                               f"逐句配音 {done}/{len(targets)}：{s.get('role') or '旁白'}")
+            if not ok:
+                fails.append(f"{s.get('id')}：{why[:120]}")
+            self._save(p)
+
+        async def cloud_one(item):
+            s, cfg, fp, idx, dest, rel = item
+            if not tts_cloud.key():
+                s.update(tts_st="err", tts_err="没填百炼 Key")
+                await tick(s, False, "没填百炼 Key")
+                return
+            try:
+                async with _api_gate():
+                    r, _asked = await tts_cloud.synth_once_more(s.get("text") or "", cfg["voice"], (s.get("tone") or "")[:120],
+                                                                seed, stop=lambda: self._stop.is_set())
+                sr, pcm = int(r["sr"]), r["pcm"]
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 tts.write_wav(dest, sr, pcm)
                 dur = len(pcm) / 2 / sr
-                s.update(tts=f"tts/shot{idx:02d}.wav", tts_st="ok", tts_err="",
+                cache.put(fp, dest, "tts", {"engine": "cloud", "voice": cfg.get("voice")})
+                cache.project_set(p["dir"], f"tts:{s['id']}", fp, rel, False)
+                s.update(tts=rel, tts_st="ok", tts_err="", tts_fp=fp, tts_cache_hit=False,
                          tts_ver=int(time.time() * 1000), duration=round(dur, 2))
-                telemetry.log("app", "studio_tts", "视频工坊", "ok", 0,
-                              {"shot": s["id"], "role": s.get("role"), "speaker": cfg.get("label") or cfg.get("voice"),
-                               "seconds": round(dur, 2), "engine": cfg.get("engine")},
-                              f"视频工坊配音：{s.get('role') or '旁白'} 第 {idx} 句")
-                self._save(p)
+                try:
+                    _bill, cny = tts_cloud.record(cfg["voice"], s.get("text") or "", r.get("usage"), "视频工坊", dur)
+                    p["cost"]["tts_cny"] = round(float(p["cost"].get("tts_cny") or 0) + float(cny), 4)
+                except Exception:
+                    pass
+                await tick(s)
+            except tts_cloud.Cancelled:
+                s.update(tts_st="stale", tts_err="停下了")
+                await tick(s, False, "停下了")
+            except Exception as e:
+                s.update(tts_st="err", tts_err=str(e)[:300])
+                await tick(s, False, str(e))
+
+        async def local_group():
+            if not local:
+                return
+            async with _gpu_lock():
+                try:
+                    bgm.B.stop("视频工坊：换配音模型，先释放显存")
+                except Exception:
+                    pass
+                try:
+                    await tts.T.ensure()
+                except Exception as e:
+                    for s, cfg, fp, idx, dest, rel in local:
+                        s.update(tts_st="err", tts_err=f"配音服务没起来：{str(e)[:200]}")
+                        await tick(s, False, str(e))
+                    return
+                for s, cfg, fp, idx, dest, rel in local:
+                    if self._stop.is_set():
+                        s.update(tts_st="stale", tts_err="停下了")
+                        await tick(s, False, "停下了")
+                        continue
+                    try:
+                        req = {"mode": cfg.get("mode") or "preset", "speaker": cfg.get("speaker"), "desc": cfg.get("desc"),
+                               "name": cfg.get("name"), "seed": cfg.get("seed"), "tone": ""}
+                        vv = tts.T.voice(req)
+                        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=900.0, write=30.0, pool=None)) as c:
+                            r = await c.post(tts.T.url("/generate"), json={
+                                "kind": vv["kind"], "text": s.get("text") or "", "speaker": vv.get("speaker"),
+                                "instruct": (s.get("tone") or vv.get("instruct") or "")[:200],
+                                "language": vv.get("lang") or "Chinese", "seed": vv.get("seed")})
+                        if r.status_code != 200:
+                            try:
+                                why = r.json().get("detail") or r.text
+                            except Exception:
+                                why = r.text
+                            raise RuntimeError(str(why)[:200])
+                        sr, pcm = tts.read_wav(r.content)
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        tts.write_wav(dest, sr, pcm)
+                        dur = len(pcm) / 2 / sr
+                        cache.put(fp, dest, "tts", {"engine": "local", "speaker": cfg.get("speaker") or cfg.get("id")})
+                        cache.project_set(p["dir"], f"tts:{s['id']}", fp, rel, False)
+                        s.update(tts=rel, tts_st="ok", tts_err="", tts_fp=fp, tts_cache_hit=False,
+                                 tts_ver=int(time.time() * 1000), duration=round(dur, 2))
+                        await tick(s)
+                    except Exception as e:
+                        s.update(tts_st="err", tts_err=str(e)[:300])
+                        await tick(s, False, str(e))
+
+        await asyncio.gather(local_group(), *(cloud_one(x) for x in cloud))
+        if fails:
+            _mark(p, "tts", "err", "有句子没配成：" + "；".join(fails[:3]), 0)
+            raise StudioError("配音有句子没配成：" + "；".join(fails[:3]))
         self._check_stop()
         await self._build_voice(p)
-        _mark(p, "tts", "ok", f"配好 {len(shots)} 句，总长 {p.get('total_seconds', 0):.1f} 秒", 100)
-        self.job.update(stage=2, pct=self._span[0] + self._span[1])
+        _mark(p, "tts", "ok", f"配好 {len(shots)} 句" + (f"（{hits} 句缓存命中）" if hits else ""), 100)
+        if self.job:
+            self.job.update(stage=2, pct=self._span[0] + self._span[1])
         self._save(p, True)
 
     async def _build_voice(self, p):
@@ -1215,47 +1701,51 @@ class Studio:
 
     # ---------- 配乐 ----------
     async def _gen_bgm(self, p):
-        self._step_start(p, "bgm", "准备配乐")
-        total = float(p.get("total_seconds") or 0)
-        if total <= 0:
-            await self._build_voice(p)
-            total = float(p.get("total_seconds") or 0)
-        try:
-            seconds = int((p.get("settings") or {}).get("bgm_seconds") or 0) or int(round(total or p.get("target_seconds") or 75))
-        except (TypeError, ValueError):
-            seconds = int(round(total or 75))
-        seconds = max(10, min(bgm.MAX_S, seconds))
-        prompt = (p.get("bgm_prompt") or "").strip()
-        if not prompt:
-            prompt = f"{STYLE_TAG} 风格短视频背景音乐，纯音乐，无人声，情绪贴合旁白，节奏舒缓"
-        try:
-            steps = max(1, min(32, int((p.get("settings") or {}).get("bgm_steps") or 8)))
-        except (TypeError, ValueError):
-            steps = 8
+        self._step_start(p, "bgm", "准备配乐（GPU 通道）")
+        fp, prompt, seconds, steps, seed = _bgm_fp(p)
         self._span = (65, 15)
-        # 换模型前先放显存：本地配音服务出完先关掉
-        try:
-            tts.T.stop("视频工坊：换配乐模型，先释放显存")
-        except Exception:
-            pass
+        dest = Path(p["dir"]) / "bgm" / "bgm.wav"
+        rel = "bgm/bgm.wav"
+        ent = cache.project_get(p["dir"], "bgm")
+        if (ent and ent.get("fp") == fp and dest.is_file()) or cache.hit_to(fp, dest, "bgm"):
+            cache.project_set(p["dir"], "bgm", fp, rel, True)
+            p["files"]["bgm"] = rel
+            p["settings"]["use_bgm"] = True
+            p["bgm_seconds"] = _wav_duration(dest) or seconds
+            p["bgm_cache_hit"] = True
+            _mark(p, "bgm", "ok", "配乐缓存命中", 100)
+            if self.job:
+                self.job.update(stage=2, pct=80)
+            self._save(p, True)
+            return
+        # 换模型前先放显存：本地配音服务出完先关掉；和本地配音共用 GPU_LOCK
         self._progress(0, "正在准备配乐（第一次要加载 Stable Audio 3）")
-        try:
-            r = await bgm.B.generate(prompt, seconds, say=lambda m: self._progress(10, m),
-                                     stopped=lambda: self._stop.is_set(),
-                                     dest=Path(p["dir"]) / "bgm" / "bgm.wav", steps=steps)
-        except bgm.BgmError as e:
-            if self._stop.is_set():
-                raise StopRequested() from None
-            _mark(p, "bgm", "warn", str(e)[:300], 0)
-            raise StudioError(str(e)) from None
+        async with _gpu_lock():
+            try:
+                tts.T.stop("视频工坊：换配乐模型，先释放显存")
+            except Exception:
+                pass
+            try:
+                r = await bgm.B.generate(prompt, seconds, say=lambda m: self._progress(10, m),
+                                         stopped=lambda: self._stop.is_set(),
+                                         dest=dest, steps=steps, seed=seed)
+            except bgm.BgmError as e:
+                if self._stop.is_set():
+                    raise StopRequested() from None
+                _mark(p, "bgm", "warn", str(e)[:300], 0)
+                raise StudioError(str(e)) from None
         p["files"]["bgm"] = f"bgm/{Path(r['path']).name}"
         p["settings"]["use_bgm"] = True
         p["bgm_seconds"] = r.get("duration") or seconds
+        p["bgm_cache_hit"] = False
+        cache.put(fp, dest, "bgm", {"duration": p["bgm_seconds"], "steps": steps, "seed": seed})
+        cache.project_set(p["dir"], "bgm", fp, rel, False)
         _mark(p, "bgm", "ok", f"配乐好了：{p['bgm_seconds']:.0f} 秒", 100)
-        self.job.update(stage=2, pct=80)
+        if self.job:
+            self.job.update(stage=2, pct=80)
         self._save(p, True)
         telemetry.log("app", "studio_bgm", "视频工坊", "ok", float(r.get("sec") or 0) * 1000,
-                      {"seconds": seconds, "duration": r.get("duration")}, "视频工坊配乐好了")
+                      {"seconds": seconds, "duration": r.get("duration"), "seed": seed}, "视频工坊配乐好了")
 
     # ---------- 合成 ----------
     async def _compose(self, p):
@@ -1269,7 +1759,9 @@ class Studio:
             r = await asyncio.to_thread(video_maker.compose_video, p["dir"],
                                         bool(opts.get("subtitle", True)), float(opts.get("bgm_volume") or 0.18),
                                         bool(opts.get("kenburns", True)), self._stop.is_set,
-                                        lambda x: self._progress(x.get("pct", 0), x.get("msg", "")))
+                                        lambda x: self._progress(x.get("pct", 0), x.get("msg", "")),
+                                        duck_depth=float(opts.get("duck_depth") or 0.16),
+                                        fade=float(opts.get("fade") if opts.get("fade") is not None else 2.0))
         except video_maker.MakerError as e:
             _mark(p, "video", "err", str(e)[:300], 0)
             raise StudioError(str(e)) from None
@@ -1317,6 +1809,22 @@ class Studio:
                 pass
 
     # ---------- 发布 ----------
+    def add_ref(self, body) -> dict:
+        pid = str(body.get("pid") or db.kv_get("studio_active") or "")
+        p = video_maker.load_project(pid)
+        b = imagegen.read_uri(body.get("data") or "")
+        pi = imagegen.png_info(b)
+        ext = pi["fmt"] if pi["fmt"] in ("png", "jpg", "webp", "gif") else "png"
+        d = Path(p["dir"]) / "refs"
+        d.mkdir(parents=True, exist_ok=True)
+        h = cache.sha_file_bytes(b)[:12] if hasattr(cache, "sha_file_bytes") else __import__("hashlib").sha256(b).hexdigest()[:12]
+        name = Path(str(body.get("name") or "参考图")).stem
+        name = re.sub(r'[\/:*?"<>|]+', "", name)[:30] or "参考图"
+        dest = d / f"{h}_{name}.{ext}"
+        dest.write_bytes(b)
+        rel = dest.relative_to(Path(p["dir"])).as_posix()
+        return {"ok": True, "rel": rel, "w": pi.get("w"), "h": pi.get("h")}
+
     def to_publish(self, body) -> dict:
         pid = str(body.get("pid") or db.kv_get("studio_active") or "")
         p = video_maker.load_project(pid)
@@ -1325,24 +1833,77 @@ class Studio:
         video = d / rel
         if not video.is_file():
             raise HTTPException(400, "还没有成片：先合成视频，再送去发布")
-        cover = d / ((p.get("files") or {}).get("cover") or "output/封面.png")
-        title = str(body.get("title") or p.get("title") or p.get("name") or "视频工坊成片").strip()[:publish.TITLE_MAX]
+        # 封面：auto 用成片封面 / 选中分镜图；shot:<id> 用那一镜；也可以传项目里的路径
+        cv = body.get("cover")
+        cover = None
+        if cv in (None, "", "auto"):
+            q = d / ((p.get("files") or {}).get("cover") or "")
+            if q.is_file():
+                cover = q
+            else:
+                s0 = next((s for s in p.get("shots") or [] if s.get("image")), None)
+                if s0:
+                    cover = d / s0["image"]
+        elif str(cv).startswith("shot:"):
+            sid = str(cv).split(":", 1)[1]
+            s0 = next((s for s in p.get("shots") or [] if s.get("id") == sid), None)
+            if s0 and s0.get("image"):
+                cover = d / s0["image"]
+        else:
+            q = Path(str(cv))
+            cover = q if q.is_absolute() else d / q
+        title = str(body.get("title") if body.get("title") is not None else p.get("title") or p.get("name") or "视频工坊成片").strip()[:publish.TITLE_MAX]
         desc = str(body.get("desc") if body.get("desc") is not None else p.get("desc") or "").strip()[:publish.DESC_MAX]
-        tags = body.get("tags") if body.get("tags") is not None else p.get("tags") or []
+        tags = body.get("tags")
+        if tags is None or (isinstance(tags, (list, str)) and not tags):
+            tags = p.get("tags") or ["ai漫剧", "ai创作浪潮计划", "搞笑"]
+        schedule = str(body.get("schedule") or "").strip().replace("T", " ")[:16]
+        decl = str(body.get("declaration") or ("内容由AI生成" if body.get("ai_decl", True) else "") or settings.S.get("pubDecl") or "内容由AI生成").strip()
+        if decl not in publish.DECL:
+            decl = settings.S.get("pubDecl") or "内容由AI生成"
         try:
-            item = publish.check_item({"file": str(video), "title": title, "desc": desc, "tags": tags,
-                                       "cover": str(cover) if cover.is_file() else "",
-                                       "declaration": settings.S.get("pubDecl") or "内容由AI生成"})
+            item = publish.check_item({"file": str(video), "title": title, "desc": desc, "tags": tags, "schedule": schedule,
+                                       "cover": str(cover) if cover and cover.is_file() else "",
+                                       "declaration": decl,
+                                       "collection": str(body.get("collection") or "").strip()[:40]})
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
+        mode = "batch" if body.get("mode") == "batch" else "single"
+        if mode == "batch":
+            if not schedule:
+                raise HTTPException(400, "加入批量发布清单必须写定时发布时间（抖音批量都要定时）")
+            board = db.kv_get("pub_batch") or None
+            if not isinstance(board, dict) or not isinstance(board.get("items"), list):
+                board = {"id": int(time.time() * 1000), "title": p.get("title") or p["id"], "folder": str(d / "output"),
+                         "folder_show": paths.show(d / "output"), "warn": [], "lists": ["视频工坊"], "smart": False,
+                         "items": [], "nv": 1, "ni": 1}
+            same = next((x for x in board["items"] if x.get("video") == str(video)), None)
+            row = {"id": same.get("id") if same else f"p{int(time.time() * 1000)}",
+                   "title": item["title"], "desc": item["desc"], "tags": item["tags"], "schedule": item["schedule"],
+                   "collection": item["collection"], "declaration": item["declaration"],
+                   "video_raw": video.name, "video": str(video), "video_show": video.name,
+                   "cover": item["cover"], "cover_show": Path(item["cover"]).name if item["cover"] else "",
+                   "st": "idle", "err": "", "msg": ""}
+            if same:
+                same.update(row)
+            else:
+                board["items"].append(row)
+            db.kv_set("pub_batch", board)
+            telemetry.log("app", "studio_to_publish", "视频工坊", "ok", 0,
+                          {"pid": p["id"], "title": title, "mode": "batch", "schedule": schedule},
+                          "视频工坊：成片已加入批量发布清单")
+            feed.add(f"「{title}」加入批量发布清单了（定时 {schedule}）：到「发布」批量里确认", "warn", job=JOBS)
+            return {"ok": True, "mode": "batch", "title": title, "n": len(board["items"]),
+                    "msg": f"加入批量发布清单了（共 {len(board['items'])} 条）：到「发布」批量里确认，点两下才发"}
         for x in publish.pending():
             if (x.get("item") or {}).get("file") == str(video):
                 return {"ok": True, "pid": x["id"], "msg": "这条已经在「发布」窗口等你确认了", "title": title}
         pub_id = publish.ask(item, None)
-        telemetry.log("app", "studio_to_publish", "视频工坊", "ok", 0, {"pid": p["id"], "title": title},
+        telemetry.log("app", "studio_to_publish", "视频工坊", "ok", 0, {"pid": p["id"], "title": title, "mode": "single"},
                       "视频工坊：成片已放进发布待确认队列")
         feed.add(f"「{title}」放进发布窗口了：到「发布」看一眼，点两下才发", "warn", job=JOBS)
-        return {"ok": True, "pid": pub_id, "msg": "放进发布窗口了：到「发布」看一眼，改一改，点两下才发", "title": title}
+        return {"ok": True, "mode": "single", "pid": pub_id,
+                "msg": "放进发布窗口了：到「发布」看一眼，改一改，点两下才发", "title": title}
 
 
 S = Studio()
@@ -1473,6 +2034,16 @@ def studio_media(pid: str, path: str, v: int = 0):
     if d.resolve() not in q.parents or q.suffix.lower() not in MEDIA_EXT or not q.is_file():
         raise HTTPException(404, "没有这个文件")
     return FileResponse(q, headers={"Cache-Control": "private, max-age=31536000"})
+
+
+@api.post("/api/studio/ref")
+def studio_ref(body: dict = Body(...)):
+    try:
+        return S.add_ref(body)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"参考图没存成：{type(e).__name__} {str(e)[:120]}") from None
 
 
 @api.post("/api/studio/open")

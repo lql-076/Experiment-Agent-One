@@ -13,7 +13,7 @@ from common import launch
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "dev/.run/shots"
 SCROLL_OK = {"prep", "remind", "models", "cloud", "agent", "voice", "bgm", "osd"}   # 设置页是操作页，允许滚（CLAUDE.md 第 6 条）   # 整备、提醒列表、本地模型（v1.8.7 加了「安装配音」）、云端（v1.8.11 加了百炼 Key）：要动手操作的页，可以上下滚（v1.8.1 起）
-LISTS = "#chatLog, .hm-pop, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2, #ttsText, .tts-tl, .tts-vb, .fg-scroll, .bg-rows, .mb-list, .mb-paste, .pb-vl, .pb-hist, .pb-log, .pb-bl, .cc-steps, .cc-result pre, .tr-list, #view-brains, .st-shots, .st-node-body, .st-node-list"   # .tts-vb：配音页的音色面板（音色列表、设计、复刻表单，v1.8.12）；.fg-scroll：生图页里自己滚的几块（v1.8.16）；.cc-steps：Claude Code 的步骤日志（v3.4）；.st-shots：视频工坊的分镜列表（v3.6）；.st-node-body / .st-node-list：节点画布里节点内部的滚动（v3.7）
+LISTS = "#chatLog, .hm-pop, #evlist, #feedBox, .feed, .logbox, #docBody, #docNav, .rlists, .rec, .ag-list, .detail>.cards2, #ttsText, .tts-tl, .tts-vb, .fg-scroll, .bg-rows, .mb-list, .mb-paste, .pb-vl, .pb-hist, .pb-log, .pb-bl, .cc-steps, .cc-result pre, .tr-list, #view-brains, .st-shots, .st-node-body, .st-node-list, .st-sublist"   # .tts-vb：配音页的音色面板（音色列表、设计、复刻表单，v1.8.12）；.fg-scroll：生图页里自己滚的几块（v1.8.16）；.cc-steps：Claude Code 的步骤日志（v3.4）；.st-shots：视频工坊的分镜列表（v3.6）；.st-node-body / .st-node-list / .st-sublist：节点画布和子工作流内部的滚动（v3.7 / v3.8）
 JS = """(lists) => { const out = []; document.querySelectorAll('#content *, #content').forEach(el => {
   if (!el.offsetParent && el.id !== 'content') return;
   if (el.closest(lists)) return;

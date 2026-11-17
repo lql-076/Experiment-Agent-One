@@ -319,6 +319,8 @@ KNOWN = {      # 按 API易 文档和网页版「AI 图片大师」的列表（2
     "gpt-image-2.5-all": _m("openai", "GPT Image 2.5 All", "逆向", .03, 60, "ChatGPT 网页版线路（Images 2.5），文字还原度好、内容限制少；不认尺寸，比例写进提示词",
                             size="prompt", refs=5),
     "gpt-image-2-all": _m("openai", "GPT Image 2 All", "逆向", .025, 90, "ChatGPT 网页版线路；不认尺寸，比例写进提示词", size="prompt", refs=5),
+    "gpt-image-2.6-sunburst": _m("openai", "GPT Image 2.6 Sunburst", "逆向", .03, 80, "2.6 Sunburst，支持 Q 版 GIF 动图（帧数 / 每帧毫秒）和透明背景", q=Q4, trans="api", refs=8) | {"gif": True},
+    "gpt-image-2.6-sunburst-vip": _m("openai", "GPT Image 2.6 Sunburst VIP", "逆向", .03, 80, "2.6 Sunburst VIP，支持 GIF 动图、30 档尺寸、透明背景", q=Q4, trans="api", refs=8) | {"gif": True},
     "gpt-image-2.5-sunburst": _m("openai", "GPT Image 2.5 Sunburst", "官转", None, 40, "画质优先，按 token 计费（画质开高很贵）；5 档画质", q=Q6, trans="api", refs=8),
     "gpt-image-2.5-flare": _m("openai", "GPT Image 2.5 Flare", "官转", None, 20, "速度优先，按 token 计费；5 档画质", q=Q6, trans="api", refs=8),
     "gpt-image-2": _m("openai", "GPT Image 2", "官转", None, 90, "上一代官转，按 token 计费", q=Q4, refs=8),
@@ -403,7 +405,7 @@ def catalog():
             if vendor_of(mid) != v:
                 continue
             c = card(mid)
-            ms.append({k: c[k] for k in ("id", "name", "route", "price", "sec", "d", "warn", "known", "proto", "refs", "trans")} |
+            ms.append({k: c[k] for k in ("id", "name", "route", "price", "sec", "d", "warn", "known", "proto", "refs", "trans")} | {"gif": bool(c.get("gif"))} |
                       {"listed": (mid in ids) if ids else None, "q": c["q"], "tiers": tiers_of(c)})
         if ms:
             groups.append({"v": v, "name": name, "models": ms})
@@ -470,10 +472,13 @@ def png_info(b):
         return {"fmt": "jpg", "w": 0, "h": 0, "alpha": False}
     if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
         return {"fmt": "webp", "w": 0, "h": 0, "alpha": b"ALPH" in b[:200] or (b[12:16] == b"VP8X" and bool(b[20] & 0x10))}
-    raise ImgError("API易返回的不是图片（PNG / JPEG / WEBP 都不是）")
+    if b[:6] in (b"GIF87a", b"GIF89a"):
+        w, h = struct.unpack("<HH", b[6:10])
+        return {"fmt": "gif", "w": w, "h": h, "alpha": True}
+    raise ImgError("API易返回的不是图片（PNG / JPEG / WEBP / GIF 都不是）")
 
 
-MIME = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}
+MIME = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}
 
 
 def _scrub(s, k):
@@ -518,7 +523,7 @@ def read_uri(u):
     """界面传来的参考图（data:image/...;base64,...）→ 字节；只认 PNG / JPEG / WEBP，单张 10MB 以内。"""
     m = re.match(r"data:image/[\w.+-]+;base64,(.+)$", str(u or ""), re.S)
     if not m:
-        raise HTTPException(400, "参考图格式不对（要 PNG / JPEG / WEBP）")
+        raise HTTPException(400, "参考图格式不对（要 PNG / JPEG / WEBP / GIF）")
     try:
         b = base64.b64decode(m.group(1), validate=False)
     except Exception:
@@ -528,7 +533,7 @@ def read_uri(u):
     try:
         png_info(b)
     except ImgError:
-        raise HTTPException(400, "参考图只认 PNG / JPEG / WEBP") from None
+        raise HTTPException(400, "参考图只认 PNG / JPEG / WEBP / GIF") from None
     return b
 
 
@@ -561,13 +566,75 @@ async def _fetch(c, url):
 
 
 async def _image_of(c, j):
-    d = (j.get("data") or [{}])[0] if isinstance(j, dict) else {}
-    b64 = d.get("b64_json") or ""
-    if b64:
-        return base64.b64decode(b64.split(",", 1)[1] if b64.startswith("data:") else b64)
-    if d.get("url"):
-        return await _fetch(c, d["url"])
-    raise ImgError("API易 返回成功，但里面没有图")
+    return (await _images_of(c, j))[0]
+
+
+async def _images_of(c, j):
+    """一次请求可能回多张（n>1）；每张都取 b64 或下载链接。"""
+    rows = (j.get("data") or []) if isinstance(j, dict) else []
+    out = []
+    for d in rows:
+        b64 = d.get("b64_json") or ""
+        if b64:
+            out.append(base64.b64decode(b64.split(",", 1)[1] if b64.startswith("data:") else b64))
+        elif d.get("url"):
+            out.append(await _fetch(c, d["url"]))
+        elif d.get("image_url"):
+            out.append(await _fetch(c, d["image_url"]))
+    if not out:
+        raise ImgError("API易 返回成功，但里面没有图")
+    return out
+
+
+async def _call_openai_images(c, base, k, cd, prompt, ratio, tier, quality, transparent, refs,
+                              n=1, custom_w=None, custom_h=None, complexity=None, gif_frames=None, gif_delay_ms=None):
+    """生图节点的全参数调用：n / 自定义尺寸 / 复杂度 / GIF 帧参数。字段按中转站 OpenAI 兼容格式透传。"""
+    f = {"model": cd["id"], "prompt": prompt}
+    if custom_w and custom_h:
+        f["size"] = f"{max(64, min(4096, int(custom_w)))}x{max(64, min(4096, int(custom_h)))}"
+    else:
+        wh = dims(cd, ratio, tier)
+        if wh:
+            f["size"] = f"{wh[0]}x{wh[1]}"
+    if cd["q"] and quality in cd["q"]:
+        f["quality"] = quality
+    if n and int(n) > 1:
+        f["n"] = max(1, min(4, int(n)))
+    if cd["trans"] == "api":
+        f["background"] = "transparent" if transparent else "opaque"
+    if cd.get("gif") and gif_frames:
+        f["output_format"] = "gif"
+        f["gif_frames"] = max(2, min(60, int(gif_frames)))
+        f["gif_delay_ms"] = max(40, min(2000, int(gif_delay_ms or 150)))
+    if complexity:
+        f["complexity"] = str(complexity)[:20]
+    if cd["route"] == "官转":
+        f["output_format"] = "png"
+    else:
+        f["response_format"] = "b64_json"
+    if refs:
+        name = "image[]" if len(refs) > 1 else "image"
+        files = [(name, (f"ref{i + 1}.{png_info(b)['fmt']}", b, MIME[png_info(b)["fmt"]])) for i, b in enumerate(refs)]
+        j = await _post(c, base + "/images/edits", k, data=f, files=files)
+    else:
+        j = await _post(c, base + "/images/generations", k, json=f)
+    return await _images_of(c, j), j.get("usage"), f
+
+
+async def call_images(c, base, k, cd, prompt, ratio, tier, quality, transparent, refs,
+                      n=1, custom_w=None, custom_h=None, complexity=None, gif_frames=None, gif_delay_ms=None):
+    """统一入口：OpenAI 兼容线路一次请求 n 张；其它线路循环 n 次（它们没有 n 参数）。"""
+    if cd.get("proto") == "openai":
+        return await _call_openai_images(c, base, k, cd, prompt, ratio, tier, quality, transparent, refs,
+                                         n=n, custom_w=custom_w, custom_h=custom_h, complexity=complexity,
+                                         gif_frames=gif_frames, gif_delay_ms=gif_delay_ms)
+    out, usage, sent = [], None, {}
+    for _ in range(max(1, min(4, int(n or 1)))):
+        img, u, s = await CALL[cd["proto"]](c, base, k, cd, prompt, ratio, tier, quality, transparent, refs)
+        out.append(img)
+        usage = usage or u
+        sent = s
+    return out, usage, sent
 
 
 async def _call_openai(c, base, k, cd, prompt, ratio, tier, quality, transparent, refs):
