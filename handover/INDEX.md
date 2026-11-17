@@ -5,7 +5,7 @@
 | 日期 | 轮次 | 版本 | 核心主题 | 文件 | 状态 |
 |---|---|---|---|---|---|
 | 2026-11-17 | R01 | v3.3.2 | Breeze 修复、窗口与 NVML 防崩 | [2026-11-17_R01_v3.3.2_Breeze修复与窗口NVML防崩.md](2026-11-17_R01_v3.3.2_Breeze修复与窗口NVML防崩.md) | 已完成 |
-| 2026-11-17 | R02 | v3.4.0 | Stable Audio 3 替换、Claude Code 工作台、语音朗读、Git 同步 | [2026-11-17_R02_v3.4.0_StableAudio3替换与ClaudeCode窗口及Git同步.md](2026-11-17_R02_v3.4.0_StableAudio3替换与ClaudeCode窗口及Git同步.md) | 进行中 |
+| 2026-11-17 | R02 | v3.4.0 | Stable Audio 3 替换、Claude Code 工作台、语音朗读、Git 同步 | [2026-11-17_R02_v3.4.0_StableAudio3替换与ClaudeCode窗口及Git同步.md](2026-11-17_R02_v3.4.0_StableAudio3替换与ClaudeCode窗口及Git同步.md) | 已完成（本地提交 d92646c；推送待 GitHub 认证） |
 
 ## 约定
 
