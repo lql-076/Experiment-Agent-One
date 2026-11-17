@@ -117,6 +117,7 @@ function goView(v) {
   if (S.view === 'tts') ttsLeave();
   if (S.view === 'img') imgLeave();
   if (S.view === 'bgm') bgmLeave();
+  if (S.view === 'studio') studioLeave();
   if (S.view === 'publish') pubLeave();
   if (S.view === 'ccode' && typeof ccodeLeave === 'function') ccodeLeave();
   var usingVT = moving();
@@ -134,6 +135,7 @@ function goView(v) {
     if (v === 'tts') { if (TTS.st) renderTTS(); ttsEnter(); }
     if (v === 'img') { if (IMG.st) renderImg(); imgEnter(); }
     if (v === 'bgm') { BGM.sig = ''; renderBgm(); bgmEnter(); }
+    if (v === 'studio') { renderStudio(); studioEnter(); }
     if (v === 'publish') { renderPub(); pubEnter(); }
     if (v === 'ccode') { renderCCode(); ccodeEnter(); }
     placeInd(usingVT);

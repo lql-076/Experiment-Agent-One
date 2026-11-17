@@ -135,6 +135,16 @@ ROUTES = {
     "/api/bgm/batch/zip": "把这一批出好的配乐打包成 zip，放在这一批的文件夹里",
     "/api/bgm/batch/tows": "把这一批（或带 id 的那一首）放进 工作区\\素材\\配乐\\<清单名>\\",
     "/api/bgm/batch/open": "打开这一批的文件夹",
+    "/api/studio/projects": "视频工坊（v3.6）：历史项目列表（名字、画幅、几镜、有没有成片）和当前项目",
+    "/api/studio/state": "视频工坊当前项目的一切：分镜、每镜的图 / 配音、四步状态、成片和封面、音色清单",
+    "/api/studio/select": "视频工坊切换当前项目：{pid}",
+    "/api/studio/plan": "视频工坊 AI 拆解：{topic 或 text 完整口播, ratio 9:16/16:9, style, seconds, voice_id} → 新建项目，DeepSeek 一次给出分镜口播、逐镜画面、配乐英文提示词、标题话题",
+    "/api/studio/project": "视频工坊改当前项目：画幅、风格、标题、简介、话题、配乐描述、字幕 / 配乐音量 / 音色、每镜台词 / 语气 / 画面提示词",
+    "/api/studio/run": "视频工坊开跑：{pid, mode all 一键全自动 / step 单步, step images/tts/bgm/video, ids 只重跑这几镜}；本地配音和本地配乐串行、换模型前释放显存",
+    "/api/studio/stop": "视频工坊停下：结束当前这一步（ffmpeg 按进程号安全结束），没做完的保留着",
+    "/api/studio/to_publish": "视频工坊把成片、封面、标题、话题填进「发布」的待确认队列（不直接发抖音）",
+    "/api/studio/media": "视频工坊项目里的图片、配音、配乐、成片、字幕（只给这个项目文件夹里的文件）",
+    "/api/studio/open": "打开视频工坊项目的文件夹（what=output 打开 output）",
     "/api/voice": "语音的状态：听写装没装、用谁出声（Breeze TTS 2 / 本地配音顶着）、参考音频",
     "/api/voice/speak": "把一段话念出来：流式回 16 位单声道 PCM（采样率在 X-Sr 头里）；念之前去掉 Markdown、链接、代码",
     "/api/voice/warm": "用户开始说话/确定要朗读时，后台预热 Breeze（v3.5.2）；不常驻，闲置和让路照旧释放显存",
@@ -327,6 +337,7 @@ def generate(app=None, version="", themes=None):
           "| data/logs/setup_*.log | 一键补齐每一步的原始日志 |", "| data/logs/report.jsonl | 进展报告 |",
           "| data/logs/actions.jsonl | 动作日志（哈希链，改不了） |", "| memory/ | 记忆、技能、提示词、Claude 总结（中文 Markdown，git 记录改动） |",
           "| training/ | 慢成长的样本 |", "| models/ | 底座、嵌入模型、小脑、Kev 权重、配音模型（models/tts）、配乐模型（models/bgm） |", "| ai-env/、tts-env/、bgm-env/、.venv/ | 四个 Python 环境（本地模型、配音、配乐、后端；配乐复用 ai-env 的 torch） |", "| 配音输出/ | 保存的配音：一次一个文件夹（WAV、时间轴、字幕、文案） |",
+          "| 工作区/视频工坊/ | 视频工坊的项目：project.json、分镜图、配音、配乐、成片（v3.6，不进仓库） |",
           "| tools/ | 便携版 Git、PyTorch 安装包、下载缓存、临时文件 |"]
     if paths.LOGS.exists():
         L += ["", "现在 data/logs 里有：" + "、".join(sorted(p.name for p in paths.LOGS.iterdir() if p.is_file())[:30])]

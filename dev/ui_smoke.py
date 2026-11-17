@@ -34,7 +34,7 @@ def launch(pw):
         return pw.chromium.launch(executable_path="/opt/pw-browsers/chromium")
 
 
-TOOLS = ["img", "tts", "bgm", "publish", "events", "monitor", "ccode", "brains", "reports", "settings", "docs"]   # v3.2 加了「发布」；v3.4 加了 Claude Code 工作台；大脑、报告、说明的按钮藏起来了（挪进设置），还在 DOM 里
+TOOLS = ["img", "tts", "bgm", "studio", "publish", "events", "monitor", "ccode", "brains", "reports", "settings", "docs"]   # v3.2 加了「发布」；v3.4 加了 Claude Code 工作台；v3.6 加了「视频工坊」；大脑、报告、说明的按钮藏起来了（挪进设置），还在 DOM 里
 TOOL_SIZE = {"横屏": (1440, 880), "竖屏": (1080, 1860)}       # 工具窗口（v2.0）：默认 1440×880；竖屏放在竖着的显示器上
 
 

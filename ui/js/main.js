@@ -59,6 +59,10 @@ function applyUIState() {
     if (typeof U.docsCur === 'string') DOCS.cur = U.docsCur;
     if (U.docsMode === 'tree' || U.docsMode === 'text') DOCS.mode = U.docsMode;
   }
+  if (typeof STUDIO !== 'undefined') {
+    if (U.studio && typeof U.studio === 'object') STUDIO.pref = Object.assign({}, STUDIO.pref, U.studio);
+    if (typeof U.studioTopic === 'string') STUDIO.topic = U.studioTopic;
+  }
 }
 function loadServer() {
   return api('GET', '/api/settings', null, 4000).then(function (j) {
