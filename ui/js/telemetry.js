@@ -10,7 +10,7 @@
 var TEL = (function () {
   var q = [], timer = null, current = null, curTimer = null, seq = 0;
   var PAGE = { home: '主页', chat: '对话', resident: '常驻', monitor: '后台', settings: '设置', docs: '说明',
-    events: '事件', tts: '配音', bgm: '配乐', img: '生图', studio: '视频工坊', publish: '发布', brains: '大脑', reports: '报告', ccode: 'Claude Code' };
+    events: '事件', tts: '配音', bgm: '配乐', img: '生图', publish: '发布', brains: '大脑', reports: '报告', ccode: 'Claude Code' };
 
   function newTrace() { return 'tr_' + Date.now().toString(36) + '_' + (++seq).toString(36) + Math.random().toString(36).slice(2, 8); }
   function pageName() {
