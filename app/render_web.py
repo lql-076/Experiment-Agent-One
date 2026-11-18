@@ -165,7 +165,7 @@ def _open_browser(pw):
     raise RenderWebError(f"网页渲染的浏览器没打开：{str(err)[:200]}")
 
 
-def render_shot(project_dir, shot, settings, out_path, W, H, fps=24, stopped=None, preview=None) -> Path:
+def render_shot(project_dir, shot, settings, out_path, W, H, fps=24, stopped=None, preview=None, on_frame=None) -> Path:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -181,10 +181,10 @@ def render_shot(project_dir, shot, settings, out_path, W, H, fps=24, stopped=Non
     html = _html(shot, W, H, settings or {})
     hp = render_dir / (Path(out_path).stem + ".html")
     hp.write_text(html, "utf-8")
-    return render_html_file(hp, out_path, W, H, fps, max(.2, float(shot.get("duration") or 5)), stopped, preview)
+    return render_html_file(hp, out_path, W, H, fps, max(.2, float(shot.get("duration") or 5)), stopped, preview, on_frame)
 
 
-def render_html_file(html_path, out_path, W, H, fps=24, duration=5.0, stopped=None, preview=None) -> Path:
+def render_html_file(html_path, out_path, W, H, fps=24, duration=5.0, stopped=None, preview=None, on_frame=None) -> Path:
     """把任意本地 HTML 文件逐帧录成 H.264 轨（v3.9.0 看图复刻用；不执行外部脚本，只跑页面自己的动画）。"""
     try:
         from playwright.sync_api import sync_playwright
@@ -218,6 +218,11 @@ def render_html_file(html_path, out_path, W, H, fps=24, duration=5.0, stopped=No
                 page.evaluate("t => window.__vt.step(t)", (i / fps) * 1000)
                 shot_bytes = page.screenshot(type="jpeg", quality=92)
                 ff.stdin.write(shot_bytes)
+                if on_frame and (i % max(1, n // 30) == 0 or i == n - 1):
+                    try:
+                        on_frame(i + 1, n)
+                    except Exception:
+                        pass
                 if pv and (i % max(1, n // 6) == 0 or i == n - 1):
                     tmpv = pv.with_name(pv.name + ".part")
                     tmpv.write_bytes(shot_bytes)

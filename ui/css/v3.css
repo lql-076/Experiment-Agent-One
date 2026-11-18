@@ -993,3 +993,24 @@ body.lb-on{overflow:hidden}
 .st-m-voice .st-node-body,.st-m-bgm .st-node-body{gap:.3rem}
 .st-m-compose{box-shadow:0 0 0 1px color-mix(in srgb,var(--hud) 35%,transparent),0 18px 60px rgba(0,0,0,.28)}
 @media (max-width:1200px){.st-monitor{grid-template-columns:1fr}.st-mon-img{max-height:10rem}}
+
+/* ---------- v4.0.1 模块实时进度 / 媒体播放 ---------- */
+.st-rt{flex:none;padding:.22rem .5rem .18rem;border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent)}
+.st-rbar{height:.32rem;background:var(--line);overflow:hidden;border-radius:999px}
+.st-rbar b{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--hud),var(--accent));transition:width .35s var(--ease)}
+.st-rline{display:flex;align-items:center;gap:.4rem;padding-top:.12rem;font-size:.58rem;color:var(--text3);min-height:1rem}
+.st-rline span:first-child{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st-rline span:last-child{font-family:var(--mono);white-space:nowrap}
+.st-node.st-live{border-color:color-mix(in srgb,var(--hud) 65%,var(--line2));box-shadow:0 0 0 1px color-mix(in srgb,var(--hud) 40%,transparent),0 0 22px color-mix(in srgb,var(--hud) 18%,transparent);animation:stBreath 1.8s ease-in-out infinite}
+.st-node.st-queued{border-color:color-mix(in srgb,var(--warn) 65%,var(--line2));box-shadow:0 0 0 1px color-mix(in srgb,var(--warn) 35%,transparent)}
+@keyframes stBreath{0%,100%{box-shadow:0 0 0 1px color-mix(in srgb,var(--hud) 30%,transparent),0 0 10px color-mix(in srgb,var(--hud) 10%,transparent)}50%{box-shadow:0 0 0 1px color-mix(in srgb,var(--hud) 70%,transparent),0 0 28px color-mix(in srgb,var(--hud) 28%,transparent)}}
+.st-nrun.st-btn-live,.st-node .btn.st-btn-live{border-color:var(--hot,var(--accent));color:var(--hot,var(--accent));background:color-mix(in srgb,var(--hot,var(--accent)) 12%,transparent)}
+.st-audios{display:flex;flex-direction:column;gap:.4rem}
+.st-audio{display:flex;flex-direction:column;gap:.1rem;padding:.2rem;border:1px solid color-mix(in srgb,var(--line) 70%,transparent);background:color-mix(in srgb,var(--bg2) 45%,transparent)}
+.st-audio audio{width:100%;height:2rem}
+.st-audio-meta{display:flex;justify-content:space-between;gap:.3rem;font-size:.6rem;color:var(--text3)}
+.st-audio-meta b{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st-media-err{font-size:.6rem;color:var(--bad);min-height:.9rem;white-space:pre-wrap;word-break:break-all}
+.st-vbox{display:flex;flex-direction:column;gap:.15rem}
+.st-mon-meta span{white-space:nowrap}
+.st-mon-img{transition:opacity .2s}

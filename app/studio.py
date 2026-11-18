@@ -19,6 +19,7 @@ r"""自媒体视频工坊（v3.8.1，R09）：默认可测子节点 + 全参数�
 工程都存在 工作区\视频工坊\<项目名_时间戳>\project.json（不进仓库），单步重跑只动点名的那一步。
 """
 import asyncio
+import contextvars
 import copy
 import hashlib
 import json
@@ -45,6 +46,9 @@ ROLE_DEFAULT_VOICES = {"白页": "local:preset:Serena", "紫苏": "local:preset:
 GAP = video_maker.GAP
 MAX_SHOTS = 15
 _GATES = {}
+_CUR_MID = contextvars.ContextVar("studio_mid", default="")
+_CUR_P = contextvars.ContextVar("studio_project", default=None)
+_CUR_JOB = contextvars.ContextVar("studio_job", default=None)
 
 
 def _loop_gate(name, factory):
@@ -64,7 +68,8 @@ def _api_gate():
 
 def _gpu_lock():
     return _loop_gate("gpu", asyncio.Lock)
-MEDIA_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".wav", ".mp3", ".flac", ".mp4", ".mov", ".mkv", ".webm", ".srt", ".json"}
+MEDIA_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".wav", ".mp3", ".flac", ".ogg", ".m4a",
+             ".mp4", ".mov", ".mkv", ".webm", ".srt", ".json"}
 
 PLAN_SYS = """你是「白页 × 紫苏」短视频账号的编导。账号固定风格是：知识科普 × 科技数码 × 搞笑段子。
 内核必须硬核：科技原理、产品逻辑、数据或反常识结论要讲清楚；外壳必须好笑：白页和紫苏用漫剧式的拌嘴、抬杠、夸张反应把知识演出来。
@@ -710,23 +715,78 @@ class Studio:
     def __init__(self):
         self.job = None
         self._task = None
+        self._tasks = {}
+        self._stops = {}
+        self._jobs = {}
         self._stop = threading.Event()
         self._saved = 0.0
+        self._save_lock = threading.Lock()
+        self._gpu_busy = False
 
     # ---------- 状态 ----------
     def busy(self):
-        return bool(self._task and not self._task.done())
+        return any(not t.done() for t in self._tasks.values()) or bool(self._task and not self._task.done())
+
+    def _running_ids(self):
+        return [mid for mid, t in self._tasks.items() if not t.done()]
+
+    def _job(self):
+        return _CUR_JOB.get() or self._jobs.get("compose") or self.job
 
     def public(self):
-        j = self.job
+        running = self._running_ids()
+        j = self._jobs.get("compose") if "compose" in running else ((self._jobs.get(running[0]) if running else None) or self.job)
+        if running and not j:
+            j = {"st": "run", "mode": "module", "step": running[0], "msg": "运行中", "pct": 0, "t0": time.time()}
         if not j:
             return None
         out = {k: j.get(k) for k in ("id", "st", "mode", "step", "pid", "stage", "msg", "pct", "err", "shot")}
+        if running and out.get("st") != "run":
+            out.update(st="run", msg=out.get("msg") or "运行中")
         out["elapsed"] = round((j.get("t1") or time.time()) - j.get("t0", time.time()))
         out["web"] = j.get("web") or {}
         out["ppt"] = j.get("ppt") or {}
         out["ffmpeg"] = j.get("ffmpeg") or {}
+        out["running"] = running
         return out
+
+    def _set_runtime(self, p, mid, phase, pct=None, status=None, took=None):
+        try:
+            m = graph.module_of(p, mid)
+        except graph.GraphError:
+            return
+        rt = m.setdefault("runtime", {"status": "idle", "pct": 0, "phase": "待命", "started_at": 0, "last_took_s": 0})
+        rt["phase"] = str(phase or "")[:160]
+        if pct is not None:
+            rt["pct"] = round(max(0.0, min(100.0, float(pct))), 1)
+        if status:
+            rt["status"] = status
+            m["status"] = status
+        if took is not None:
+            rt["last_took_s"] = round(float(took), 1)
+        self._save(p)
+
+    def _phase(self, phase, pct=None, status=None):
+        mid, p = _CUR_MID.get(), _CUR_P.get()
+        if not mid or not p:
+            return
+        try:
+            m = graph.module_of(p, mid)
+        except graph.GraphError:
+            return
+        rt = m.setdefault("runtime", {"status": "idle", "pct": 0, "phase": "待命", "started_at": 0, "last_took_s": 0})
+        rt["phase"] = str(phase or "")[:160]
+        if pct is not None:
+            rt["pct"] = round(max(0.0, min(100.0, float(pct))), 1)
+        if status:
+            rt["status"] = status
+            m["status"] = status
+        j = self._job()
+        if j:
+            j["msg"] = rt["phase"]
+            if pct is not None:
+                j["pct"] = rt["pct"]
+        self._save(p)
 
     def _recover(self, p):
         if self.busy() and self.job and self.job.get("pid") == p.get("id"):
@@ -800,6 +860,7 @@ class Studio:
         mods = []
         for m in p.get("modules") or []:
             item = dict(m)
+            item.setdefault("runtime", {"status": "idle", "pct": 0, "phase": "待命", "started_at": 0, "last_took_s": 0})
             item["outputs"] = []
             for o in m.get("outputs") or []:
                 q = d / str(o.get("rel") or "")
@@ -910,7 +971,14 @@ class Studio:
         text = str(body.get("text") or "").strip()
         if not topic and not text:
             raise HTTPException(400, "先在剧本模块里写一个主题，或者贴完整口播文案")
-        j, cny = await _ask_plan(topic, text, p.get("ratio") or "9:16", p.get("target_seconds") or 75)
+        t0 = time.time()
+        self._set_runtime(p, "script", "正在请求 DeepSeek 拆解剧本…", 5, "running")
+        try:
+            j, cny = await _ask_plan(topic, text, p.get("ratio") or "9:16", p.get("target_seconds") or 75)
+        except Exception as e:
+            self._set_runtime(p, "script", "DeepSeek 拆解失败：" + _err_text(e)[:160], 0, "error", time.time() - t0)
+            raise
+        self._set_runtime(p, "script", "正在解析并写入 5 份 Markdown 清单…", 70, "running")
         doc = {"title": j["title"], "desc": j["desc"], "tags": j["tags"],
                "bgm": {"segments": [{"id": "bgm-1", "prompt": j["bgm_prompt"], "seconds": p.get("target_seconds") or 75,
                                      "steps": 8, "seed": int(time.time()) % 100000}]} if j.get("bgm_prompt") else {"segments": []},
@@ -926,6 +994,8 @@ class Studio:
         p["cost"]["plan_cny"] = round(float((p.get("cost") or {}).get("plan_cny") or 0) + cny, 4)
         data = graph.write_lists(p, doc)
         script["status"] = "ok"
+        took = time.time() - t0
+        self._set_runtime(p, "script", f"已完成（{len(doc['shots'])} 个分镜，耗时 {took:.1f}s）", 100, "ok", took)
         video_maker.save_project(p)
         return {"state": self.state(p["id"]), "estimate": graph.estimate(doc), "summary": f"{len(doc['shots'])} 个分镜", "lists": data, "cny": round(cny, 4)}
 
@@ -1029,29 +1099,80 @@ class Studio:
 
     # ---------- 运行 ----------
     async def start_run(self, body):
-        if self.busy():
-            raise HTTPException(409, "正在跑：等它好了，或者先点「停下」")
         p = self._load(_pid_of(body))
         mid = str(body.get("id") or "")
         part = str(body.get("part") or "")
+        loop = asyncio.get_running_loop()
         if mid:
             graph.module_of(p, mid)
+            if not any(not t.done() for t in self._tasks.values()):
+                self._stop.clear()
+            old = self._tasks.get(mid)
+            if old and not old.done():
+                raise HTTPException(409, "这个模块正在跑：等它好了，或者先点它的「停止」")
+            self._start_module_task(p, mid, part)
+            await asyncio.sleep(0.05)
+            return {"job": self.public(), "project": self.project_view(p)}
+        if self._tasks and any(not t.done() for t in self._tasks.values()):
+            raise HTTPException(409, "还有模块在跑：等它们好了，或者先逐个停下")
         self._stop.clear()
         self._saved = 0.0
-        self.job = {"id": int(time.time() * 1000), "st": "run", "mode": "module" if mid else "all", "step": mid or "all",
-                    "pid": p["id"], "stage": 1, "msg": "准备中", "pct": 0, "err": "", "shot": "",
-                    "t0": time.time(), "t1": 0.0, "web": {"st": "idle", "msg": "", "pct": 0, "current": 0, "total": 0, "fps": 0, "preview_rel": "", "cc": ""},
-                    "ppt": {"st": "idle", "msg": "", "pct": 0, "current": 0, "total": 0, "slides": []},
-                    "ffmpeg": {"st": "idle", "msg": "", "pct": 0, "fps": 0, "log": "", "params": {}}}
+        self.job = {"id": int(time.time() * 1000), "st": "run", "mode": "all", "step": "all", "pid": p["id"],
+                    "stage": 1, "msg": "准备中", "pct": 0, "err": "", "shot": "", "t0": time.time(), "t1": 0.0,
+                    "web": {}, "ppt": {}, "ffmpeg": {}}
         db.kv_set("studio_active", p["id"])
-        self._task = asyncio.get_running_loop().create_task(self._run_job(p, mid, part))
+        self._task = loop.create_task(self._run_job(p))
         await asyncio.sleep(0.05)
         return {"job": self.public(), "project": self.project_view(p)}
 
-    def stop(self):
+    def _start_module_task(self, p, mid, part="", keep_job=False):
+        loop = asyncio.get_running_loop()
+        stop = threading.Event()
+        self._stops[mid] = stop
+        job = {"id": int(time.time() * 1000), "st": "run", "mode": "module", "step": mid, "pid": p["id"],
+               "stage": 2 if mid == "compose" else 1, "msg": "准备中", "pct": 0, "err": "", "shot": "",
+               "t0": time.time(), "t1": 0.0, "web": {}, "ppt": {}, "ffmpeg": {}}
+        self._jobs[mid] = job
+        if not keep_job:
+            self.job = job
+        db.kv_set("studio_active", p["id"])
+        task = loop.create_task(self._module_task(p, mid, part, stop, job))
+        self._tasks[mid] = task
+        return task
+
+    def stop(self, module_id=""):
+        mid = str(module_id or "")
+        if mid:
+            task = self._tasks.get(mid)
+            if not task or task.done():
+                return {"ok": False, "msg": "这个模块现在没有在跑"}
+            ev = self._stops.get(mid)
+            if ev:
+                ev.set()
+            if mid in ("voice-white", "voice-zisu"):
+                try:
+                    tts.T.stop("视频工坊：你点了停下这个配音模块")
+                except Exception:
+                    pass
+            if mid == "bgm":
+                try:
+                    if bgm.B.busy():
+                        bgm.B.job["stop"] = "视频工坊：你点了停下这个配乐模块"
+                except Exception:
+                    pass
+            j = self._jobs.get(mid) or {}
+            if j.get("cc_eid"):
+                try:
+                    ccode.request_stop(j["cc_eid"], "视频工坊：你点了停下")
+                except Exception:
+                    pass
+            j["msg"] = "停下中：当前这一步收尾后不再往下做"
+            return {"ok": True, "msg": "停这个模块：当前这一步收尾后不再往下做", "job": self.public()}
         if not self.busy():
             return {"ok": False, "msg": "现在没有在跑的"}
         self._stop.set()
+        for ev in self._stops.values():
+            ev.set()
         if self.job:
             self.job["msg"] = "停下中：正在结束当前这一步……"
         try:
@@ -1063,32 +1184,67 @@ class Studio:
                 bgm.B.job["stop"] = "视频工坊：你点了停下"
         except Exception:
             pass
-        if (self.job or {}).get("cc_eid"):
-            try:
-                ccode.request_stop(self.job["cc_eid"], "视频工坊：你点了停下")
-            except Exception:
-                pass
-        return {"ok": True, "msg": "停了：当前这一步收尾后不再往下做", "job": self.public()}
+        for j in self._jobs.values():
+            if j.get("cc_eid"):
+                try:
+                    ccode.request_stop(j["cc_eid"], "视频工坊：你点了停下")
+                except Exception:
+                    pass
+        return {"ok": True, "msg": "全停了：当前这一步收尾后不再往下做", "job": self.public()}
 
-    async def _run_job(self, p, mid, part):
+    async def _module_task(self, p, mid, part, stop, job):
+        tok_m = _CUR_MID.set(mid)
+        tok_p = _CUR_P.set(p)
+        tok_j = _CUR_JOB.set(job)
+        m = graph.module_of(p, mid)
+        rt = m.setdefault("runtime", {})
+        rt.update(status="running", pct=0, phase="准备中", started_at=time.time(), last_took_s=0)
+        m["status"] = "running"
+        self._save(p, True)
+        t0 = time.time()
+        ok = False
+        try:
+            await self._run_module(p, mid, part)
+            ok = True
+        except StopRequested:
+            job.update(st="stop", msg="停了：没做完的保留着", t1=time.time())
+            rt.update(status="idle", pct=0, phase="已停止（没做完的保留着）")
+            m["status"] = "stale"
+        except asyncio.CancelledError:
+            job.update(st="stop", msg="停了", t1=time.time())
+            rt.update(status="idle", pct=0, phase="已停止")
+            raise
+        except Exception as e:
+            msg = _err_text(e)
+            job.update(st="err", err=msg, msg="没做成：" + msg[:200], t1=time.time())
+            rt.update(status="error", phase=msg[:200])
+            m["status"] = "err"
+            m["error"] = msg[:500]
+        finally:
+            took = round(time.time() - t0, 1)
+            if ok:
+                job.update(st="done", pct=100, msg=f"完成（耗时 {took:.1f}s）", t1=time.time())
+                rt.update(status="ok", pct=100, phase=f"已完成（耗时 {took:.1f}s）", last_took_s=took)
+            elif rt.get("status") not in ("idle", "error"):
+                rt.update(status="error", last_took_s=took)
+            self._save(p, True)
+            _CUR_MID.reset(tok_m)
+            _CUR_P.reset(tok_p)
+            _CUR_JOB.reset(tok_j)
+
+    async def _run_job(self, p):
         p["st"] = "run"
         p["error"] = ""
         self._save(p, True)
         try:
-            if mid:
-                await self._run_module(p, mid, part)
-            else:
-                await self._run_full(p)
-            if self._stop.is_set():
+            await self._run_full(p)
+            if self._stopped():
                 raise StopRequested()
             p["st"] = "done"
             self.job.update(st="done", pct=100, msg="全部完成", stage=4, t1=time.time())
             feed.add(f"视频工坊「{p.get('title') or p['id']}」跑完了", "ok", job=JOBS)
         except StopRequested:
             p["st"] = "stop"
-            for m in p.get("modules") or []:
-                if m.get("status") == "run":
-                    m["status"] = "stale"
             self.job.update(st="stop", msg="停了：没做完的保留着", t1=time.time())
         except asyncio.CancelledError:
             p["st"] = "stop"
@@ -1106,17 +1262,21 @@ class Studio:
 
     async def _run_full(self, p):
         self.job.update(stage=1, msg="第一阶段：白页配音 + 紫苏配音 + 背景配乐，三路并行", pct=2)
-        tasks = [(mid, asyncio.get_running_loop().create_task(self._run_module(p, mid, "")))
-                 for mid in ("voice-white", "voice-zisu", "bgm")]
+        tasks = [(mid, self._start_module_task(p, mid, "", keep_job=True)) for mid in ("voice-white", "voice-zisu", "bgm")]
         res = await asyncio.gather(*(t for _m, t in tasks), return_exceptions=True)
-        if self._stop.is_set():
+        if self._stopped():
             raise StopRequested()
         errs = [f"{mid}：{_err_text(e)[:120]}" for (mid, _t), e in zip(tasks, res) if isinstance(e, Exception)]
         await self._rebuild_voice(p)
         if errs:
             self.job["msg"] = "配音/配乐有没成的，继续用已经有的：" + "；".join(errs[:2])
         self.job.update(stage=2, msg="第二阶段：视频制作总成（网页动效 + PPT + FFmpeg）", pct=35)
-        await self._run_module(p, "compose", "")
+        ct = self._start_module_task(p, "compose", "", keep_job=True)
+        try:
+            await ct
+        finally:
+            if self._stopped():
+                raise StopRequested()
         self.job.update(stage=3, msg="成片已送入预览与发布", pct=98)
         pub = graph.module_of(p, "publish")
         pub["status"] = "ok" if p.get("files", {}).get("video") else "idle"
@@ -1130,12 +1290,12 @@ class Studio:
         outs = [o for o in raw if _output_ok(p, o)]
         if not part and raw and len(outs) == len(raw) and m.get("cache_key") == key:
             m.update(status="ok", error="", cache_hit=True)
+            rt = m.setdefault("runtime", {})
+            rt.update(status="ok", pct=100, phase="缓存命中（没有重新花钱）", last_took_s=0)
             self._save(p, True)
             return
-        m.update(status="run", error="", cache_hit=False)
-        if self.job:
-            self.job["step"] = mid
-            self.job["msg"] = f"{m.get('title') or mid}：开始"
+        m.update(status="running", error="", cache_hit=False)
+        self._phase(f"{m.get('title') or mid}：开始", 1, "running")
         self._save(p, True)
         try:
             out = await self._exec_module(p, m, part)
@@ -1147,6 +1307,7 @@ class Studio:
                     o["size"] = q.stat().st_size
             m.update(status="ok", error="", cache_key=graph.cache_key(p, m), cache_hit=bool(m.get("cache_hit")), finished=time.time())
             if mid in ("voice-white", "voice-zisu"):
+                self._save(p, True)
                 await self._rebuild_voice(p)
         except StopRequested:
             m["status"] = "stale"
@@ -1179,6 +1340,7 @@ class Studio:
         doc = prm.get("script_doc") if isinstance(prm.get("script_doc"), dict) else {}
         if not doc.get("shots"):
             doc = graph.doc_from_modules(p)
+        self._phase("正在解析并写入 5 份 Markdown 清单…", 20, "running")
         data = graph.write_lists(p, doc)
         prm["script_doc"] = doc
         outs = []
@@ -1188,6 +1350,7 @@ class Studio:
                 outs.append(o)
         if not outs:
             raise StudioError("清单没写出来：检查项目 Lists 文件夹")
+        self._phase("5 份 Markdown 清单已生成", 95, "running")
         return outs
 
     # ---------- 模块 2：生图测试台 ----------
@@ -1217,9 +1380,12 @@ class Studio:
                 "img_custom_h": int(prm.get("custom_h") or 0), "gif_frames": int(prm.get("gif_frames") or 8),
                 "gif_delay_ms": int(prm.get("gif_delay_ms") or 150)}
         pp = self._pseudo(p, [shot])
+        self._phase("正在上传参考图 / 请求 API易 (GPT Image 2.6)…", 15, "running")
         await self._gen_images(pp, ids=["image-test"])
-        if self.job:
-            self.job["step"] = m["id"]
+        self._phase("正在下载并校验图片…", 90, "running")
+        j = self._job()
+        if j:
+            j["step"] = m["id"]
         s = pp["shots"][0]
         outs = [o for o in (_out(p, rel, "image", {"index": i}) for i, rel in enumerate(s.get("img_variants") or [])) if o]
         if not outs:
@@ -1255,9 +1421,12 @@ class Studio:
                           "tts": "", "image": "", "duration": 0.0, "start": 0.0, "end": 0.0, "tts_err": "",
                           "tts_cache_hit": False, "_tts_rel": rel, "line_index": idx})
         pp = self._pseudo(p, shots)
+        self._phase("正在读取台词，准备逐句合成…", 3, "running")
         await self._gen_tts(pp, out_prefix=f"{m['id']}_")
-        if self.job:
-            self.job["step"] = m["id"]
+        self._phase("正在整理逐句音频…", 90, "running")
+        j = self._job()
+        if j:
+            j["step"] = m["id"]
         outs = []
         for s in pp["shots"]:
             o = _out(p, s.get("tts"), "audio", {"line": str(s.get("line_index") or ""), "duration": s.get("duration"),
@@ -1277,40 +1446,57 @@ class Studio:
         return outs
 
     async def _rebuild_voice(self, p):
-        """白页/紫苏所有已有的逐句音频，按全局 line_index 拼成 voice.wav + srt + timeline。"""
+        """白页/紫苏所有已有逐句音频，按全局 line_index 拼成 voice.wav + srt + timeline。"""
         async with _loop_gate("voice-rebuild", asyncio.Lock):
-            rows = []
-            for mid in ("voice-white", "voice-zisu"):
-                m = graph.module_of(p, mid)
-                by_idx = {int(x.get("line_index") or 0): x for x in (m.get("params") or {}).get("lines") or []}
-                for o in m.get("outputs") or []:
-                    if o.get("kind") != "audio":
-                        continue
-                    idx = int(o.get("line") or 0)
-                    if not idx or not _output_ok(p, o):
-                        continue
-                    ln = by_idx.get(idx) or {}
-                    rows.append({"idx": idx, "tts": o["rel"], "text": str(ln.get("text") or o.get("text") or ""),
-                                 "role": (m.get("params") or {}).get("role") or ("白页" if mid == "voice-white" else "紫苏"),
-                                 "speaker": ln.get("speaker") or (m.get("params") or {}).get("speaker") or "",
-                                 "tone": ln.get("tone") or (m.get("params") or {}).get("tone") or ""})
-            rows.sort(key=lambda x: x["idx"])
-            if not rows:
-                p.setdefault("files", {}).pop("voice", None)
-                return {}
-            shots = []
-            for r in rows:
-                dur = _wav_duration(Path(p["dir"]) / r["tts"])
-                shots.append({"id": f"s{r['idx']}", "text": r["text"], "role": r["role"], "speaker": r["speaker"],
-                              "tone": r["tone"], "tts": r["tts"], "duration": dur, "start": 0.0, "end": 0.0})
-            pp = self._pseudo(p, shots)
-            await self._build_voice(pp, shots=shots, out_prefix="")
-            for k in ("voice", "srt", "timeline"):
-                if (pp.get("files") or {}).get(k):
-                    p.setdefault("files", {})[k] = pp["files"][k]
-            p["total_seconds"] = pp.get("total_seconds") or 0
-            video_maker.save_project(p)
-            return pp.get("files") or {}
+            with self._save_lock:
+                latest = video_maker.load_project(p["id"])
+                mid = _CUR_MID.get()
+                if mid in ("voice-white", "voice-zisu"):
+                    try:
+                        idx = next(i for i, x in enumerate(latest.get("modules") or []) if x.get("id") == mid)
+                        nm = graph.module_of(p, mid)
+                        for k in ("x", "y", "w", "h"):
+                            if latest["modules"][idx].get(k) is not None:
+                                nm[k] = latest["modules"][idx][k]
+                        latest["modules"][idx] = nm
+                    except (StopIteration, graph.GraphError):
+                        pass
+                rows = []
+                for vmid in ("voice-white", "voice-zisu"):
+                    m = graph.module_of(latest, vmid)
+                    by_idx = {int(x.get("line_index") or 0): x for x in (m.get("params") or {}).get("lines") or []}
+                    for o in m.get("outputs") or []:
+                        if o.get("kind") != "audio":
+                            continue
+                        idx = int(o.get("line") or 0)
+                        if not idx or not _output_ok(latest, o):
+                            continue
+                        ln = by_idx.get(idx) or {}
+                        rows.append({"idx": idx, "tts": o["rel"], "text": str(ln.get("text") or o.get("text") or ""),
+                                     "role": (m.get("params") or {}).get("role") or ("白页" if vmid == "voice-white" else "紫苏"),
+                                     "speaker": ln.get("speaker") or (m.get("params") or {}).get("speaker") or "",
+                                     "tone": ln.get("tone") or (m.get("params") or {}).get("tone") or ""})
+                rows.sort(key=lambda x: x["idx"])
+                if not rows:
+                    latest.setdefault("files", {}).pop("voice", None)
+                    p.setdefault("files", {}).pop("voice", None)
+                    video_maker.save_project(latest)
+                    return {}
+                shots = []
+                for r in rows:
+                    dur = _wav_duration(Path(p["dir"]) / r["tts"])
+                    shots.append({"id": f"s{r['idx']}", "text": r["text"], "role": r["role"], "speaker": r["speaker"],
+                                  "tone": r["tone"], "tts": r["tts"], "duration": dur, "start": 0.0, "end": 0.0})
+                pp = self._pseudo(latest, shots)
+                await self._build_voice(pp, shots=shots, out_prefix="")
+                for k in ("voice", "srt", "timeline"):
+                    if (pp.get("files") or {}).get(k):
+                        latest.setdefault("files", {})[k] = pp["files"][k]
+                        p.setdefault("files", {})[k] = pp["files"][k]
+                latest["total_seconds"] = pp.get("total_seconds") or 0
+                p["total_seconds"] = latest["total_seconds"]
+                video_maker.save_project(latest)
+                return pp.get("files") or {}
 
     # ---------- 模块 5：配乐 ----------
     async def _exec_bgm(self, p, m):
@@ -1326,8 +1512,9 @@ class Studio:
         except (TypeError, ValueError):
             pp["total_seconds"] = 75
         await self._gen_bgm(pp, dest_rel="bgm/bgm.wav", project_key="bgm")
-        if self.job:
-            self.job["step"] = m["id"]
+        j = self._job()
+        if j:
+            j["step"] = m["id"]
         m["cache_hit"] = bool(pp.get("bgm_cache_hit"))
         o = _out(p, "bgm/bgm.wav", "audio", {"duration": pp.get("bgm_seconds")})
         if not o:
@@ -1381,6 +1568,7 @@ class Studio:
 
     async def _exec_compose(self, p, m, part=""):
         prm = m.get("params") or {}
+        self._phase("正在读取视频渲染清单与配音时间轴…", 3, "running")
         shots, voice_rows = self._compose_shots(p)
         prm["shots"] = shots
         m["params"]["shots"] = shots
@@ -1396,10 +1584,12 @@ class Studio:
         web = [s for s in shots if s.get("render") == "web"]
         ppt = [s for s in shots if s.get("render") in ("ppt", "static")]
         if part in ("", "web") and (web or part == "web"):
+            self._phase("正在渲染网页动效…", 20, "running")
             await self._render_web(p, m, web)
         if part in ("", "ppt") and (ppt or part == "ppt"):
+            self._phase("正在生成 PPT 卡片…", 55, "running")
             await self._render_ppt(p, m, ppt)
-        if self._stop.is_set():
+        if self._stopped():
             raise StopRequested()
         m["params"]["shots"] = shots
         video_maker.save_project(p)
@@ -1421,18 +1611,21 @@ class Studio:
         p["total_seconds"] = round(total, 3)
 
     def _set_web(self, **kw):
-        if self.job:
-            w = self.job.setdefault("web", {})
+        j = self._job()
+        if j:
+            w = j.setdefault("web", {})
             w.update(kw)
 
     def _set_ppt(self, **kw):
-        if self.job:
-            w = self.job.setdefault("ppt", {})
+        j = self._job()
+        if j:
+            w = j.setdefault("ppt", {})
             w.update(kw)
 
     def _set_ff(self, **kw):
-        if self.job:
-            w = self.job.setdefault("ffmpeg", {})
+        j = self._job()
+        if j:
+            w = j.setdefault("ffmpeg", {})
             w.update(kw)
 
     async def _render_web(self, p, m, shots):
@@ -1444,9 +1637,10 @@ class Studio:
         d = Path(p["dir"])
         try:
             for i, s in enumerate(shots, 1):
-                if self._stop.is_set():
+                if self._stopped():
                     raise StopRequested()
-                self._set_web(current=i, msg=f"第 {i}/{len(shots)} 镜 · {s.get('id')}", pct=round((i - 1) / max(1, len(shots)) * 100, 1))
+                self._set_web(current=i, msg=f"网页渲染 第 {i}/{len(shots)} 镜 · {s.get('id')}", pct=round((i - 1) / max(1, len(shots)) * 100, 1))
+                self._phase(f"网页渲染 第 {i}/{len(shots)} 镜 · {s.get('id')}…", 20 + (i - 1) / max(1, len(shots)) * 32, "running")
                 rel = f"render/web_{s['id']}.mp4"
                 dest = d / rel
                 html_rel = f"render/cc_{s['id']}.html"
@@ -1466,7 +1660,9 @@ class Studio:
                         self._set_web(msg=f"Claude Code 正在写第 {i} 镜的网页动效……")
                         steps = []
                         eid = -int(time.time() * 1000) - i
-                        self.job["cc_eid"] = eid
+                        j = self._job()
+                        if j:
+                            j["cc_eid"] = eid
                         try:
                             r = await ccode.run(eid, prompt, steps, lambda x: self._set_web(msg=str(x)[:120]), extra=f"产物：{html_rel}")
                             if r.get("stopped"):
@@ -1479,15 +1675,17 @@ class Studio:
                         except Exception as e:
                             self._set_web(cc="失败，退回内置模板：" + str(e)[:60])
                             use_cc = False
-                if self._stop.is_set():
+                if self._stopped():
                     raise StopRequested()
                 if use_cc and html.is_file():
                     src = cache.sha_file(html)
                     key = cache.fingerprint("track_web_cc", {"html": src, "w": W, "h": H, "fps": fps, "dur": duration})
                     if not cache.hit_to(key, dest, "tracks"):
                         self._set_web(msg=f"录制网页动效 {i}/{len(shots)}……")
-                        await asyncio.to_thread(render_web.render_html_file, html, dest, W, H, fps, duration, self._stop.is_set,
-                                                str(d / "render" / f"preview_web_{s['id']}.jpg"))
+                        await asyncio.to_thread(render_web.render_html_file, html, dest, W, H, fps, duration, self._stopped,
+                                                str(d / "render" / f"preview_web_{s['id']}.jpg"),
+                                                lambda fr, tot: self._set_web(frame=fr, total_frames=tot,
+                                                                               pct=round(fr / max(1, tot) * 100, 1)))
                         cache.put(key, dest, "tracks", {"type": "web_cc", "w": W, "h": H, "fps": fps})
                 else:
                     key = cache.fingerprint("track_web", {"text": s.get("text"), "visual": s.get("visual"), "duration": duration,
@@ -1497,8 +1695,10 @@ class Studio:
                         shot = {"id": s["id"], "text": s.get("text") or "", "role": s.get("role") or "", "tone": s.get("tone") or "",
                                 "duration": duration, "gif": "", "render_image": "", "image": ""}
                         self._set_web(msg=f"内置模板录制 {i}/{len(shots)}……")
-                        await asyncio.to_thread(render_web.render_shot, p["dir"], shot, prm, dest, W, H, fps, self._stop.is_set,
-                                                str(d / "render" / f"preview_web_{s['id']}.jpg"))
+                        await asyncio.to_thread(render_web.render_shot, p["dir"], shot, prm, dest, W, H, fps, self._stopped,
+                                                str(d / "render" / f"preview_web_{s['id']}.jpg"),
+                                                lambda fr, tot: self._set_web(frame=fr, total_frames=tot,
+                                                                               pct=round(fr / max(1, tot) * 100, 1)))
                         cache.put(key, dest, "tracks", {"type": "web", "w": W, "h": H, "fps": fps})
                 s["render_clip"] = rel
                 s["render_image"] = ""
@@ -1509,6 +1709,7 @@ class Studio:
                               pct=round(i / max(1, len(shots)) * 100, 1))
                 self._save(p, True)
             self._set_web(st="ok", msg=f"{len(shots)} 镜网页动效好了", pct=100)
+            self._phase(f"{len(shots)} 镜网页动效好了", 52, "running")
         except Exception as e:
             self._set_web(st="err", msg=str(e)[:200], pct=100)
             raise
@@ -1529,6 +1730,7 @@ class Studio:
     async def _render_ppt(self, p, m, shots):
         prm = m.get("params") or {}
         self._set_ppt(st="run", msg="准备 PPT 卡片", pct=0, current=0, total=len(shots), slides=[])
+        self._phase("PPT 卡片：正在生成/渲染…", 56, "running")
         if not shots:
             self._set_ppt(st="ok", msg="没有 PPT/静态镜头", pct=100)
             return
@@ -1554,7 +1756,7 @@ class Studio:
                 await asyncio.sleep(.35)
         wt = asyncio.get_running_loop().create_task(watch())
         try:
-            await asyncio.to_thread(render_ppt.render_all, p["dir"], pp, lambda x: self._set_ppt(msg=str(x)[:120]), self._stop.is_set)
+            await asyncio.to_thread(render_ppt.render_all, p["dir"], pp, lambda x: self._set_ppt(msg=str(x)[:120]), self._stopped)
         finally:
             done["n"] = 1
             try:
@@ -1570,6 +1772,7 @@ class Studio:
         files = sorted((Path(p["dir"]) / "render").glob("ppt_*.png"))
         self._set_ppt(st="ok", msg=f"{len(shots)} 页 PPT 卡片好了", pct=100, current=len(files),
                       slides=[f"render/{x.name}" for x in files])
+        self._phase(f"{len(shots)} 页 PPT 卡片好了", 78, "running")
 
     async def _compose_final(self, p, m, shots):
         prm = m.get("params") or {}
@@ -1608,7 +1811,7 @@ class Studio:
         try:
             r = await asyncio.to_thread(video_maker.compose_video, p["dir"], bool(proj["settings"].get("subtitle", True)),
                                         float(proj["settings"].get("bgm_volume", .18)), bool(proj["settings"].get("kenburns", True)),
-                                        self._stop.is_set, prog, duck_depth=float(proj["settings"].get("duck_depth", .16)),
+                                        self._stopped, prog, duck_depth=float(proj["settings"].get("duck_depth", .16)),
                                         fade=float(proj["settings"].get("fade", 2.0)), project=proj)
         except Exception as e:
             self._set_ff(st="err", msg=str(e)[:240], log="\n".join(logs[-8:]) + "\n" + str(e)[:300])
@@ -1666,7 +1869,9 @@ class Studio:
                 async with lock:
                     done += 1
                     self._progress(done / max(1, len(targets)) * 100,
-                                   f"分镜生图 {done}/{len(targets)}：第 {shots.index(s) + 1} 镜")
+                                   f"正在下载并校验图片 {done}/{len(targets)}（第 {shots.index(s) + 1} 镜）…")
+                    self._phase(f"正在下载并校验图片 {done}/{len(targets)}（第 {shots.index(s) + 1} 镜）…",
+                                10 + done / max(1, len(targets)) * 80, "running")
                 self._save(p)
 
         await asyncio.gather(*(one(s) for s in targets))
@@ -1676,8 +1881,9 @@ class Studio:
             raise StudioError("生图一张都没出来：" + "；".join(fails[:3]))
         msg = f"出了 {good}/{len(shots)} 镜" + (f"，{len(fails)} 镜没出来" if fails else "")
         _mark(p, "images", "warn" if fails else "ok", msg, 100)
-        if self.job:
-            self.job.update(stage=2, pct=self._span[0] + self._span[1])
+        j = self._job()
+        if j:
+            j.update(stage=2, pct=self._span[0] + self._span[1])
         self._save(p, True)
 
     async def _image_one(self, p, s):
@@ -1787,6 +1993,7 @@ class Studio:
 
     async def _gen_tts(self, p, ids=None, shots=None, out_prefix=""):
         self._step_start(p, "tts", "准备逐句配音")
+        self._phase("正在准备逐句配音…", 5, "running")
         shots = shots if shots is not None else p["shots"]
         if ids:
             targets = [s for s in shots if s["id"] in ids]
@@ -1821,8 +2028,9 @@ class Studio:
         if not miss:
             await self._build_voice(p, shots=shots, out_prefix=out_prefix)
             _mark(p, "tts", "ok", f"{len(targets)} 句全部缓存命中", 100)
-            if self.job:
-                self.job.update(stage=2, pct=self._span[0] + self._span[1])
+            j = self._job()
+            if j:
+                j.update(stage=2, pct=self._span[0] + self._span[1])
             self._save(p, True)
             return
         cloud = [x for x in miss if x[1].get("engine") == "cloud"]
@@ -1836,8 +2044,9 @@ class Studio:
             nonlocal done
             async with lock:
                 done += 1
-                self._progress(done / max(1, len(targets)) * 100,
-                               f"逐句配音 {done}/{len(targets)}：{s.get('role') or '旁白'}")
+                pct = 10 + done / max(1, len(targets)) * 78
+                self._progress(pct, f"正在合成第 {done}/{len(targets)} 句（{s.get('role') or '旁白'}，语气：{s.get('tone') or '默认'}）…")
+                self._phase(f"正在合成第 {done}/{len(targets)} 句（{s.get('role') or '旁白'}，语气：{s.get('tone') or '默认'}）…", pct, "running")
             if not ok:
                 fails.append(f"{s.get('id')}：{why[:120]}")
             self._save(p)
@@ -1851,7 +2060,7 @@ class Studio:
             try:
                 async with _api_gate():
                     r, _asked = await tts_cloud.synth_once_more(s.get("text") or "", cfg["voice"], (s.get("tone") or "")[:120],
-                                                                seed, stop=lambda: self._stop.is_set())
+                                                                seed, stop=lambda: self._stopped())
                 sr, pcm = int(r["sr"]), r["pcm"]
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 tts.write_wav(dest, sr, pcm)
@@ -1876,60 +2085,69 @@ class Studio:
         async def local_group():
             if not local:
                 return
-            async with _gpu_lock():
-                try:
-                    bgm.B.stop("视频工坊：换配音模型，先释放显存")
-                except Exception:
-                    pass
-                try:
-                    await tts.T.ensure()
-                except Exception as e:
-                    for s, cfg, fp, idx, dest, rel in local:
-                        s.update(tts_st="err", tts_err=f"配音服务没起来：{str(e)[:200]}")
-                        await tick(s, False, str(e))
-                    return
-                for s, cfg, fp, idx, dest, rel in local:
-                    if self._stop.is_set():
-                        s.update(tts_st="stale", tts_err="停下了")
-                        await tick(s, False, "停下了")
-                        continue
+            if _gpu_lock().locked() or self._gpu_busy:
+                self._phase("正在等待上一本地模型释放 GPU…", 5, "queued")
+            self._gpu_busy = True
+            try:
+                async with _gpu_lock():
+                    self._phase("已取得 GPU，正在启动本地配音服务…", 12, "running")
                     try:
-                        req = {"mode": cfg.get("mode") or "preset", "speaker": cfg.get("speaker"), "desc": cfg.get("desc"),
-                               "name": cfg.get("name"), "seed": cfg.get("seed"), "tone": ""}
-                        vv = tts.T.voice(req)
-                        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=900.0, write=30.0, pool=None)) as c:
-                            r = await c.post(tts.T.url("/generate"), json={
-                                "kind": vv["kind"], "text": s.get("text") or "", "speaker": vv.get("speaker"),
-                                "instruct": (s.get("tone") or vv.get("instruct") or "")[:200],
-                                "language": vv.get("lang") or "Chinese", "seed": vv.get("seed")})
-                        if r.status_code != 200:
-                            try:
-                                why = r.json().get("detail") or r.text
-                            except Exception:
-                                why = r.text
-                            raise RuntimeError(str(why)[:200])
-                        sr, pcm = tts.read_wav(r.content)
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        tts.write_wav(dest, sr, pcm)
-                        dur = len(pcm) / 2 / sr
-                        cache.put(fp, dest, "tts", {"engine": "local", "speaker": cfg.get("speaker") or cfg.get("id")})
-                        cache.project_set(p["dir"], f"tts:{s['id']}", fp, rel, False)
-                        s.update(tts=rel, tts_st="ok", tts_err="", tts_fp=fp, tts_cache_hit=False,
-                                 tts_ver=int(time.time() * 1000), duration=round(dur, 2))
-                        await tick(s)
+                        bgm.B.stop("视频工坊：换配音模型，先释放显存")
+                    except Exception:
+                        pass
+                    try:
+                        await tts.T.ensure()
                     except Exception as e:
-                        s.update(tts_st="err", tts_err=str(e)[:300])
-                        await tick(s, False, str(e))
+                        for s, cfg, fp, idx, dest, rel in local:
+                            s.update(tts_st="err", tts_err=f"配音服务没起来：{str(e)[:200]}")
+                            await tick(s, False, str(e))
+                        return
+                    for s, cfg, fp, idx, dest, rel in local:
+                        if self._stopped():
+                            s.update(tts_st="stale", tts_err="停下了")
+                            await tick(s, False, "停下了")
+                            continue
+                        try:
+                            req = {"mode": cfg.get("mode") or "preset", "speaker": cfg.get("speaker"), "desc": cfg.get("desc"),
+                                   "name": cfg.get("name"), "seed": cfg.get("seed"), "tone": ""}
+                            vv = tts.T.voice(req)
+                            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=900.0, write=30.0, pool=None)) as c:
+                                r = await c.post(tts.T.url("/generate"), json={
+                                    "kind": vv["kind"], "text": s.get("text") or "", "speaker": vv.get("speaker"),
+                                    "instruct": (s.get("tone") or vv.get("instruct") or "")[:200],
+                                    "language": vv.get("lang") or "Chinese", "seed": vv.get("seed")})
+                            if r.status_code != 200:
+                                try:
+                                    why = r.json().get("detail") or r.text
+                                except Exception:
+                                    why = r.text
+                                raise RuntimeError(str(why)[:200])
+                            sr, pcm = tts.read_wav(r.content)
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            tts.write_wav(dest, sr, pcm)
+                            dur = len(pcm) / 2 / sr
+                            cache.put(fp, dest, "tts", {"engine": "local", "speaker": cfg.get("speaker") or cfg.get("id")})
+                            cache.project_set(p["dir"], f"tts:{s['id']}", fp, rel, False)
+                            s.update(tts=rel, tts_st="ok", tts_err="", tts_fp=fp, tts_cache_hit=False,
+                                     tts_ver=int(time.time() * 1000), duration=round(dur, 2))
+                            await tick(s)
+                        except Exception as e:
+                            s.update(tts_st="err", tts_err=str(e)[:300])
+                            await tick(s, False, str(e))
+            finally:
+                self._gpu_busy = False
 
         await asyncio.gather(local_group(), *(cloud_one(x) for x in cloud))
         if fails:
             _mark(p, "tts", "err", "有句子没配成：" + "；".join(fails[:3]), 0)
             raise StudioError("配音有句子没配成：" + "；".join(fails[:3]))
         self._check_stop()
+        self._phase("正在拼接音频与生成 SRT 时间轴…", 92, "running")
         await self._build_voice(p, shots=shots, out_prefix=out_prefix)
         _mark(p, "tts", "ok", f"配好 {len(shots)} 句" + (f"（{hits} 句缓存命中）" if hits else ""), 100)
-        if self.job:
-            self.job.update(stage=2, pct=self._span[0] + self._span[1])
+        j = self._job()
+        if j:
+            j.update(stage=2, pct=self._span[0] + self._span[1])
         self._save(p, True)
 
     async def _build_voice(self, p, shots=None, out_prefix=""):
@@ -2020,26 +2238,36 @@ class Studio:
             p["bgm_seconds"] = _wav_duration(dest) or seconds
             p["bgm_cache_hit"] = True
             _mark(p, "bgm", "ok", "配乐缓存命中", 100)
-            if self.job:
-                self.job.update(stage=2, pct=80)
+            j = self._job()
+            if j:
+                j.update(stage=2, pct=80)
             self._save(p, True)
             return
         # 换模型前先放显存：本地配音服务出完先关掉；和本地配音共用 GPU_LOCK
-        self._progress(0, "正在准备配乐（第一次要加载 Stable Audio 3）")
-        async with _gpu_lock():
-            try:
-                tts.T.stop("视频工坊：换配乐模型，先释放显存")
-            except Exception:
-                pass
-            try:
-                r = await bgm.B.generate(prompt, seconds, say=lambda m: self._progress(10, m),
-                                         stopped=lambda: self._stop.is_set(),
-                                         dest=dest, steps=steps, seed=seed)
-            except bgm.BgmError as e:
-                if self._stop.is_set():
-                    raise StopRequested() from None
-                _mark(p, "bgm", "warn", str(e)[:300], 0)
-                raise StudioError(str(e)) from None
+        if _gpu_lock().locked() or self._gpu_busy:
+            self._phase("正在等待上一本地模型释放 GPU…", 0, "queued")
+        self._progress(5, "正在启动/检查 Stable Audio 3 服务 (8094)…")
+        self._phase("正在启动/检查 Stable Audio 3 服务 (8094)…", 8, "running")
+        self._gpu_busy = True
+        try:
+            async with _gpu_lock():
+                self._phase("已取得 GPU，正在准备 Stable Audio 3…", 15, "running")
+                try:
+                    tts.T.stop("视频工坊：换配乐模型，先释放显存")
+                except Exception:
+                    pass
+                try:
+                    r = await bgm.B.generate(prompt, seconds, say=lambda m: (self._progress(60, m), self._phase(m, 60, "running")),
+                                             stopped=lambda: self._stopped(),
+                                             dest=dest, steps=steps, seed=seed)
+                except bgm.BgmError as e:
+                    if self._stopped():
+                        raise StopRequested() from None
+                    _mark(p, "bgm", "warn", str(e)[:300], 0)
+                    raise StudioError(str(e)) from None
+        finally:
+            self._gpu_busy = False
+        self._phase("正在写入 bgm.wav…", 95, "running")
         p["files"]["bgm"] = f"bgm/{Path(r['path']).name}"
         p["settings"]["use_bgm"] = True
         p["bgm_seconds"] = r.get("duration") or seconds
@@ -2047,8 +2275,9 @@ class Studio:
         cache.put(fp, dest, "bgm", {"duration": p["bgm_seconds"], "steps": steps, "seed": seed})
         cache.project_set(p["dir"], project_key, fp, rel, False)
         _mark(p, "bgm", "ok", f"配乐好了：{p['bgm_seconds']:.0f} 秒", 100)
-        if self.job:
-            self.job.update(stage=2, pct=80)
+        j = self._job()
+        if j:
+            j.update(stage=2, pct=80)
         self._save(p, True)
         telemetry.log("app", "studio_bgm", "视频工坊", "ok", float(r.get("sec") or 0) * 1000,
                       {"seconds": seconds, "duration": r.get("duration"), "seed": seed}, "视频工坊配乐好了")
@@ -2056,25 +2285,33 @@ class Studio:
     # ---------- 合成 ----------
 
     # ---------- 进度、保存 ----------
-    def _check_stop(self):
+    def _stopped(self):
         if self._stop.is_set():
+            return True
+        ev = self._stops.get(_CUR_MID.get())
+        return bool(ev and ev.is_set())
+
+    def _check_stop(self):
+        if self._stopped():
             raise StopRequested()
 
     def _step_start(self, p, name, msg):
         s = p["steps"].setdefault(name, {})
         s.update(st="run", msg=msg, err="", pct=0, t0=time.time(), t1=0)
-        if self.job:
-            self.job["step"] = name
-            self.job["msg"] = msg
-        if not p.get("_transient"):
-            video_maker.save_project(p)
+        j = self._job()
+        if j:
+            j["step"] = name
+            j["msg"] = msg
+        self._phase(msg, None, "running")
+        self._save(p, True)
 
     def _progress(self, local, msg):
-        if not self.job:
-            return
-        self.job["pct"] = round(max(0.0, min(100.0, float(local or 0))), 1)
-        if msg:
-            self.job["msg"] = str(msg)[:200]
+        j = self._job()
+        if j:
+            j["pct"] = round(max(0.0, min(100.0, float(local or 0))), 1)
+            if msg:
+                j["msg"] = str(msg)[:200]
+        self._phase(msg or j.get("msg", "") if j else "", local)
 
     def _save(self, p, force=False):
         if p.get("_transient"):
@@ -2082,7 +2319,25 @@ class Studio:
         now = time.time()
         if force or now - self._saved >= 1.5:
             try:
-                video_maker.save_project(p)
+                with self._save_lock:
+                    mid = _CUR_MID.get()
+                    if mid:
+                        latest = video_maker.load_project(p["id"])
+                        try:
+                            idx = next(i for i, x in enumerate(latest.get("modules") or []) if x.get("id") == mid)
+                            nm = graph.module_of(p, mid)
+                            for k in ("x", "y", "w", "h"):
+                                if latest["modules"][idx].get(k) is not None:
+                                    nm[k] = latest["modules"][idx][k]
+                            latest["modules"][idx] = nm
+                            for k in ("files", "total_seconds", "duration", "resolution", "cost", "title", "desc", "tags"):
+                                if k in p:
+                                    latest[k] = p[k]
+                            video_maker.save_project(latest)
+                        except (StopIteration, graph.GraphError):
+                            video_maker.save_project(p)
+                    else:
+                        video_maker.save_project(p)
                 self._saved = now
             except Exception:
                 pass
@@ -2322,8 +2577,8 @@ async def studio_module_run(body: dict = Body(...)):
 
 
 @api.post("/api/studio/stop")
-def studio_stop():
-    return S.stop()
+def studio_stop(body: dict = Body(default={})):
+    return S.stop(str((body or {}).get("module_id") or (body or {}).get("id") or ""))
 
 
 @api.post("/api/studio/to_publish")

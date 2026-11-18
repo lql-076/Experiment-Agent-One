@@ -389,6 +389,16 @@ def compose_video(project_dir, srt=True, bgm_volume=0.18, kenburns=True, stopped
                     say({"stage": "compose", "pct": round(pct, 1), "msg": f"正在合成视频：{pct:.0f}%"})
                 except ValueError:
                     pass
+            elif line.startswith("frame="):
+                try:
+                    say({"stage": "compose", "pct": None, "frame": int(line.split("=", 1)[1])})
+                except ValueError:
+                    pass
+            elif line.startswith("fps="):
+                try:
+                    say({"stage": "compose", "pct": None, "fps": round(float(line.split("=", 1)[1]), 1)})
+                except ValueError:
+                    pass
             elif line == "progress=end":
                 say({"stage": "compose", "pct": 99.0, "msg": "收尾中……"})
         if stopped_hit:

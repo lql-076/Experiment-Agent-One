@@ -64,6 +64,10 @@ with httpx.Client(base_url=BASE, timeout=20, headers={"X-Agent": "1"}) as c:
         ]
         p.evaluate("(it) => Lightbox.open(it, 0)", items)
         p.wait_for_timeout(700)
+        try:
+            p.wait_for_function("document.getElementById('lbInfo').textContent.includes('1 × 1 px')", timeout=5000)
+        except Exception:
+            pass
         check(p.is_visible("#lbRoot"), "灯箱打开了")
         info = p.inner_text("#lbInfo")
         check("1 × 1 px" in info and "缓存命中" in info, "信息栏：真实分辨率 + 缓存命中")
@@ -84,7 +88,11 @@ with httpx.Client(base_url=BASE, timeout=20, headers={"X-Agent": "1"}) as c:
         p.click('[data-lb-bg="checker"]')
         check(p.get_attribute("#lbRoot", "data-bg") == "checker", "切回棋盘格")
         p.click('[data-lb="next"]')
-        p.wait_for_function("document.getElementById('lbInfo').textContent.includes('4 帧')", timeout=4000)
+        p.wait_for_function("document.getElementById('lbInfo').textContent.includes('4 帧')", timeout=5000)
+        try:
+            p.wait_for_function("document.querySelector('#lbImg').complete && document.querySelector('#lbImg').naturalWidth > 0", timeout=5000)
+        except Exception:
+            pass
         info = p.inner_text("#lbInfo")
         check("GIF" in info and "4 帧" in info and "0.4 秒" in info, "GIF：帧数和时长对得上（4 帧 × 90ms）")
         check(p.evaluate("document.querySelector('#lbImg').src.includes('lb.gif')"), "GIF 用 <img> 原速循环（不是静态截图）")

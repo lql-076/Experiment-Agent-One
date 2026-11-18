@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 RUN = ROOT / "dev" / ".run" / "studio_test"
 
-from app import bgm, imagegen, render_ppt, render_web, settings, studio, studio_cache as cache  # noqa: E402
+from app import bgm, imagegen, render_ppt, render_web, settings, studio, studio_assets, studio_cache as cache  # noqa: E402
 from app import studio_graph as graph, video_maker  # noqa: E402
 
 BAD = []
@@ -237,7 +237,7 @@ def test_compose_monitors():
     zm["params"]["lines"] = [{"id": "l1", "line_index": 2, "text": "PPT 镜头", "tone": ""}]
     video_maker.save_project(p)
 
-    def fake_web(project_dir, shot, settings, out_path, W, H, fps=24, stopped=None, preview=None):
+    def fake_web(project_dir, shot, settings, out_path, W, H, fps=24, stopped=None, preview=None, on_frame=None):
         blank_mp4(ff, Path(out_path), 1.0)
         if preview:
             png(ff, Path(preview), "0x0b1a2a", 360, 640)
@@ -343,6 +343,114 @@ def test_migration():
     check((Path(q["dir"]) / "Lists" / "视频渲染清单.md").is_file(), "迁移后自动生成清单")
 
 
+
+def test_media_assets():
+    print("\n媒体接口：WAV/MP3/FLAC/MP4 白名单、文件头、Accept-Ranges")
+    S, p = make_project("媒体测试")
+    d = Path(p["dir"])
+    wav(d / "tts" / "shot01.wav", 1.0, 440)
+    (d / "bgm").mkdir(parents=True, exist_ok=True)
+    wav(d / "bgm" / "bgm.wav", 1.0, 220, 48000)
+    (d / "output").mkdir(parents=True, exist_ok=True)
+    (d / "output" / "t.mp3").write_bytes(b"ID3" + bytes(40))
+    (d / "output" / "t.flac").write_bytes(b"fLaC" + bytes(32))
+    (d / "output" / "t.mp4").write_bytes(bytes.fromhex("000000186674797069736f6d") + bytes(32))
+    for rel, mime, kind in (("tts/shot01.wav", "audio/wav", "audio"), ("bgm/bgm.wav", "audio/wav", "audio"),
+                            ("output/t.mp3", "audio/mpeg", "audio"), ("output/t.flac", "audio/flac", "audio"),
+                            ("output/t.mp4", "video/mp4", "video")):
+        q = studio_assets.project_asset(p["id"], rel)
+        info = studio_assets.info(q)
+        check(info["mime"] == mime and info["kind"] == kind, "认得出 " + rel + " → " + mime)
+    resp = studio_assets.file_response(d / "tts" / "shot01.wav")
+    check(resp.headers.get("accept-ranges") == "bytes", "WAV 响应带 Accept-Ranges: bytes")
+    check(resp.media_type == "audio/wav", "WAV Content-Type 正确")
+    ok = False
+    try:
+        studio_assets.project_asset(p["id"], "Lists/配音清单_白页.md")
+    except studio_assets.AssetError:
+        ok = True
+    check(ok, "清单/文本不会被当成媒体给出去")
+
+
+def test_concurrent_modules():
+    print("\n多模块真并发：白页配音 + 配乐同时跑，不返回 409；单模块停止只停自己")
+    S, p = make_project("并发测试")
+    calls = []
+
+    async def fake(self, pp, m, part=""):
+        calls.append(m["id"])
+        for i in range(6):
+            self._phase(f"{m['id']} 第 {i + 1} 步", 10 + i * 14, "running")
+            await asyncio.sleep(.08)
+            self._check_stop()
+        return []
+
+    old = studio.Studio._exec_module
+    studio.Studio._exec_module = fake
+    async def go():
+        await S.start_run({"pid": p["id"], "id": "voice-white"})
+        await S.start_run({"pid": p["id"], "id": "bgm"})
+        check(set(S._running_ids()) == {"voice-white", "bgm"}, "两个模块同时在跑")
+        mid_state = S.state()["project"]
+        rows = {m["id"]: m["runtime"] for m in mid_state["modules"] if m["id"] in ("voice-white", "bgm")}
+        check(all(rows[x]["status"] == "running" for x in rows), "两个模块 runtime 都是 running")
+        check(all(rows[x]["pct"] >= 0 for x in rows), "两个模块都有 pct")
+        await asyncio.gather(*[t for m, t in S._tasks.items() if m in ("voice-white", "bgm")])
+        q = S._load(p["id"])
+        check(all(graph.module_of(q, x)["runtime"]["status"] == "ok" for x in ("voice-white", "bgm")), "两个模块都完成")
+        check(set(calls) == {"voice-white", "bgm"}, "两边都真的执行了")
+    asyncio.run(go())
+    # 单模块停止
+    async def slow(self, pp, m, part=""):
+        for i in range(50):
+            self._phase(f"{m['id']} 慢速 {i}", i, "running")
+            await asyncio.sleep(.05)
+            self._check_stop()
+        return []
+    studio.Studio._exec_module = slow
+    async def stop_go():
+        await S.start_run({"pid": p["id"], "id": "voice-white"})
+        t = S._tasks["voice-white"]
+        await asyncio.sleep(.15)
+        r = S.stop("voice-white")
+        check(r.get("ok") is True, "单模块停止被接受")
+        try:
+            await asyncio.wait_for(t, 5)
+        except Exception:
+            pass
+        q = S._load(p["id"])
+        check(graph.module_of(q, "voice-white")["runtime"]["status"] in ("idle", "error"), "停下后只这个模块退出 running")
+    asyncio.run(stop_go())
+    studio.Studio._exec_module = old
+
+
+def test_runtime_progress():
+    print("\n实时进度：pct / phase / started_at / last_took_s 会更新")
+    S, p = make_project("进度测试")
+    seen = []
+    async def fake(self, pp, m, part=""):
+        for i in range(4):
+            self._phase(f"阶段 {i + 1}/4", 20 + i * 20, "running")
+            seen.append((time.time(), self._jobs[m["id"]]["pct"]))
+            await asyncio.sleep(.08)
+        return []
+    old = studio.Studio._exec_module
+    studio.Studio._exec_module = fake
+    async def go():
+        await S.start_run({"pid": p["id"], "id": "image"})
+        t = S._tasks["image"]
+        await asyncio.sleep(.12)
+        rt = S.state()["project"]["modules"][1]["runtime"]
+        check(rt.get("status") == "running" and rt.get("started_at", 0) > 0, "运行中有 status 和 started_at")
+        check(rt.get("pct", 0) > 0 and rt.get("phase"), "运行中有 pct 和 phase")
+        await t
+        rt2 = graph.module_of(S._load(p["id"]), "image")["runtime"]
+        check(rt2.get("status") == "ok" and rt2.get("last_took_s", 0) > 0, "完成后有 last_took_s")
+        check(rt2.get("pct") == 100, "完成后 pct 100")
+    asyncio.run(go())
+    studio.Studio._exec_module = old
+
+
 def main():
     shutil.rmtree(RUN, ignore_errors=True)
     RUN.mkdir(parents=True, exist_ok=True)
@@ -352,12 +460,15 @@ def main():
     settings.S["wsDir"] = str(RUN / "ws")
     try:
         test_default_modules()
+        test_media_assets()
         test_lists_and_script()
         test_voice_global_order()
         test_image_module()
         test_compose_independent()
         test_compose_monitors()
         test_full_parallel_skips_image()
+        test_concurrent_modules()
+        test_runtime_progress()
         test_migration()
     finally:
         settings.S["wsDir"] = old_ws

@@ -31,7 +31,7 @@ function stMods() { var p = studioProj(); return (p && p.modules) || []; }
 function stModMap() { var m = {}; stMods().forEach(function (x) { m[x.id] = x; }); return m; }
 function stSize(b) { b = +b || 0; return b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b >= 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB'; }
 function stMedia(pid, rel, ver) { return '/api/studio/media?pid=' + encodeURIComponent(pid || '') + '&path=' + encodeURIComponent(rel || '') + '&v=' + (ver || Date.now()); }
-function stAsset(pid, rel) { return '/api/studio/asset?pid=' + encodeURIComponent(pid || '') + '&path=' + encodeURIComponent(rel || ''); }
+function stAsset(pid, rel, ver) { return '/api/studio/asset?pid=' + encodeURIComponent(pid || '') + '&path=' + encodeURIComponent(rel || '') + (ver ? '&v=' + encodeURIComponent(ver) : ''); }
 function stSet(id, v) { var e = $('#' + id); if (e && e.textContent !== v) e.textContent = v; }
 function stPut(id, html) { var e = $('#' + id); if (!e || STUDIO.sig[id] === html) return; STUDIO.sig[id] = html; e.innerHTML = html; }
 
@@ -132,7 +132,11 @@ document.addEventListener('visibilitychange', function () {
 
 /* ---------- 模块骨架 ---------- */
 function stStatus(m) {
-  var j = studioJob(), p = studioProj();
+  var j = studioJob(), p = studioProj(), rt = m.runtime || {};
+  if (rt.status === 'queued') return 'queue';
+  if (rt.status === 'running') return 'run';
+  if (rt.status === 'error') return 'bad';
+  if (rt.status === 'ok') return 'done';
   if (j && j.st === 'run' && j.pid === (p && p.id) && j.step === m.id && m.status === 'run') return 'run';
   if (m.status === 'ok' || m.status === 'warn') return 'done';
   if (m.status === 'err') return 'bad';
@@ -154,7 +158,9 @@ function stFooter(m) {
 }
 function stModule(m, body, cls) {
   return '<section class="hud st-node ' + (cls || '') + ' st-m-' + esc(m.id) + '" data-node="' + esc(m.id) + '" data-type="' + esc(m.type) + '" style="left:' + m.x + 'px;top:' + m.y + 'px;width:' + m.w + 'px;height:' + m.h + 'px">' +
-    stHeader(m) + '<div class="st-node-body" id="stNode-' + esc(m.id) + '">' + body + '</div>' + stFooter(m) +
+    stHeader(m) +
+    '<div class="st-rt"><div class="st-rbar"><b data-rbar="' + esc(m.id) + '"></b></div><div class="st-rline"><span data-rphase="' + esc(m.id) + '">待命</span><span data-rtime="' + esc(m.id) + '"></span></div></div>' +
+    '<div class="st-node-body" id="stNode-' + esc(m.id) + '">' + body + '</div>' + stFooter(m) +
     '<span class="st-rs" data-rs="' + esc(m.id) + '" title="拖动改变模块大小"></span></section>';
 }
 
@@ -177,7 +183,7 @@ function stVoiceOptions(cur) {
 }
 function stLbOuts(p, m, kind) {
   return (m.outputs || []).filter(function (o) { return !kind || o.kind === kind; }).map(function (o) {
-    return { url: stAsset(p.id, o.rel), name: o.rel, rel: o.rel, pid: p.id, cacheHit: !!m.cache_hit };
+    return { url: stAsset(p.id, o.rel, o.sha256), name: o.rel, rel: o.rel, pid: p.id, cacheHit: !!m.cache_hit };
   });
 }
 function stLbOpen(p, m, kind, i) {
@@ -188,17 +194,22 @@ function stThumbs(p, m, kind) {
   var outs = (m.outputs || []).filter(function (o) { return o.kind === kind; });
   if (!outs.length) return '<div class="st-nohint">还没有产出</div>';
   return '<div class="st-outgrid">' + outs.map(function (o, i) {
-    return '<button class="st-outthumb" data-lb="' + esc(m.id) + ':' + (kind || 'image') + ':' + i + '"><img src="' + esc(stAsset(p.id, o.rel)) + '" alt=""><span>' + esc(String(o.rel).split('/').pop()) + '</span></button>';
+    return '<button class="st-outthumb" data-lb="' + esc(m.id) + ':' + (kind || 'image') + ':' + i + '"><img src="' + esc(stAsset(p.id, o.rel, o.sha256)) + '" alt=""><span>' + esc(String(o.rel).split('/').pop()) + '</span></button>';
   }).join('') + '</div>';
 }
 function stVideos(p, m) {
   var outs = (m.outputs || []).filter(function (o) { return o.kind === 'video'; });
-  return outs.map(function (o) { return '<video class="st-video" controls preload="metadata" src="' + esc(stAsset(p.id, o.rel)) + '"></video>'; }).join('') || '<div class="st-nohint">还没有视频</div>';
+  return outs.map(function (o) {
+    return '<div class="st-vbox"><video class="st-video" controls preload="metadata" src="' + esc(stAsset(p.id, o.rel, o.sha256)) + '"></video>' +
+      '<div class="st-media-err" data-mediaerr="1"></div></div>';
+  }).join('') || '<div class="st-nohint">还没有视频</div>';
 }
 function stAudios(p, m) {
   var outs = (m.outputs || []).filter(function (o) { return o.kind === 'audio'; });
   return '<div class="st-audios">' + (outs.map(function (o, i) {
-    return '<div class="st-audio"><button class="btn mini ghost" data-play="' + esc(m.id) + ':' + i + '">▶ 听</button><span>' + esc(String(o.rel).split('/').pop()) + (o.duration ? ' · ' + (+o.duration).toFixed(1) + ' 秒' : '') + '</span></div>';
+    return '<div class="st-audio"><audio controls preload="metadata" src="' + esc(stAsset(p.id, o.rel, o.sha256)) + '"></audio>' +
+      '<div class="st-audio-meta"><b>' + esc(String(o.rel).split('/').pop()) + '</b><span>' + (o.duration ? (+o.duration).toFixed(1) + ' 秒' : '') + '</span></div>' +
+      '<div class="st-media-err" data-mediaerr="1"></div></div>';
   }).join('') || '<div class="st-nohint">还没有音频</div>') + '</div>';
 }
 function stListBox(p, name) {
@@ -244,7 +255,7 @@ function stImageBody(p, m) {
     '<div class="st-refs">' + (prm.refs || []).map(function (r, i) {
       return '<span class="st-ref" title="' + esc(r) + '"><img src="' + esc(stMedia(p.id, r)) + '" alt=""><button data-refdel="' + esc(m.id) + ':' + i + '">×</button></span>'; }).join('') +
       '<label class="btn mini ghost st-file">+ 参考图<input type="file" accept="image/png,image/jpeg" multiple data-ref-file="' + esc(m.id) + '" hidden></label></div>' +
-    '<button class="btn primary st-wide" data-run="' + esc(m.id) + '">▶ 立即生成测试</button>' +
+    '<button class="btn primary st-wide" data-run="' + esc(m.id) + '" data-label="▶ 立即生成测试">▶ 立即生成测试</button>' +
     '<div class="st-outlabel">测试产出</div>' + stThumbs(p, m, 'image') + stListBox(p, '生图清单.md');
 }
 
@@ -264,7 +275,7 @@ function stVoiceBody(p, m) {
     }).join('') + '</div>' +
     '<div class="st-row2"><button class="btn mini ghost" data-lineadd="' + esc(m.id) + '">+ 加一句</button><button class="btn mini ghost" data-bulk="' + esc(m.id) + '">批量贴台词</button></div>' +
     '<details class="st-bulk" id="stBulk-' + esc(m.id) + '"><summary>批量贴台词（一行一句）</summary><textarea class="inp" data-bulk-text rows="3" spellcheck="false"></textarea><button class="btn mini primary" data-bulkgo="' + esc(m.id) + '">替换成这些句</button></details>' +
-    '<button class="btn primary st-wide" data-run="' + esc(m.id) + '">▶ 单独运行本角色配音</button>' +
+    '<button class="btn primary st-wide" data-run="' + esc(m.id) + '" data-label="▶ 单独运行本角色配音">▶ 单独运行本角色配音</button>' +
     '<div class="st-outlabel">本角色音频</div>' + stAudios(p, m) +
     '<div class="st-hint">白页/紫苏按全局句序写 tts/shotNN.wav，最后汇总 voice.wav + .srt + timeline.json。</div>' +
     stListBox(p, listName);
@@ -277,7 +288,7 @@ function stBgmBody(p, m) {
     '<div class="st-row"><label class="st-lab">时长</label><input class="inp st-num" data-p="seconds" type="number" min="10" max="380" value="' + (+prm.seconds || 75) + '"><span class="st-hint">秒</span></div>' +
     '<div class="st-row2"><label class="st-f"><span class="st-lab">步数</span><input class="inp" data-p="steps" type="number" min="1" max="32" value="' + (+prm.steps || 8) + '"></label>' +
     '<label class="st-f"><span class="st-lab">种子</span><input class="inp" data-p="seed" type="number" value="' + (+prm.seed || 20261118) + '"></label></div>' +
-    '<button class="btn primary st-wide" data-run="' + esc(m.id) + '">▶ 单独生成配乐</button>' +
+    '<button class="btn primary st-wide" data-run="' + esc(m.id) + '" data-label="▶ 单独生成配乐">▶ 单独生成配乐</button>' +
     '<div class="st-outlabel">试听</div>' + stAudios(p, m) + stListBox(p, '配乐清单.md');
 }
 
@@ -286,7 +297,7 @@ function stMonA(j) {
   var w = (j && j.web) || {}, p = studioProj();
   var img = w.preview_rel ? '<img class="st-mon-img" data-lbmon="web" src="' + esc(stMedia(p.id, w.preview_rel)) + '" alt="" title="点开看大图">' : '<div class="st-mon-empty">等网页动效渲染…</div>';
   return '<div class="st-mon st-mon-a"><div class="st-mon-h"><b>监控 A · 网页动效渲染</b>' + (w.st === 'run' ? '<em class="st-tag run">渲染中</em>' : w.st === 'ok' ? '<em class="st-tag ok">完成</em>' : w.st === 'err' ? '<em class="st-tag bad">出错</em>' : '<em class="st-tag">待命</em>') + '</div>' +
-    '<div class="st-mon-body">' + img + '<div class="st-mon-meta"><span>镜头 ' + (w.current || 0) + '/' + (w.total || 0) + '</span><span>FPS ' + (w.fps || 0) + '</span><span>Claude Code：' + esc(w.cc || '没开') + '</span></div>' +
+    '<div class="st-mon-body">' + img + '<div class="st-mon-meta"><span>镜头 ' + (w.current || 0) + '/' + (w.total || 0) + '</span><span>帧 ' + (w.frame || 0) + '/' + (w.total_frames || '—') + '</span><span>FPS ' + (w.fps || 0) + '</span><span>Claude Code：' + esc(w.cc || '没开') + '</span></div>' +
     '<div class="st-mon-msg">' + esc(w.msg || '等合成') + '</div></div>' +
     '<button class="btn mini ghost st-mon-run" data-runpart="web">▶ 仅重跑网页动效</button></div>';
 }
@@ -304,7 +315,7 @@ function stMonC(j, m) {
   var vol = Math.round((pa.bgm_volume != null ? +pa.bgm_volume : (+prm.bgm_volume || .18)) * 100);
   return '<div class="st-mon st-mon-c"><div class="st-mon-h"><b>监控 C · FFmpeg 混流压制</b>' + (w.st === 'run' ? '<em class="st-tag run">压制中</em>' : w.st === 'ok' ? '<em class="st-tag ok">完成</em>' : w.st === 'err' ? '<em class="st-tag bad">出错</em>' : '<em class="st-tag">待命</em>') + '</div>' +
     '<div class="st-mon-body"><div class="st-pbar big"><b style="width:' + Math.max(0, Math.min(100, +w.pct || 0)) + '%"></b></div>' +
-    '<div class="st-mon-meta"><span>' + (+w.pct || 0).toFixed(0) + '%</span><span>编码 ' + (pa.fps || 30) + ' fps</span><span>' + esc(pa.ratio || prm.ratio || '9:16') + '</span><span>字幕 ' + (pa.subtitle !== false ? '开' : '关') + '</span><span>配乐 ' + vol + '%</span><span>闪避 ' + (pa.duck_depth != null ? pa.duck_depth : prm.duck_depth) + '</span></div>' +
+    '<div class="st-mon-meta"><span>' + (+w.pct || 0).toFixed(0) + '%</span><span>第 ' + (w.frame || 0) + ' 帧</span><span>编码 ' + (w.fps || pa.fps || 30) + ' fps</span><span>' + esc(pa.ratio || prm.ratio || '9:16') + '</span><span>字幕 ' + (pa.subtitle !== false ? '开' : '关') + '</span><span>配乐 ' + vol + '%</span><span>闪避 ' + (pa.duck_depth != null ? pa.duck_depth : prm.duck_depth) + '</span></div>' +
     '<pre class="st-fflog">' + esc(w.log || '等压制…') + '</pre></div>' +
     '<button class="btn mini ghost st-mon-run" data-runpart="ffmpeg">▶ 仅重跑 FFmpeg 压制</button></div>';
 }
@@ -319,7 +330,7 @@ function stComposeBody(p, m) {
     '<label class="st-f"><span class="st-lab">闪避</span><input class="inp" data-p="duck_depth" type="number" min="0" max="1" step="0.05" value="' + (+prm.duck_depth || .16) + '"></label>' +
     '<label class="st-f"><span class="st-lab">淡出秒</span><input class="inp" data-p="fade" type="number" min="0" max="6" step="0.5" value="' + (+prm.fade || 2) + '"></label>' +
     '<label class="st-f"><span class="st-lab">FPS</span><input class="inp" data-p="fps" type="number" min="12" max="30" value="' + (+prm.fps || 24) + '"></label></div>' +
-    '<div class="st-row2"><button class="btn primary" data-run="' + esc(m.id) + '">▶ 一键合成（三窗同时开工）</button><button class="btn mini ghost" data-act="openout">打开输出文件夹</button></div></div>' +
+    '<div class="st-row2"><button class="btn primary" data-run="' + esc(m.id) + '" data-label="▶ 一键合成（三窗同时开工）">▶ 一键合成（三窗同时开工）</button><button class="btn mini ghost" data-act="openout">打开输出文件夹</button></div></div>' +
     '<div class="st-monitor">' + stMonA(j) + stMonB(j) + stMonC(j, m) + '</div>' +
     '<div class="st-outlabel">成片</div>' + stVideos(p, m) + stListBox(p, '视频渲染清单.md');
 }
@@ -542,29 +553,81 @@ function saveLayout(now) {
   }
   if (now) send(); else STUDIO.layoutT = setTimeout(send, 450);
 }
+function stElapsed(rt) {
+  if (!rt || !rt.started_at) return '';
+  if (rt.status === 'running' || rt.status === 'queued') return '已耗时 ' + (Math.max(0, Date.now() / 1000 - rt.started_at)).toFixed(1) + 's';
+  if (rt.last_took_s) return '耗时 ' + (+rt.last_took_s).toFixed(1) + 's';
+  return '';
+}
 function syncMeta() {
   stMods().forEach(function (m) {
     var el = document.querySelector('[data-node="' + m.id + '"]'); if (!el) return;
-    var lamp = el.querySelector('[data-lamp]'); if (lamp) lamp.className = 'st-lamp st-' + stStatus(m);
+    var rt = m.runtime || {}, st = stStatus(m), busy = rt.status === 'running' || rt.status === 'queued';
+    el.classList.toggle('st-live', busy);
+    el.classList.toggle('st-queued', rt.status === 'queued');
+    var lamp = el.querySelector('[data-lamp]'); if (lamp) lamp.className = 'st-lamp st-' + st;
+    var bar = el.querySelector('[data-rbar]'); if (bar) bar.style.width = Math.max(0, Math.min(100, +rt.pct || 0)) + '%';
+    var ph = el.querySelector('[data-rphase]'); if (ph) ph.textContent = String(rt.phase || '待命').slice(0, 120);
+    var tm = el.querySelector('[data-rtime]'); if (tm) tm.textContent = stElapsed(rt);
+    el.querySelectorAll('[data-run="' + m.id + '"]').forEach(function (b) {
+      b.classList.toggle('st-btn-live', busy);
+      if (busy) b.textContent = (rt.status === 'queued' ? '排队中' : '运行中 · ' + Math.round(+rt.pct || 0) + '%') + '（点此停止）';
+      else if (b.classList.contains('st-nrun')) b.textContent = '▶ 只跑';
+      else if (b.dataset.label) b.textContent = b.dataset.label;
+    });
     var msg = el.querySelector('[data-pmsg]');
     if (msg) {
       var j = studioJob(), p = studioProj(), cur = j && j.st === 'run' && j.pid === (p && p.id) && j.step === m.id;
-      msg.textContent = String((cur && j.msg) || m.error || (m.status === 'ok' ? '已完成' : m.status === 'stale' ? '要重做' : m.status === 'err' ? '出错' : '待命')).slice(0, 60);
+      msg.textContent = String(rt.phase || (cur && j.msg) || m.error || (m.status === 'ok' ? '已完成' : m.status === 'stale' ? '要重做' : m.status === 'err' ? '出错' : '待命')).slice(0, 60);
     }
   });
   var nav = $('.nav[data-tool="studio"]'); if (nav) nav.classList.toggle('on-busy', studioRunning());
+  stBindMedia();
+}
+function stBindMedia() {
+  document.querySelectorAll('#view-studio audio, #view-studio video').forEach(function (a) {
+    if (a.dataset.merr === '1') return;
+    a.dataset.merr = '1';
+    a.addEventListener('error', function () {
+      var box = a.parentElement && a.parentElement.querySelector('[data-mediaerr]');
+      if (!box) return;
+      box.textContent = '播放失败，正在读取原因…';
+      fetch(a.src, { cache: 'no-store' }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          box.textContent = '播放失败：' + (j.detail || ('HTTP ' + r.status));
+        });
+      }).catch(function (e) { box.textContent = '播放失败：' + (e.message || '网络错误'); });
+    });
+  });
+}
+function stAnyRunning() {
+  return stMods().some(function (m) { var rt = m.runtime || {}; return rt.status === 'running' || rt.status === 'queued'; });
+}
+function stSchedulePoll() {
+  clearInterval(STUDIO.t);
+  STUDIO.t = setInterval(function () { if (S.view === 'studio') studioFetch(); }, stAnyRunning() ? 600 : 1300);
 }
 
 /* ---------- 动作 ---------- */
+function stStopModule(mid) {
+  var p = studioProj(); if (!p) return;
+  api('POST', '/api/studio/stop', { module_id: mid }, 30000).then(function (j) {
+    toast(j.msg || '停下中', 5000); studioFetch();
+  }).catch(function (e) { toast(e.message, 8000); });
+}
 function stRun(mid, part) {
   var p = studioProj(); if (!p) { toast('还没有项目'); return; }
+  if (mid && !part) {
+    var rt = (stModMap()[mid] || {}).runtime || {};
+    if (rt.status === 'running' || rt.status === 'queued') { stStopModule(mid); return; }
+  }
   var body = { pid: p.id };
   if (mid) body.id = mid;
   if (part) { body.id = 'compose'; body.part = part; }
   stApi('module/run', body, 180000).then(function (j) {
     if (j.project && STUDIO.st) STUDIO.st.project = j.project;
     toast(mid ? (part ? '开始仅重跑这一步' : '开始跑这个模块') : '白页 + 紫苏 + 配乐三路并行，随后进视频总成', 5000);
-    studioFetch();
+    renderStudio(true); studioFetch();
   }).catch(function (e) { toast(e.message, 9000); });
 }
 function stImport() {
@@ -640,14 +703,14 @@ function studioFetch() {
       setTimeout(function () { if (S.view === 'studio') fitCanvas(); }, 30);
     }
     if (was && j.job && j.job.id === was.id && j.job.st !== 'run') toast('视频工坊：' + (j.job.msg || j.job.st), 7000);
-    renderStudio();
+    renderStudio(); stSchedulePoll();
   }).catch(function () { if (S.view === 'studio' && !STUDIO.st) setTimeout(studioFetch, 1200); })
     .then(function () { STUDIO.fetching = null; }, function () { STUDIO.fetching = null; });
   return STUDIO.fetching;
 }
 function studioEnter() {
   studioFetch(); stHWStart(); clearInterval(STUDIO.t);
-  STUDIO.t = setInterval(function () { if (S.view === 'studio') studioFetch(); }, 1300);
+  stSchedulePoll();
   setTimeout(function () { if (S.view === 'studio' && !STUDIO.st) studioFetch(); }, 700);
 }
 function studioLeave() {
@@ -728,11 +791,15 @@ function stUploadRefs(files, mid) {
       if (d.st === 'fit') { fitCanvas(); return; }
       if (d.st === 'new') { studioDo('new', { topic: '', ratio: '9:16', seconds: 75, voice_id: 'local:preset:Vivian' }, '新建了空白项目').then(function (j) { STUDIO.st = j; STUDIO.lastPid = j.project && j.project.id; STUDIO.canvas.auto = true; STUDIO.fitted = false; STUDIO.sig = {}; STUDIO.nodeSig = {}; renderStudio(true); }).catch(function () {}); return; }
       if (d.st === 'run') { stRun(); return; }
-      if (d.st === 'stop') { studioDo('stop', {}, '停下中：当前这一步收尾后不再往下做').then(studioFetch).catch(function () {}); return; }
+      if (d.st === 'stop') { studioDo('stop', {}, '全部停下中：当前这一步收尾后不再往下做').then(studioFetch).catch(function () {}); return; }
       return;
     }
     if (d.run) { stRun(d.run); return; }
-    if (d.runpart) { stRun('compose', d.runpart); return; }
+    if (d.runpart) {
+      var crt = (stModMap()['compose'] || {}).runtime || {};
+      if (crt.status === 'running' || crt.status === 'queued') { stStopModule('compose'); return; }
+      stRun('compose', d.runpart); return;
+    }
     if (d.out) { var z = String(d.out).split(':'); stSaveModule(z[0], { output: z[1] }).then(function () { STUDIO.nodeSig = {}; renderStudio(true); }).catch(function () {}); return; }
     if (d.muxratio) { var nn = b.closest('[data-node]'); stSaveModule(nn.getAttribute('data-node'), { ratio: d.muxratio }).then(function () { STUDIO.nodeSig = {}; renderStudio(true); }); return; }
     if (d.act === 'plan') { stPlan(); return; }
@@ -748,7 +815,7 @@ function stUploadRefs(files, mid) {
     if (d.lbslide) { var pw = (studioJob() || {}).ppt || {}; var rel = (pw.slides || [])[+d.lbslide]; if (rel) Lightbox.open([{ url: stAsset(p.id, rel), name: rel, rel: rel, pid: p.id }], 0); return; }
     if (d.lbpublish) { var cv = (p.files || {}).cover; if (cv) Lightbox.open([{ url: stAsset(p.id, cv.rel), name: cv.name, rel: cv.rel, pid: p.id }], 0); return; }
     if (d.play) { var pz = String(d.play).split(':'), ma = m[pz[0]], aus = ma ? (ma.outputs || []).filter(function (x) { return x.kind === 'audio'; }) : []; var ao = aus[+pz[1] || 0]; if (ao) studioPlay(stAsset(p.id, ao.rel)); else toast('还没有音频'); return; }
-    if (d.lineplay) { var lz = String(d.lineplay).split(':'), lm = m[lz[0]], la = lm ? (lm.outputs || []).filter(function (x) { return x.kind === 'audio'; }) : []; var lo = la[+lz[1]]; if (lo) studioPlay(stAsset(p.id, lo.rel)); else toast('这一句还没配音：点上面的「单独运行本角色配音」'); return; }
+    if (d.lineplay) { var lz = String(d.lineplay).split(':'), lm = m[lz[0]], la = lm ? (lm.outputs || []).filter(function (x) { return x.kind === 'audio'; }) : []; var lo = la[+lz[1]]; if (lo) studioPlay(stAsset(p.id, lo.rel, lo.sha256)); else toast('这一句还没配音：点上面的「单独运行本角色配音」'); return; }
     if (d.lineadd) { var lm2 = m[d.lineadd], ls = (lm2.params.lines || []).slice(); ls.push({ id: 'l' + (ls.length + 1), line_index: (ls.length ? Math.max.apply(null, ls.map(function (x) { return +x.line_index || 0; })) + 1 : 1), text: '', tone: '' }); stSaveModule(d.lineadd, { lines: ls }).then(function () { STUDIO.nodeSig = {}; renderStudio(true); }); return; }
     if (d.linedel) { var dz = String(d.linedel).split(':'), dm = m[dz[0]], dl = (dm.params.lines || []).slice(); dl.splice(+dz[1], 1); stSaveModule(dz[0], { lines: dl }).then(function () { STUDIO.nodeSig = {}; renderStudio(true); }); return; }
     if (d.bulk) { var bx = $('#stBulk-' + d.bulk); if (bx) bx.open = !bx.open; return; }
