@@ -346,7 +346,7 @@ def generate(app=None, version="", themes=None):
           "| data/logs/setup_*.log | 一键补齐每一步的原始日志 |", "| data/logs/report.jsonl | 进展报告 |",
           "| data/logs/actions.jsonl | 动作日志（哈希链，改不了） |", "| memory/ | 记忆、技能、提示词、Claude 总结（中文 Markdown，git 记录改动） |",
           "| training/ | 慢成长的样本 |", "| models/ | 底座、嵌入模型、小脑、Kev 权重、配音模型（models/tts）、配乐模型（models/bgm） |", "| ai-env/、tts-env/、bgm-env/、.venv/ | 四个 Python 环境（本地模型、配音、配乐、后端；配乐复用 ai-env 的 torch） |", "| 配音输出/ | 保存的配音：一次一个文件夹（WAV、时间轴、字幕、文案） |",
-          "| 工作区/视频工坊/ | 视频工坊的项目：project.json、分镜图、配音、配乐、成片（v3.6，不进仓库） |",
+          "| 工作区/视频工坊/ | 视频工坊的项目：project.json、7 个模块的产出、Lists 清单、配音、配乐、成片（v4.0，不进仓库） |",
           "| tools/ | 便携版 Git、PyTorch 安装包、下载缓存、临时文件 |"]
     if paths.LOGS.exists():
         L += ["", "现在 data/logs 里有：" + "、".join(sorted(p.name for p in paths.LOGS.iterdir() if p.is_file())[:30])]
