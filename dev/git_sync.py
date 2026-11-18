@@ -26,8 +26,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 DEFAULT_REMOTE = "https://github.com/lql-076/Experiment-Agent-One"
-DEFAULT_MESSAGE = ("v3.9.0：视频工坊自由节点画布（节点/端口/连线、DAG 与节点级缓存、旧工程迁移）、"
-                   "高清灯箱、剧本驱动、看图复刻；原有页面保持不变")
+DEFAULT_MESSAGE = ("v4.0.0：视频工坊七模块零连线画布、Markdown 清单驱动、三路并行与三窗一体视频总成；"
+                   "原有页面保持不变")
 
 # ---------- 黑名单：路径 ----------
 DIRS = (

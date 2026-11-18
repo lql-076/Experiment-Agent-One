@@ -961,3 +961,35 @@ body.lb-on{overflow:hidden}
 .st-audios{display:flex;flex-direction:column;gap:.2rem}
 .st-bulk summary{font-size:.64rem;color:var(--text3);cursor:pointer;padding:.15rem 0}
 .st-bulk textarea{width:100%;margin:.2rem 0;font-size:.68rem}
+
+/* ---------- v4 七模块零连线画布 ---------- */
+.st-badgenote{font-size:.62rem;color:var(--hud);border:1px dashed color-mix(in srgb,var(--hud) 45%,transparent);padding:.15rem .4rem;background:color-mix(in srgb,var(--hud) 7%,transparent)}
+.st-liststat{display:flex;flex-wrap:wrap;gap:.25rem;font-size:.58rem;color:var(--text3);padding:.15rem 0}
+.st-liststat em{font-style:normal;border:1px solid var(--line2);padding:0 .3rem;color:var(--text3)}
+.st-liststat em.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 55%,transparent)}
+.st-listbox summary{font-size:.64rem;color:var(--text3);cursor:pointer;padding:.15rem 0}
+.st-listbox textarea{width:100%;margin:.2rem 0;font-size:.64rem;min-height:5rem;font-family:var(--mono)}
+.st-m-compose .st-node-body{gap:.4rem}
+.st-comp-top{display:flex;flex-direction:column;gap:.3rem}
+.st-comp-opts{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap}
+.st-comp-opts .inp{min-height:1.7rem;font-size:.7rem}
+.st-monitor{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.5rem;min-height:0}
+.st-mon{display:flex;flex-direction:column;min-width:0;border:1px solid var(--line2);background:color-mix(in srgb,var(--bg2) 55%,transparent)}
+.st-mon-h{flex:none;display:flex;align-items:center;gap:.35rem;padding:.28rem .4rem;border-bottom:1px solid var(--ln);font-size:.68rem}
+.st-mon-h b{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st-mon-body{flex:1;min-height:0;padding:.35rem;display:flex;flex-direction:column;gap:.3rem;overflow:auto}
+.st-mon-img{display:block;width:100%;max-height:7.5rem;object-fit:contain;background:#05080c;border:1px solid var(--line2);cursor:pointer}
+.st-mon-empty{height:7.5rem;display:grid;place-items:center;border:1px dashed var(--line2);color:var(--text3);font-size:.64rem;background:color-mix(in srgb,var(--bg) 55%,transparent)}
+.st-mon-meta{display:flex;flex-wrap:wrap;gap:.3rem .6rem;font-size:.58rem;color:var(--text3);font-family:var(--mono)}
+.st-mon-msg{font-size:.62rem;color:var(--text2);min-height:1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st-mon-run{flex:none;margin:.3rem;min-height:1.8rem;font-size:.66rem}
+.st-slides{display:flex;gap:.25rem;flex-wrap:wrap;align-content:flex-start;min-height:7.5rem}
+.st-slide{position:relative;width:4.2rem;height:7.2rem;border:1px solid var(--line2);background:#05080c;padding:0;cursor:pointer;overflow:hidden}
+.st-slide img{width:100%;height:100%;object-fit:contain;display:block}
+.st-slide span{position:absolute;right:0;bottom:0;background:color-mix(in srgb,var(--bg) 80%,transparent);color:var(--text2);font-size:.55rem;padding:0 .25rem}
+.st-pbar.big{height:.5rem;background:var(--line);overflow:hidden}
+.st-pbar.big b{display:block;height:100%;background:var(--hud);width:0;transition:width .35s var(--ease)}
+.st-fflog{flex:1;min-height:4.5rem;max-height:7rem;overflow:auto;margin:0;padding:.3rem;border:1px solid var(--ln);background:color-mix(in srgb,var(--bg) 70%,transparent);font-family:var(--mono);font-size:.56rem;color:var(--text3);white-space:pre-wrap}
+.st-m-voice .st-node-body,.st-m-bgm .st-node-body{gap:.3rem}
+.st-m-compose{box-shadow:0 0 0 1px color-mix(in srgb,var(--hud) 35%,transparent),0 18px 60px rgba(0,0,0,.28)}
+@media (max-width:1200px){.st-monitor{grid-template-columns:1fr}.st-mon-img{max-height:10rem}}

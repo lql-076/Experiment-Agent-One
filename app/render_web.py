@@ -165,7 +165,7 @@ def _open_browser(pw):
     raise RenderWebError(f"网页渲染的浏览器没打开：{str(err)[:200]}")
 
 
-def render_shot(project_dir, shot, settings, out_path, W, H, fps=24, stopped=None) -> Path:
+def render_shot(project_dir, shot, settings, out_path, W, H, fps=24, stopped=None, preview=None) -> Path:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -181,10 +181,10 @@ def render_shot(project_dir, shot, settings, out_path, W, H, fps=24, stopped=Non
     html = _html(shot, W, H, settings or {})
     hp = render_dir / (Path(out_path).stem + ".html")
     hp.write_text(html, "utf-8")
-    return render_html_file(hp, out_path, W, H, fps, max(.2, float(shot.get("duration") or 5)), stopped)
+    return render_html_file(hp, out_path, W, H, fps, max(.2, float(shot.get("duration") or 5)), stopped, preview)
 
 
-def render_html_file(html_path, out_path, W, H, fps=24, duration=5.0, stopped=None) -> Path:
+def render_html_file(html_path, out_path, W, H, fps=24, duration=5.0, stopped=None, preview=None) -> Path:
     """把任意本地 HTML 文件逐帧录成 H.264 轨（v3.9.0 看图复刻用；不执行外部脚本，只跑页面自己的动画）。"""
     try:
         from playwright.sync_api import sync_playwright
@@ -208,12 +208,20 @@ def render_html_file(html_path, out_path, W, H, fps=24, duration=5.0, stopped=No
         page.goto(hp.resolve().as_uri(), wait_until="load")
         page.wait_for_timeout(250)
         ff = subprocess.Popen(cmd, stdin=subprocess.PIPE, creationflags=NOWIN)
+        pv = Path(preview) if preview else None
+        if pv:
+            pv.parent.mkdir(parents=True, exist_ok=True)
         try:
             for i in range(n):
                 if stopped and stopped():
                     raise RenderWebError("停下了：网页渲染没做完")
                 page.evaluate("t => window.__vt.step(t)", (i / fps) * 1000)
-                ff.stdin.write(page.screenshot(type="jpeg", quality=92))
+                shot_bytes = page.screenshot(type="jpeg", quality=92)
+                ff.stdin.write(shot_bytes)
+                if pv and (i % max(1, n // 6) == 0 or i == n - 1):
+                    tmpv = pv.with_name(pv.name + ".part")
+                    tmpv.write_bytes(shot_bytes)
+                    tmpv.replace(pv)
         except BrokenPipeError:
             pass
         finally:
