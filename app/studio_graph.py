@@ -503,6 +503,9 @@ def invalidate_dependents(p, mid):
         m["cache_hit"] = False
         if m.get("status") in ("ok", "warn"):
             m["status"] = "stale"
+        rt = m.get("runtime")
+        if isinstance(rt, dict) and rt.get("status") == "ok":
+            rt.update(status="idle", pct=0, phase="参数/清单改了：要重做", last_took_s=rt.get("last_took_s") or 0)
 
 
 def cache_key(p, m):
