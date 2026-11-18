@@ -1,4 +1,4 @@
-r"""视频工坊 · 七个独立模块 + Markdown 清单（v4.0.0 / R11）。
+r"""视频工坊 · 七个独立模块 + Markdown 清单（v4.0.1 / R12）。
 
 没有端口、没有连线、没有 DAG、没有缺上游。画布固定 7 个模块，每个都能单独点运行：
   script / image / voice-white / voice-zisu / bgm / compose / publish
