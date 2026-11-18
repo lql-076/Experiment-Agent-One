@@ -31,7 +31,7 @@ import httpx
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse, Response
 
-from . import bgm, db, deepseek, feed, imagegen, paths, publish, render_ppt, render_web, settings, studio_cache as cache, telemetry, tts, tts_cloud, video_maker
+from . import bgm, db, deepseek, feed, imagegen, paths, publish, render_ppt, render_web, settings, studio_assets, studio_cache as cache, telemetry, tts, tts_cloud, video_maker
 
 JOBS = "视频工坊"
 RATIOS = [("9:16", "竖屏 9:16（抖音）"), ("16:9", "横屏 16:9")]
@@ -2188,6 +2188,36 @@ def studio_media(pid: str, path: str, v: int = 0):
     if d.resolve() not in q.parents or q.suffix.lower() not in MEDIA_EXT or not q.is_file():
         raise HTTPException(404, "没有这个文件")
     return FileResponse(q, headers={"Cache-Control": "private, max-age=31536000"})
+
+
+@api.get("/api/studio/asset")
+def studio_asset(pid: str = "", path: str = "", cache: int = 0):
+    """灯箱读图：只给工坊项目目录或 _cache 里的图片，越界/符号链接/非图片都拒绝（v3.9.0）。"""
+    try:
+        q = studio_assets.cache_asset(path) if cache else studio_assets.project_asset(pid, path)
+        return studio_assets.file_response(q)
+    except (studio_assets.AssetError, video_maker.MakerError) as e:
+        raise HTTPException(404, str(e)) from None
+
+
+@api.get("/api/studio/asset/info")
+def studio_asset_info(pid: str = "", path: str = "", cache: int = 0):
+    try:
+        q = studio_assets.cache_asset(path) if cache else studio_assets.project_asset(pid, path)
+        return {"ok": True, "rel": str(path), "cache": bool(cache), **studio_assets.info(q)}
+    except (studio_assets.AssetError, video_maker.MakerError) as e:
+        raise HTTPException(404, str(e)) from None
+
+
+@api.post("/api/studio/reveal")
+def studio_reveal(body: dict = Body(default={})):
+    """灯箱信息栏「打开所在文件夹」：只允许工坊目录里的图片。"""
+    try:
+        q = studio_assets.cache_asset(body.get("path")) if body.get("cache") else \
+            studio_assets.project_asset(body.get("pid"), body.get("path"))
+        return studio_assets.reveal(q)
+    except (studio_assets.AssetError, video_maker.MakerError) as e:
+        raise HTTPException(404, str(e)) from None
 
 
 @api.post("/api/studio/shot_add")

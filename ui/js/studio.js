@@ -181,6 +181,19 @@ function stMediaUrl(pid, rel, ver) {
   if (!rel) return '';
   return '/api/studio/media?pid=' + encodeURIComponent(pid) + '&path=' + encodeURIComponent(rel) + '&v=' + (ver || 0);
 }
+function stShotLbItems(p, s) {
+  var urls = (s && s.img_variant_urls) || [], rels = (s && s.img_variants) || [];
+  if (!urls.length && s && s.image_url) { urls = [s.image_url]; rels = [s.image]; }
+  return urls.map(function (u, i) {
+    return { url: u, name: (rels[i] || ('第 ' + (s.n || 1) + ' 镜')), rel: rels[i], pid: p && p.id,
+      cacheHit: !!s.image_cache_hit };
+  });
+}
+function stOpenShotLightbox(p, s, i) {
+  var items = stShotLbItems(p, s);
+  if (!items.length) { toast('这一镜还没有图'); return; }
+  if (window.Lightbox) Lightbox.open(items, Math.max(0, Math.min(items.length - 1, +i || 0)));
+}
 function stSubStatus(kind, s) {
   var j = studioJob();
   var st = kind === 'img' ? s.image_st : s.tts_st;
@@ -272,7 +285,7 @@ function stShotImgHTML(p, s) {
   if (!urls.length && s.image_url) { urls = [s.image_url]; rels = [s.image]; }
   var sel = +s.img_selected || 0;
   var thumbs = urls.length ? urls.map(function (u, i) {
-    return '<button class="st-thumb-pick' + (i === sel ? ' on' : '') + '" data-pick="' + esc(s.id) + ':' + i + '" title="选这张"><img src="' + esc(u) + '" alt=""></button>';
+    return '<button class="st-thumb-pick' + (i === sel ? ' on' : '') + '" data-pick="' + esc(s.id) + ':' + i + '" data-lbimg="' + esc(s.id) + ':' + i + '" title="点开看大图（并选这张）"><img src="' + esc(u) + '" alt=""></button>';
   }).join('') : '<span class="st-nohint">还没有图</span>';
   var refHtml = refs.length ? refs.map(function (r, i) {
     var u = String(r).indexOf('shot:') === 0 ? '' : stMediaUrl(p.id, r, 0);
@@ -410,6 +423,7 @@ function node8HTML(p) {
     return '<option value="shot:' + esc(s.id) + '">第 ' + s.n + ' 镜 · ' + esc((s.role || '')) + '</option>';
   }).join('');
   var body = (video && p.video_ok ? '<video class="st-video" controls preload="metadata" src="' + esc(video.url) + '"></video><div class="st-vinfo"><span>' + esc(p.resolution || '') + ' · ' + (+p.duration || 0).toFixed(1) + ' 秒</span><span>' + stSize(video.size) + '</span></div>' : '<div class="st-vempty"><b>成片会在这里</b><span>先在节点 7 合成</span></div>') +
+    (cover ? '<button class="st-cover" data-lbcover="1" title="点开看封面大图"><img src="' + esc(cover.url) + '" alt=""><span>封面 · 点开看大图</span></button>' : '') +
     '<div class="st-row"><label class="st-lab">标题</label><input class="inp" id="stPubTitle" maxlength="30" value="' + esc(p && p.title || '') + '"></div>' +
     '<textarea class="inp" id="stPubDesc" rows="2" spellcheck="false" placeholder="简介">' + esc(p && p.desc || '') + '</textarea>' +
     '<input class="inp" id="stPubTags" value="' + esc(tags) + '" placeholder="话题 空格隔开">' +
@@ -1003,12 +1017,29 @@ function studioLeave() { clearInterval(STUDIO.t); STUDIO.t = null; stHWStop(); i
     }
     if (d.pick) {
       var z = String(d.pick).split(':');
+      if (d.lbimg) {
+        var ls = ((p && p.shots) || []).filter(function (x) { return x.id === z[0]; })[0];
+        stOpenShotLightbox(p, ls, +z[1]);
+      }
       if (p) studioPatch({ shots: [{ id: z[0], img_selected: +z[1] }] }).then(function () { studioFetch(); }).catch(function () {});
+      return;
+    }
+    if (d.lbgif) {
+      var gz = String(d.lbgif).split(':');
+      var gs = ((p && p.shots) || []).filter(function (x) { return x.id === gz[0]; })[0];
+      var gitems = stShotLbItems(p, gs);
+      if (window.Lightbox) Lightbox.open(gitems, +gz[1] || 0);
       return;
     }
     if (d.setrender) {
       var zz = String(d.setrender).split(':');
       studioSetRender(zz[0], zz[1]);
+      return;
+    }
+    if (d.lbcover) {
+      var cf = (p && p.files && p.files.cover) || null;
+      if (cf && window.Lightbox) Lightbox.open([{ url: cf.url, name: cf.name, rel: cf.rel, pid: p.id, cacheHit: false }], 0);
+      else toast('还没有封面：先合成视频');
       return;
     }
     if (d.play) {

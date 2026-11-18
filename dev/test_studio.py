@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 RUN = ROOT / "dev" / ".run" / "studio_test"
 
-from app import imagegen, render_ppt, render_web, settings, studio, studio_cache as cache, video_maker  # noqa: E402
+from app import imagegen, render_ppt, render_web, settings, studio, studio_assets, studio_cache as cache, video_maker  # noqa: E402
 
 BAD = []
 
@@ -513,6 +513,68 @@ def test_publish_matrix():
         db.kv_set("pub_batch", None)
 
 
+def tiny_gif(path, frames=3, delay_cs=7):
+    """手写一个能过 GIF 结构解析的多帧 GIF：测帧数和总时长。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    head = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff"
+    gce = b"\x21\xf9\x04\x01" + struct.pack("<H", delay_cs) + b"\x00\x00"
+    img = b"\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00"
+    path.write_bytes(head + (gce + img) * frames + b"\x3b")
+
+
+def test_assets():
+    print("\n灯箱取图：只给工坊里的图片，越界 / 符号链接 / 假图片都拦下")
+    p = video_maker.new_project("灯箱测试", "9:16", studio.STYLE_TAG, 20, topic="灯箱")
+    d = Path(p["dir"])
+    png = __import__("base64").b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lzq4WQAAAABJRU5ErkJggg==")
+    (d / "images").mkdir(parents=True, exist_ok=True)
+    (d / "images" / "a.png").write_bytes(png)
+    tiny_gif(d / "images" / "loop.gif", 4, 9)
+    (d / "images" / "icon.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="48"><rect width="64" height="48"/></svg>', "utf-8")
+    (d / "images" / "notes.txt").write_text("not an image", "utf-8")
+    (d / "images" / "fake.png").write_text("not a png at all", "utf-8")
+    j = studio_assets.info(d / "images" / "a.png")
+    check(j["fmt"] == "png" and j["w"] == 1 and j["h"] == 1 and j["size"] > 0, "PNG 真实分辨率和大小")
+    g = studio_assets.info(d / "images" / "loop.gif")
+    check(g["fmt"] == "gif" and g["frames"] == 4 and g["duration_ms"] == 360, "GIF 帧数和时长（4 帧 × 90ms）")
+    s = studio_assets.info(d / "images" / "icon.svg")
+    check(s["fmt"] == "svg" and s["w"] == 64 and s["h"] == 48, "SVG 尺寸")
+    for bad, why in (("../project.json", ".. 越界"), (str(d / "images" / "a.png"), "绝对路径"),
+                     ("images/notes.txt", "非图片扩展名"), ("images/fake.png", "假 PNG 文件头"),
+                     ("images/missing.png", "文件不存在")):
+        ok = False
+        try:
+            studio_assets.project_asset(p["id"], bad)
+        except studio_assets.AssetError:
+            ok = True
+        check(ok, "拦下：" + why)
+    # 符号链接指到工坊外面（Windows 没权限建就跳过）
+    outside = RUN / "outside-secret.png"
+    outside.write_bytes(png)
+    link = d / "images" / "link.png"
+    try:
+        link.symlink_to(outside)
+        ok = False
+        try:
+            studio_assets.project_asset(p["id"], "images/link.png")
+        except studio_assets.AssetError:
+            ok = True
+        check(ok, "拦下：符号链接越界")
+    except (OSError, NotImplementedError):
+        print("  跳过：这个环境不能建符号链接")
+    # 缓存目录只给 _cache 里的图片
+    croot = studio_assets.cache_root()
+    (croot / "image" / "aa").mkdir(parents=True, exist_ok=True)
+    (croot / "image" / "aa" / "x.png").write_bytes(png)
+    check(studio_assets.cache_asset("image/aa/x.png").is_file(), "缓存图片能读")
+    ok = False
+    try:
+        studio_assets.cache_asset("../灯箱测试/images/a.png")
+    except studio_assets.AssetError:
+        ok = True
+    check(ok, "拦下：从 _cache 越界到项目")
+
+
 def main():
     shutil.rmtree(RUN, ignore_errors=True)
     RUN.mkdir(parents=True, exist_ok=True)
@@ -522,6 +584,7 @@ def main():
     settings.S["wsDir"] = str(RUN / "ws")
     try:
         test_parse()
+        test_assets()
         test_project()
         test_plan_project()
         test_default_nodes()

@@ -862,3 +862,45 @@ html[data-orient="portrait"] .st-hw{gap:.6rem}
 .st-ref img{width:100%;height:100%;object-fit:cover}
 .st-ref b{font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:1.9rem}
 .st-ref button{position:absolute;right:0;top:0;width:1rem;height:1rem;border:0;background:color-mix(in srgb,var(--bad) 80%,transparent);color:#fff;font-size:.65rem;line-height:1;padding:0}
+
+/* ---------- 通用高清灯箱（v3.9.0 / R10） ---------- */
+body.lb-on{overflow:hidden}
+.lb{position:fixed;inset:0;z-index:1200;display:flex;flex-direction:column;color:var(--text);font-family:var(--font,inherit)}
+.lb[hidden]{display:none}
+.lb-mask{position:absolute;inset:0;background:rgba(3,7,12,.86);backdrop-filter:blur(3px)}
+.lb-top{position:relative;z-index:1;flex:none;display:flex;align-items:center;gap:.7rem;padding:.5rem .8rem;border-bottom:1px solid var(--ln);background:color-mix(in srgb,var(--bg) 82%,transparent);min-height:2.8rem}
+.lb-name{font-size:.86rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:34vw}
+.lb-count{font-family:var(--mono);font-size:.72rem;color:var(--text3)}
+.lb-top .sp{flex:1}
+.lb-bgs{display:flex;gap:.2rem}
+.lb-bgs button{min-height:1.7rem;padding:.1rem .5rem;font-size:.68rem;border:1px solid var(--line2);background:color-mix(in srgb,var(--bg2) 65%,transparent);color:var(--text2);cursor:pointer}
+.lb-bgs button[aria-pressed="true"]{border-color:var(--hud);color:var(--hud);background:color-mix(in srgb,var(--hud) 12%,transparent)}
+.lb-zoom{font-family:var(--mono);font-size:.7rem;color:var(--text3);min-width:3.2rem;text-align:right}
+.lb-x{width:2rem;height:2rem;border:1px solid var(--line2);background:transparent;color:var(--text2);font-size:1.2rem;line-height:1;cursor:pointer}
+.lb-x:hover{border-color:var(--bad);color:var(--bad)}
+.lb-stage{position:relative;z-index:1;flex:1;min-height:0;overflow:hidden;cursor:grab;touch-action:none}
+.lb-stage:active{cursor:grabbing}
+.lb[data-bg="checker"] .lb-stage{background-color:#2a2f36;background-image:conic-gradient(#3a4048 25%,#23282e 0 50%,#3a4048 0 75%,#23282e 0);background-size:22px 22px;background-position:0 0,0 0}
+.lb[data-bg="dark"] .lb-stage{background:#05080c}
+.lb[data-bg="light"] .lb-stage{background:#e9eef2}
+.lb-frame{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+.lb-frame img{display:block;max-width:none;max-height:none;user-select:none;-webkit-user-drag:none;box-shadow:0 20px 70px rgba(0,0,0,.5)}
+.lb[data-bg="light"] .lb-frame img{box-shadow:0 10px 40px rgba(30,50,70,.22)}
+.lb-nav{position:absolute;top:50%;transform:translateY(-50%);z-index:2;width:2.6rem;height:4.2rem;border:1px solid var(--line2);background:color-mix(in srgb,var(--bg) 62%,transparent);color:var(--text);font-size:1.8rem;line-height:1;cursor:pointer}
+.lb-nav:hover{border-color:var(--hud);color:var(--hud)}
+.lb-nav.prev{left:.6rem}.lb-nav.next{right:.6rem}
+.lb-svgnote{position:absolute;left:50%;bottom:.6rem;transform:translateX(-50%);z-index:2;font-size:.68rem;color:var(--text3);background:color-mix(in srgb,var(--bg) 78%,transparent);border:1px solid var(--ln);padding:.2rem .55rem;pointer-events:none}
+.lb-svgnote[hidden]{display:none}
+.lb-info{position:relative;z-index:1;flex:none;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;padding:.45rem .8rem;border-top:1px solid var(--ln);background:color-mix(in srgb,var(--bg) 86%,transparent);font-size:.72rem;color:var(--text2);min-height:2.5rem}
+.lb-info b{color:var(--text);font-size:.8rem}
+.lb-info .lb-muted{color:var(--text3)}
+.lb-info .lb-sha{font-family:var(--mono);font-size:.62rem}
+.lb-info .lb-type{border:1px solid var(--line2);padding:0 .35rem;font-size:.62rem;color:var(--text3)}
+.lb-info .lb-cache{border:1px solid var(--line2);padding:0 .4rem;font-size:.64rem;color:var(--text3)}
+.lb-info .lb-cache.ok{border-color:var(--ok);color:var(--ok);background:color-mix(in srgb,var(--ok) 10%,transparent)}
+.lb-info .bad{color:var(--bad)}
+@media (max-width:1100px){.lb-name{max-width:26vw}.lb-bgs button{padding:.1rem .35rem}}
+.st-cover{display:flex;align-items:center;gap:.4rem;border:1px solid var(--line2);background:transparent;color:var(--text2);padding:.2rem;cursor:pointer;min-width:0}
+.st-cover img{width:2.6rem;height:1.7rem;object-fit:cover;display:block}
+.st-cover span{font-size:.62rem;color:var(--text3);white-space:nowrap}
+.st-cover:hover{border-color:var(--hud);color:var(--hud)}
