@@ -180,7 +180,14 @@ def test_image_module():
         asyncio.run(S._run_module(S._load(p["id"]), "image", ""))
         q = S._load(p["id"]); im = graph.module_of(q, "image")
         check(len(calls) == 1 and im["cache_hit"] is True, "第二次同参数命中缓存")
-        c = graph.module_of(q, "compose")
+        async def force_go():
+            await S.start_run({"pid": p["id"], "id": "image", "force": True})
+            t = S._tasks.get("image")
+            if t:
+                await t
+        asyncio.run(force_go())
+        check(len(calls) == 2, "点「立即生成测试」带 force：不吃缓存，真的请求 API")
+        c = graph.module_of(S._load(p["id"]), "compose")
         check(c["status"] != "ok" or c.get("outputs"), "生图模块不参与视频主流程")
     finally:
         imagegen.call_images = old

@@ -25,7 +25,7 @@ LIST_VOICE = {"voice-white": "配音清单_白页.md", "voice-zisu": "配音清�
 ROLES = ("白页", "紫苏", "旁白")
 RENDER_KIND = {"网页": "web", "网页动效": "web", "web": "web", "PPT": "ppt", "PPT 卡片": "ppt", "ppt": "ppt",
                "卡片": "ppt", "静态": "static", "静态画面": "static", "static": "static"}
-MODEL_VERSION = "studio-modules-4.0.0"
+MODEL_VERSION = "studio-modules-4.0.1a"
 
 
 class GraphError(ValueError):

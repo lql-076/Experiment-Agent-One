@@ -237,7 +237,8 @@ function stImageBody(p, m) {
   var prm = m.params || {}, res = prm.resolution || '2k', out = prm.output || 'normal', fmt = prm.format || 'png';
   var frames = +prm.gif_frames || 8, delay = +prm.gif_delay_ms || 150, cw = +prm.custom_w || 1024, ch = +prm.custom_h || 1024;
   var items = prm.items || [];
-  return '<div class="st-badgenote">独立测试工具 · 不参与视频主流程</div>' +
+  return '<div class="st-badgenote">独立测试工具 · 不参与视频主流程 · 每次点生成都会重新出图</div>' +
+    '<div class="st-bigout">' + stThumbs(p, m, 'image') + '</div>' +
     (items.length ? '<div class="st-subrow"><label class="st-lab">清单</label><select data-p="selected">' + items.map(function (x, i) {
       return '<option value="' + i + '"' + (+prm.selected === i ? ' selected' : '') + '>' + esc(x.prompt.slice(0, 28)) + '</option>'; }).join('') + '</select></div>' : '') +
     '<textarea class="inp" data-p="prompt" rows="3" spellcheck="false" placeholder="这一张的画面提示词">' + esc(prm.prompt || '') + '</textarea>' +
@@ -256,7 +257,7 @@ function stImageBody(p, m) {
       return '<span class="st-ref" title="' + esc(r) + '"><img src="' + esc(stMedia(p.id, r)) + '" alt=""><button data-refdel="' + esc(m.id) + ':' + i + '">×</button></span>'; }).join('') +
       '<label class="btn mini ghost st-file">+ 参考图<input type="file" accept="image/png,image/jpeg" multiple data-ref-file="' + esc(m.id) + '" hidden></label></div>' +
     '<button class="btn primary st-wide" data-run="' + esc(m.id) + '" data-label="▶ 立即生成测试">▶ 立即生成测试</button>' +
-    '<div class="st-outlabel">测试产出</div>' + stThumbs(p, m, 'image') + stListBox(p, '生图清单.md');
+    stListBox(p, '生图清单.md');
 }
 
 /* ---------- 模块 3/4 ---------- */
@@ -623,6 +624,7 @@ function stRun(mid, part) {
   }
   var body = { pid: p.id };
   if (mid) body.id = mid;
+  if (mid === 'image') body.force = true;
   if (part) { body.id = 'compose'; body.part = part; }
   stApi('module/run', body, 180000).then(function (j) {
     if (j.project && STUDIO.st) STUDIO.st.project = j.project;

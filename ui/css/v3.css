@@ -1014,3 +1014,6 @@ body.lb-on{overflow:hidden}
 .st-vbox{display:flex;flex-direction:column;gap:.15rem}
 .st-mon-meta span{white-space:nowrap}
 .st-mon-img{transition:opacity .2s}
+.st-bigout .st-outgrid{display:flex;flex-wrap:wrap;gap:.35rem}
+.st-bigout .st-outthumb{max-width:100%;width:100%}
+.st-bigout .st-outthumb img{width:100%;height:11rem;object-fit:contain;background:#05080c}

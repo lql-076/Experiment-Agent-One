@@ -272,6 +272,10 @@ def generate(prompt, seconds=60, fmt="wav", seed=0, steps=8):
         if not np.isfinite(audio).all():
             _log("生成的音频里有 NaN/Inf，修一下再写")
             audio = np.nan_to_num(audio, nan=0.0, posinf=1.0, neginf=-1.0)
+        # 峰值归一到 -1 dBFS：模型原始输出经常只有 -10 dB 左右，听起来像没声/很闷
+        peak = float(np.max(np.abs(audio)))
+        if peak > 1e-6:
+            audio = (audio * (0.89 / peak)).astype(np.float32)
         TASK_DIR.mkdir(parents=True, exist_ok=True)
         name = f"{int(time.time() * 1000)}_{os.getpid()}.{fmt}"
         path = TASK_DIR / name

@@ -587,7 +587,7 @@ def _image_fps(p, s, cfg=None):
             "quality": cfg["quality"], "complexity": cfg["complexity"], "custom_w": cfg["custom_w"], "custom_h": cfg["custom_h"],
             "transparent": bool(cfg["transparent"]), "output_type": cfg["output"], "output_format": cfg["format"],
             "gif_frames": cfg["gif_frames"], "gif_delay_ms": cfg["gif_delay_ms"],
-            "ref_image_sha256": ref_sha, "n": cfg["n"]}
+            "ref_image_sha256": ref_sha, "n": cfg["n"], "force_nonce": s.get("_force_nonce") or ""}
     return [cache.fingerprint("image", dict(base, variant=i)) for i in range(cfg["n"])], prompt, cd, refs
 
 
@@ -625,7 +625,7 @@ def _bgm_fp(p):
     steps = max(1, min(32, int(st.get("bgm_steps") or 8)))
     seed = int(st.get("bgm_seed") or 20261118)
     prompt = (p.get("bgm_prompt") or "").strip() or f"{STYLE_TAG} 风格短视频背景音乐，纯音乐，无人声，情绪贴合旁白，节奏舒缓"
-    return cache.fingerprint("bgm", {"prompt_en": prompt, "duration": sec, "steps": steps, "seed": seed}), prompt, sec, steps, seed
+    return cache.fingerprint("bgm", {"prompt_en": prompt, "duration": sec, "steps": steps, "seed": seed, "v": 2}), prompt, sec, steps, seed
 
 
 IMG_SETTING_KEYS = ("img_model", "img_resolution", "img_quality", "img_complexity", "img_transparent",
@@ -1094,6 +1094,10 @@ class Studio:
         loop = asyncio.get_running_loop()
         if mid:
             graph.module_of(p, mid)
+            if mid == "image" and body.get("force"):
+                m = graph.module_of(p, mid)
+                m["params"]["_force_nonce"] = f"{time.time():.6f}"
+                video_maker.save_project(p)
             if not any(not t.done() for t in self._tasks.values()):
                 self._stop.clear()
             old = self._tasks.get(mid)
@@ -1367,7 +1371,7 @@ class Studio:
                 "img_complexity": prm.get("complexity") or "medium", "img_transparent": bool(prm.get("transparent")),
                 "img_n": int(prm.get("n") or 1), "img_custom_w": int(prm.get("custom_w") or 0),
                 "img_custom_h": int(prm.get("custom_h") or 0), "gif_frames": int(prm.get("gif_frames") or 8),
-                "gif_delay_ms": int(prm.get("gif_delay_ms") or 150)}
+                "gif_delay_ms": int(prm.get("gif_delay_ms") or 150), "_force_nonce": str(prm.get("_force_nonce") or "")}
         pp = self._pseudo(p, [shot])
         self._phase("正在上传参考图 / 请求 API易 (GPT Image 2.6)…", 15, "running")
         await self._gen_images(pp, ids=["image-test"])

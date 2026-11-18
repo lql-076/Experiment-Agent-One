@@ -23,7 +23,7 @@ function bgmClock(s) { s = Math.max(0, Math.round(+s || 0)); return Math.floor(s
 function bgmWhen(ts) { var d = new Date(ts * 1000), n = new Date(), same = d.toDateString() === n.toDateString(); return (same ? '' : pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ') + pad(d.getHours()) + ':' + pad(d.getMinutes()); }
 function bgmCur() { var st = bgmSt(), l = (st && st.recent) || []; return l.filter(function (h) { return h.id === BGM.sel; })[0] || l[0] || null; }
 function bgmSvcLine(st) {
-  if (!st) return ['idle', '读取中…', ''];
+  if (!st) return ['warn', '正在连接后台' + (BGM.err ? '（' + BGM.err.slice(0, 40) + '）' : '…'), ''];
   if (st.job && st.job.st === 'run') return ['run', '正在出：' + (st.job.msg || '等它出完'), ''];
   if (st.yielding) return ['warn', '在让路（' + (st.yield_reason || '别的程序要显存') + '）：现在不启动', ''];
   if (st.alive) return ['ok', 'Stable Audio 3 开着 · 闲 ' + (st.idle || 10) + ' 分钟自己关', '<button class="btn mini ghost" data-bgm-off="1">现在关掉</button>'];
@@ -40,7 +40,7 @@ function bgmHTML() {
     '<textarea class="bg-in" id="bgPrompt" spellcheck="false" placeholder="一句话写清楚：风格、情绪、乐器、快慢。英文效果最好；中文也行（配了 DeepSeek Key 会自动转成英文标签）。比如：轻快的电子乐，明亮的合成器，适合科技类视频开场"' + (run ? ' disabled' : '') + '>' + esc(BGM.prompt) + '</textarea>' +
     '<div class="bg-pre" role="group" aria-label="现成的风格">' + BGM_PRESET.map(function (p, i) { return '<button class="chip" data-bgm-pre="' + i + '"' + (run ? ' disabled' : '') + '>' + p[0] + '</button>'; }).join('') + '</div>' +
     '<div class="bg-len"><label for="bgSec">多长</label><input type="range" id="bgSec" min="10" max="240" step="5" value="' + BGM.seconds + '"' + (run ? ' disabled' : '') + '><output class="num" id="bgSecO">' + bgmClock(BGM.seconds) + '</output></div>' +
-    '<div class="bg-go">' + (run ? '<button class="btn danger bg-big" data-bgm-stop="1">不等了</button>' : '<button class="btn primary bg-big" data-bgm-gen="1"' + (useLive() ? '' : ' disabled') + '>出一首</button>') + '</div>' +
+    '<div class="bg-go">' + (run ? '<button class="btn danger bg-big" data-bgm-stop="1">不等了</button>' : '<button class="btn primary bg-big" data-bgm-gen="1"' + (useLive() && st ? '' : ' disabled') + '>出一首</button>') + '</div>' +
     '<div class="bg-svc st-' + sv[0] + '"><i></i><span>' + esc(sv[1]) + '</span>' + sv[2] + '</div></section>';
   var mid;
   if (run) mid = '<div class="bg-now">' + (BGM.mode === 'batch' ? mbNowLine('bgm') : '') + '<div class="bg-run"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="bg-t">正在出这一首</div>' +
@@ -72,12 +72,15 @@ function bgmFetch() {
   if (!useLive()) { renderBgm(); return; }
   api('GET', '/api/bgm', null, 8000).then(function (j) {
     var was = BGM.st && BGM.st.job && BGM.st.job.st === 'run';
-    BGM.st = j;
+    BGM.st = j; BGM.err = '';
     if (was && j.job && j.job.st === 'done' && j.recent[0]) { BGM.sel = j.recent[0].id; toast('出好了：' + j.recent[0].name); }
     renderBgm();
-  }).catch(function () {});
+  }).catch(function (e) {
+    BGM.err = e && e.message ? e.message : '后台没响应';
+    renderBgm();
+  });
 }
-function bgmEnter() { bgmFetch(); mbEnter('bgm'); clearInterval(BGM.t); BGM.t = setInterval(function () { if (S.view === 'bgm') bgmFetch(); }, 1500); }
+function bgmEnter() { renderBgm(); bgmFetch(); mbEnter('bgm'); clearInterval(BGM.t); BGM.t = setInterval(function () { if (S.view === 'bgm') bgmFetch(); }, 1500); }
 function bgmLeave() { mbLeave('bgm'); clearInterval(BGM.t); BGM.t = null; if (BGM.audio) BGM.audio.pause(); }
 /* 波形：把这一首读进来算 200 个峰值（算过的记着）；演示数据画一条假的 */
 function bgmPeaks(id) {
