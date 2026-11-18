@@ -37,7 +37,10 @@ step "配音：切句子、拼接停顿、时间轴、保存、我的音色、�
 step "配音的百炼云端引擎：只发文案、字级时间戳、分块、用量、出错说明、Key 不外泄" "$PY" dev/test_tts_cloud.py
 step "配音页点一遍（本地和百炼云端）、设置里的安装配音、百炼 Key 和开机自启" "$PY" dev/ui/tts.py dev/.run/shots
 step "配音、语音、配乐进整备一键装好（真跑一遍装配乐，假下载站）；配音批量、配乐批量：认清单、每段的音色、按名字存、旧版、停下、打包" "$PY" dev/test_media.py
-step "视频工坊：默认可测节点、普通/GIF/SVG 全参数、尺寸校验、SHA-256 缓存、三路并发、网页/PPT 轨道缓存、发布清单、FFmpeg 合成、停下" "$PY" dev/test_studio.py
+step "视频工坊：自由节点/端口/环检测、DAG 并行、节点缓存、旧工程迁移、剧本导入、看图复刻、FFmpeg 合成、停下" "$PY" dev/test_studio.py
+step "视频工坊灯箱：开关、缩放、棋盘格、GIF、信息栏" "$PY" dev/ui/lightbox.py dev/.run/shots
+step "视频工坊自由节点画布：加删、拖动、缩放、连线断线、适应窗口" "$PY" dev/ui/canvas.py dev/.run/shots
+step "视频工坊看图复刻：假 Claude Code 写 HTML、录轨、第二次命中缓存" "$PY" dev/ui/styleframe.py dev/.run/shots
 step "配音批量、配乐批量点一遍：贴清单、改一段、开始、听、选文件" "$PY" dev/ui/batch.py dev/.run/shots
 step "发布到抖音（假抖音）：真代码导得进来、扫码登录、cookie 加密、发之前的检查、发、验证码、停下、Agent 交来等确认" "$PY" dev/test_publish.py
 step "「发布」窗口点一遍；下边栏精简、设置里的其他页面和外观开关" "$PY" dev/ui/publish.py dev/.run/shots

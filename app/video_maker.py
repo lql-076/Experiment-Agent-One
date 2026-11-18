@@ -200,14 +200,15 @@ def _srt_escape(p: Path) -> str:
 
 
 def compose_video(project_dir, srt=True, bgm_volume=0.18, kenburns=True, stopped=None, progress=None,
-                 duck_depth=0.16, fade=2.0) -> dict:
+                 duck_depth=0.16, fade=2.0, project=None) -> dict:
     """把项目文件夹里的素材合成 output/成片.mp4。
 
     stopped() 返回真 → 结束自己开的 ffmpeg，返回 {"stopped": True}。
     progress({"stage": "compose", "pct": 0~100, "msg": "..."}) 实时回报。
+    project 给了就用这份内存里的工程（节点图混流用），不再读 project.json。
     """
     d = Path(project_dir).resolve()
-    p = json.loads((d / PROJECT_FILE).read_text("utf-8"))
+    p = project if isinstance(project, dict) else json.loads((d / PROJECT_FILE).read_text("utf-8"))
     say = progress or (lambda _x: None)
     stop = stopped or (lambda: False)
     t0 = time.time()

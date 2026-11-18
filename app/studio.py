@@ -19,8 +19,10 @@ r"""自媒体视频工坊（v3.8.1，R09）：默认可测子节点 + 全参数�
 工程都存在 工作区\视频工坊\<项目名_时间戳>\project.json（不进仓库），单步重跑只动点名的那一步。
 """
 import asyncio
+import copy
 import json
 import re
+import shutil
 import threading
 import time
 from datetime import datetime
@@ -31,7 +33,8 @@ import httpx
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse, Response
 
-from . import bgm, db, deepseek, feed, imagegen, paths, publish, render_ppt, render_web, settings, studio_assets, studio_cache as cache, telemetry, tts, tts_cloud, video_maker
+from . import (bgm, ccode, db, deepseek, feed, imagegen, paths, publish, render_ppt, render_web, settings, studio_assets,
+               studio_cache as cache, studio_graph as graph, telemetry, tts, tts_cloud, video_maker)
 
 JOBS = "视频工坊"
 RATIOS = [("9:16", "竖屏 9:16（抖音）"), ("16:9", "横屏 16:9")]
@@ -595,8 +598,9 @@ def _image_fps(p, s, cfg=None):
 
 def _shot_image_dest(p, s, variant, ext="png"):
     i = (p.get("shots") or []).index(s) + 1
+    stem = str(s.get("_dest_stem") or f"shot{i:02d}")
     suffix = "" if int(_img_cfg(p, s)["n"]) == 1 else f"_v{variant + 1}"
-    return Path(p["dir"]) / "images" / f"shot{i:02d}{suffix}.{(ext or 'png').lower()}"
+    return Path(p["dir"]) / "images" / f"{stem}{suffix}.{(ext or 'png').lower()}"
 
 
 def _tts_fp(p, s, cfg):
@@ -735,6 +739,41 @@ class Studio:
         if changed:
             video_maker.save_project(p)
 
+    def _load(self, pid) -> dict:
+        """读工程；旧工程自动迁移成自由节点图（先留 project.json.bak，失败原样不动）。"""
+        p = video_maker.load_project(pid)
+        if graph.valid_graph(p.get("graph")):
+            return p
+        d = Path(p["dir"])
+        bak = d / (video_maker.PROJECT_FILE + ".bak")
+        try:
+            if (d / video_maker.PROJECT_FILE).is_file() and not bak.is_file():
+                shutil.copy2(d / video_maker.PROJECT_FILE, bak)
+            if graph.ensure_graph(p):
+                video_maker.save_project(p)
+            self._recover(p)
+            return p
+        except Exception as e:
+            try:
+                if bak.is_file():
+                    shutil.copy2(bak, d / video_maker.PROJECT_FILE)
+            except OSError:
+                pass
+            raise StudioError(f"旧工程迁移失败，原工程没动：{type(e).__name__} {str(e)[:200]}") from None
+
+    @staticmethod
+    def _pseudo(p, shots, **kw) -> dict:
+        """节点执行用的临时工程：不落盘（_save 看到 _transient 就跳过），也不改原工程的 shots。"""
+        pp = copy.deepcopy(p)
+        pp["_transient"] = True
+        pp["shots"] = shots
+        pp.setdefault("steps", {k: {"st": "idle", "msg": "", "err": "", "pct": 0, "t0": 0, "t1": 0}
+                                for k in ("plan", "images", "tts", "bgm", "web", "ppt", "video")})
+        pp["files"] = {}
+        pp["cost"] = {"images_usd": 0.0, "tts_cny": 0.0}
+        pp.update(kw)
+        return pp
+
     def _url(self, pid, rel, ver=0):
         return f"/api/studio/media?pid={quote(str(pid))}&path={quote(str(rel))}" + (f"&v={int(ver)}" if ver else "")
 
@@ -788,6 +827,7 @@ class Studio:
                 "target_seconds": p.get("target_seconds") or 75, "topic": p.get("topic") or "",
                 "source_text": p.get("source_text") or "", "bgm_prompt": p.get("bgm_prompt") or "",
                 "settings": p.get("settings") or {}, "node_layout": p.get("node_layout") or {},
+                "graph": p.get("graph") or {"nodes": [], "edges": []}, "graph_version": p.get("graph_version") or 3,
                 "placeholder": bool(p.get("placeholder")), "no_auto_shot": bool(p.get("no_auto_shot")),
                 "steps": steps, "files": files, "shots": shots, "bgm_cache_hit": bool(p.get("bgm_cache_hit")),
                 "total_seconds": round(total or 0, 2), "duration": round(float(p.get("duration") or 0), 2),
@@ -810,6 +850,8 @@ class Studio:
                 _init_role_voices(p, voice)
                 p["shots"] = [_default_shot(p, 1)]
                 p["placeholder"] = True
+                p["graph"] = graph.default_graph(p)
+                p["graph_version"] = 3
                 video_maker.save_project(p)
                 active = p["id"]
                 projects = video_maker.list_projects()
@@ -819,7 +861,7 @@ class Studio:
         p = p if 'p' in locals() and p else None
         if active and p is None:
             try:
-                p = video_maker.load_project(active)
+                p = self._load(active)
                 self._recover(p)
                 _init_role_voices(p)
                 p["settings"].setdefault("img_model", settings.S.get("imgModel") or imagegen.DEFAULT_MODEL)
@@ -832,10 +874,12 @@ class Studio:
                 "style_tag": STYLE_TAG, "roles": list(ROLES), "models": image_models(),
                 "default_model": settings.S.get("imgModel") or imagegen.DEFAULT_MODEL,
                 "publish": {"pending": len(publish.pending()), "batch": len(((db.kv_get("pub_batch") or {}).get("items") or []))},
-                "slot": [{"id": k, "label": v} for k, v in video_maker.SIZES.items()]}
+                "slot": [{"id": k, "label": v} for k, v in video_maker.SIZES.items()],
+                "node_ports": graph.PORTS, "fixed": sorted(graph.FIXED), "node_types": graph.NODE_NAME,
+                "node_name": graph.NODE_NAME}
 
     def select(self, pid):
-        p = video_maker.load_project(pid)
+        p = self._load(pid)
         self._recover(p)
         _init_role_voices(p)
         ensure_default_shots(p)
@@ -845,7 +889,7 @@ class Studio:
     # ---------- 工程 ----------
     async def plan(self, body) -> dict:
         pid = str(body.get("pid") or "").strip()
-        old = video_maker.load_project(pid) if pid else None
+        old = self._load(pid) if pid else None
         ratio = body.get("ratio") if body.get("ratio") in video_maker.SIZES else ((old or {}).get("ratio") or "9:16")
         topic = str(body.get("topic") or "").strip()
         text = str(body.get("text") or "").strip()
@@ -891,6 +935,8 @@ class Studio:
         _init_role_voices(p, voice)
         p["shots"] = [_default_shot(p, 1)]
         p["placeholder"] = True
+        p["graph"] = graph.default_graph(p)
+        p["graph_version"] = 3
         video_maker.save_project(p)
         db.kv_set("studio_active", p["id"])
         return self.state(p["id"])
@@ -901,7 +947,7 @@ class Studio:
             raise StudioError("没有剧本内容：把 Gemini 的输出贴进来，或者选一个 .md / .json 文件")
         j = parse_script(text)
         pid = str(body.get("pid") or "").strip()
-        old = video_maker.load_project(pid) if pid else None
+        old = self._load(pid) if pid else None
         if old:
             p = old
         else:
@@ -955,7 +1001,7 @@ class Studio:
 
     def update(self, body) -> dict:
         pid = str(body.get("pid") or db.kv_get("studio_active") or "")
-        p = video_maker.load_project(pid)
+        p = self._load(pid)
         _init_role_voices(p)
         p["settings"].setdefault("img_model", settings.S.get("imgModel") or imagegen.DEFAULT_MODEL)
         old_ratio = p.get("ratio")
@@ -1257,9 +1303,11 @@ class Studio:
             p["shots"] = [_default_shot(p, 1)]
             p["placeholder"] = True
             p["source_text"] = text
+            p["graph"] = graph.default_graph(p)
+            p["graph_version"] = 3
             video_maker.save_project(p)
         else:
-            p = video_maker.load_project(pid)
+            p = self._load(pid)
         ids = body.get("ids")
         if ids is not None:
             if not isinstance(ids, list):
@@ -1284,6 +1332,11 @@ class Studio:
         if self.job:
             self.job["msg"] = "停下中：正在结束当前这一步……"
         step = (self.job or {}).get("step")
+        if (self.job or {}).get("mode") == "styleframe":
+            try:
+                ccode.request_stop((self.job or {}).get("cc_eid"), "视频工坊：你点了停下")
+            except Exception:
+                pass
         if step == "tts":
             try:
                 tts.T.stop("视频工坊：你点了停下")
@@ -1593,15 +1646,15 @@ class Studio:
         except Exception:
             return True
 
-    async def _gen_tts(self, p, ids=None):
+    async def _gen_tts(self, p, ids=None, shots=None, out_prefix=""):
         self._step_start(p, "tts", "准备逐句配音")
-        shots = p["shots"]
+        shots = shots if shots is not None else p["shots"]
         if ids:
             targets = [s for s in shots if s["id"] in ids]
         else:
             targets = [s for s in shots if self._tts_stale(p, s)]
         if not targets:
-            await self._build_voice(p)
+            await self._build_voice(p, shots=shots, out_prefix=out_prefix)
             _mark(p, "tts", "ok", "配音都在", 100)
             return
         self._span = (35, 30)
@@ -1610,8 +1663,8 @@ class Studio:
             cfg = _shot_voice(p, s)
             fp = _tts_fp(p, s, cfg)
             idx = shots.index(s) + 1
-            dest = Path(p["dir"]) / "tts" / f"shot{idx:02d}.wav"
-            rel = f"tts/shot{idx:02d}.wav"
+            rel = str(s.get("_tts_rel") or f"tts/shot{idx:02d}.wav")
+            dest = Path(p["dir"]) / rel
             ent = cache.project_get(p["dir"], f"tts:{s['id']}")
             hit = False
             if ent and ent.get("fp") == fp and (Path(p["dir"]) / rel).is_file():
@@ -1627,7 +1680,7 @@ class Studio:
                 s["tts_st"] = "run"
                 miss.append((s, cfg, fp, idx, dest, rel))
         if not miss:
-            await self._build_voice(p)
+            await self._build_voice(p, shots=shots, out_prefix=out_prefix)
             _mark(p, "tts", "ok", f"{len(targets)} 句全部缓存命中", 100)
             if self.job:
                 self.job.update(stage=2, pct=self._span[0] + self._span[1])
@@ -1734,15 +1787,15 @@ class Studio:
             _mark(p, "tts", "err", "有句子没配成：" + "；".join(fails[:3]), 0)
             raise StudioError("配音有句子没配成：" + "；".join(fails[:3]))
         self._check_stop()
-        await self._build_voice(p)
+        await self._build_voice(p, shots=shots, out_prefix=out_prefix)
         _mark(p, "tts", "ok", f"配好 {len(shots)} 句" + (f"（{hits} 句缓存命中）" if hits else ""), 100)
         if self.job:
             self.job.update(stage=2, pct=self._span[0] + self._span[1])
         self._save(p, True)
 
-    async def _build_voice(self, p):
+    async def _build_voice(self, p, shots=None, out_prefix=""):
         """把每段配音拼成一条 voice.wav，并按实际时长写 subtitles.srt、每个分镜的 start/end。"""
-        shots = p.get("shots") or []
+        shots = shots if shots is not None else (p.get("shots") or [])
         if not shots:
             raise StudioError("还没有分镜")
         chunks, sr, tl = [], None, []
@@ -1779,9 +1832,9 @@ class Studio:
             pcm_all += x
         d = Path(p["dir"]) / "tts"
         d.mkdir(parents=True, exist_ok=True)
-        tmp = d / "voice.part.wav"
+        tmp = d / (str(out_prefix or "") + "voice.part.wav")
         tts.write_wav(tmp, sr, pcm_all)
-        tmp.replace(d / "voice.wav")
+        tmp.replace(d / (str(out_prefix or "") + "voice.wav"))
         # 字幕：一镜里太长就在逗号处再切，按字数分这段时间
         n = 0
         for i, ((s, text)) in enumerate(zip(shots, texts)):
@@ -1799,26 +1852,30 @@ class Studio:
                     en = at + span * w / tot
                 tl.append({"i": n, "start": round(at, 3), "end": round(max(at + 0.05, en), 3), "text": piece})
                 at = en
-        (d / "subtitles.srt").write_text(tts.to_srt(tl), "utf-8")
+        (d / (str(out_prefix or "") + "subtitles.srt")).write_text(tts.to_srt(tl), "utf-8")
         meta = {"created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "sample_rate": sr, "total_seconds": round(total, 3),
                 "voice": p["settings"].get("voice"), "role_voices": p["settings"].get("role_voices"),
                 "shots": [{"id": s["id"], "role": s.get("role"), "speaker": s.get("speaker"), "tone": s.get("tone"),
                            "start": s["start"], "end": s["end"], "duration": s["duration"], "text": s.get("text")} for s in shots]}
-        (d / "timeline.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), "utf-8")
-        p["files"].update(voice="tts/voice.wav", srt="tts/subtitles.srt", timeline="tts/timeline.json")
+        (d / (str(out_prefix or "") + "timeline.json")).write_text(json.dumps(meta, ensure_ascii=False, indent=2), "utf-8")
+        pre = str(out_prefix or "")
+        p["files"].update(voice=f"tts/{pre}voice.wav", srt=f"tts/{pre}subtitles.srt", timeline=f"tts/{pre}timeline.json")
         p["total_seconds"] = round(total, 3)
-        video_maker.save_project(p)
+        if not p.get("_transient"):
+            video_maker.save_project(p)
+        return {"voice": f"tts/{pre}voice.wav", "srt": f"tts/{pre}subtitles.srt", "timeline": f"tts/{pre}timeline.json",
+                "seconds": round(total, 3), "shots": shots}
 
     # ---------- 配乐 ----------
-    async def _gen_bgm(self, p):
+    async def _gen_bgm(self, p, dest_rel="bgm/bgm.wav", project_key="bgm"):
         self._step_start(p, "bgm", "准备配乐（GPU 通道）")
         fp, prompt, seconds, steps, seed = _bgm_fp(p)
         self._span = (65, 15)
-        dest = Path(p["dir"]) / "bgm" / "bgm.wav"
-        rel = "bgm/bgm.wav"
-        ent = cache.project_get(p["dir"], "bgm")
+        rel = str(dest_rel)
+        dest = Path(p["dir"]) / rel
+        ent = cache.project_get(p["dir"], project_key)
         if (ent and ent.get("fp") == fp and dest.is_file()) or cache.hit_to(fp, dest, "bgm"):
-            cache.project_set(p["dir"], "bgm", fp, rel, True)
+            cache.project_set(p["dir"], project_key, fp, rel, True)
             p["files"]["bgm"] = rel
             p["settings"]["use_bgm"] = True
             p["bgm_seconds"] = _wav_duration(dest) or seconds
@@ -1849,7 +1906,7 @@ class Studio:
         p["bgm_seconds"] = r.get("duration") or seconds
         p["bgm_cache_hit"] = False
         cache.put(fp, dest, "bgm", {"duration": p["bgm_seconds"], "steps": steps, "seed": seed})
-        cache.project_set(p["dir"], "bgm", fp, rel, False)
+        cache.project_set(p["dir"], project_key, fp, rel, False)
         _mark(p, "bgm", "ok", f"配乐好了：{p['bgm_seconds']:.0f} 秒", 100)
         if self.job:
             self.job.update(stage=2, pct=80)
@@ -1910,6 +1967,8 @@ class Studio:
             self.job["msg"] = str(msg)[:200]
 
     def _save(self, p, force=False):
+        if p.get("_transient"):
+            return
         now = time.time()
         if force or now - self._saved >= 1.5:
             try:
@@ -1918,10 +1977,859 @@ class Studio:
             except Exception:
                 pass
 
+    # ---------- 自由节点图（v3.9.0） ----------
+    def graph_view(self, p):
+        return self.project_view(p)
+
+    def graph_save(self, p):
+        self._save(p, True)
+        return self.graph_view(p)
+
+    def graph_add(self, body):
+        p = self._load(_pid_of(body))
+        typ = str(body.get("type") or "")
+        n = graph.add_node(p["graph"], typ, int(body.get("x") or 60), int(body.get("y") or 60), p)
+        video_maker.save_project(p)
+        return {"project": self.graph_view(p), "node": n}
+
+    def graph_delete(self, body):
+        p = self._load(_pid_of(body))
+        n = graph.delete_node(p["graph"], str(body.get("id") or ""))
+        _mark(p, "video", "stale", f"删了节点 {n.get('title') or n.get('id')}：下游要重做")
+        video_maker.save_project(p)
+        return {"project": self.graph_view(p)}
+
+    def graph_update(self, body):
+        p = self._load(_pid_of(body))
+        n = graph.node_of(p["graph"], str(body.get("id") or ""))
+        for k in ("x", "y"):
+            if body.get(k) is not None:
+                n[k] = max(-4000, min(12000, int(body[k])))
+        for k in ("w", "h"):
+            if body.get(k) is not None:
+                n[k] = max(220 if k == "w" else 120, min(4000, int(body[k])))
+        if body.get("title") is not None:
+            n["title"] = str(body["title"] or "")[:60]
+        changed = False
+        if isinstance(body.get("params"), dict):
+            prm = body["params"]
+            if n["type"] == "voice" and "lines" in prm:
+                lines = prm["lines"]
+                if not isinstance(lines, list) or len(lines) > 200:
+                    raise HTTPException(400, "台词列表不对：最多 200 句")
+                prm = dict(prm)
+                prm["lines"] = [{"id": str(x.get("id") or f"l{i + 1}")[:20], "text": str(x.get("text") or "")[:500],
+                                 "tone": str(x.get("tone") or "")[:60], "speaker": str(x.get("speaker") or "")[:80]}
+                                for i, x in enumerate(lines) if isinstance(x, dict)]
+            if n["type"] == "image":
+                for k in ("custom_w", "custom_h"):
+                    if prm.get(k) is not None:
+                        try:
+                            prm[k] = max(0, min(4096, int(prm[k])))
+                        except (TypeError, ValueError):
+                            raise HTTPException(400, "自定义宽高要写数字") from None
+                if prm.get("resolution") == "custom" or prm.get("custom_w") or prm.get("custom_h"):
+                    err = imagegen.validate_size(prm.get("custom_w") or 0, prm.get("custom_h") or 0)
+                    if err:
+                        raise HTTPException(400, "自定义尺寸不合规：" + err)
+            if n["type"] == "publish" and "tags" in prm:
+                tags = prm["tags"]
+                if isinstance(tags, str):
+                    tags = re.split(r"[\s,，、#＃]+", tags)
+                prm["tags"] = [re.sub(r"^[#＃]+", "", str(x).strip())[:20] for x in (tags or []) if str(x).strip()][:10]
+            old = json.dumps(n.get("params") or {}, ensure_ascii=False, sort_keys=True)
+            n.setdefault("params", {}).update(prm)
+            new = json.dumps(n["params"], ensure_ascii=False, sort_keys=True)
+            if new != old:
+                graph.invalidate_downstream(p["graph"], n["id"])
+                changed = True
+            if n["type"] in ("script", "publish"):
+                if "title" in prm:
+                    p["title"] = str(prm["title"] or "")[:30]
+                if "desc" in prm:
+                    p["desc"] = str(prm["desc"] or "")[:300]
+                if "tags" in prm:
+                    p["tags"] = n["params"].get("tags") or []
+                if n["type"] == "script" and "source_text" in prm:
+                    p["topic"] = str(prm["source_text"] or "")[:4000]
+        if changed:
+            n["status"] = "stale" if n.get("status") in ("ok", "warn") else n.get("status", "idle")
+        video_maker.save_project(p)
+        return {"project": self.graph_view(p), "node": n}
+
+    def graph_connect(self, body):
+        p = self._load(_pid_of(body))
+        try:
+            e = graph.connect(p["graph"], str(body.get("from") or ""), str(body.get("to") or ""))
+        except graph.GraphError as ex:
+            raise HTTPException(400, str(ex)) from None
+        video_maker.save_project(p)
+        return {"project": self.graph_view(p), "edge": e}
+
+    def graph_disconnect(self, body):
+        p = self._load(_pid_of(body))
+        try:
+            graph.disconnect(p["graph"], str(body.get("edge") or body.get("id") or ""))
+        except graph.GraphError as ex:
+            raise HTTPException(404, str(ex)) from None
+        video_maker.save_project(p)
+        return {"project": self.graph_view(p)}
+
+    def graph_layout(self, body):
+        p = self._load(_pid_of(body))
+        for q in body.get("nodes") or []:
+            if not isinstance(q, dict):
+                continue
+            try:
+                n = graph.node_of(p["graph"], str(q.get("id") or ""))
+            except graph.GraphError:
+                continue
+            for k in ("x", "y"):
+                if q.get(k) is not None:
+                    n[k] = max(-4000, min(12000, int(q[k])))
+            for k in ("w", "h"):
+                if q.get(k) is not None:
+                    n[k] = max(220 if k == "w" else 120, min(4000, int(q[k])))
+        video_maker.save_project(p)
+        return {"ok": True}
+
+    def graph_node(self, body):
+        p = self._load(_pid_of(body))
+        n = graph.node_of(p["graph"], str(body.get("id") or ""))
+        return {"project": self.graph_view(p), "node": n}
+
+    async def graph_run(self, body):
+        if self.busy():
+            raise HTTPException(409, "正在跑：等它好了，或者先点「停下」")
+        p = self._load(_pid_of(body))
+        nid = str(body.get("id") or "")
+        ids = body.get("ids")
+        if nid and not ids:
+            try:
+                graph.node_of(p["graph"], nid)
+            except graph.GraphError as e:
+                raise HTTPException(404, str(e)) from None
+        self._stop.clear()
+        self._saved = 0.0
+        self.job = {"id": int(time.time() * 1000), "st": "run", "mode": "graph", "step": nid or "all", "pid": p["id"],
+                    "stage": 3, "msg": "准备中", "pct": 0, "err": "", "shot": "", "t0": time.time(), "t1": 0.0}
+        db.kv_set("studio_active", p["id"])
+        self._task = asyncio.get_running_loop().create_task(self._graph_run(p, nid, ids))
+        await asyncio.sleep(0.05)
+        return {"job": self.public(), "project": self.graph_view(p)}
+
+    def graph_import(self, body):
+        p = self._load(_pid_of(body))
+        text = str(body.get("text") or body.get("md") or body.get("script") or "").strip()
+        if not text:
+            raise StudioError("没有剧本内容：把 JSON / Markdown 贴进来，或者选一个文件")
+        try:
+            doc = graph.parse_script_doc(text)
+        except graph.GraphError as e:
+            raise HTTPException(400, str(e)) from None
+        summary = self._apply_script_doc(p, doc)
+        video_maker.save_project(p)
+        return {"state": self.state(p["id"]), "estimate": graph.estimate(doc), "summary": summary, "doc": doc}
+
+    async def graph_plan(self, body):
+        p = self._load(_pid_of(body))
+        nid = str(body.get("id") or "script")
+        n = graph.node_of(p["graph"], nid)
+        topic = str(body.get("topic") or n["params"].get("topic") or n["params"].get("source_text") or "").strip()
+        text = str(body.get("text") or "").strip()
+        if not topic and not text:
+            raise HTTPException(400, "先在剧本节点里写一个主题，或者贴完整口播文案")
+        j, cny = await _ask_plan(topic, text, p.get("ratio") or "9:16", p.get("target_seconds") or 75)
+        doc = {"title": j["title"], "desc": j["desc"], "tags": j["tags"],
+               "bgm": {"segments": [{"id": "bgm-1", "prompt": j["bgm_prompt"], "seconds": p.get("target_seconds") or 75,
+                                     "steps": 8, "seed": int(time.time()) % 100000}]} if j.get("bgm_prompt") else {"segments": []},
+               "shots": []}
+        for i, s in enumerate(j["shots"]):
+            render = "web" if (i == 0 or i % 5 == 4) else "ppt" if i % 3 == 2 else "static"
+            doc["shots"].append({"id": f"s{i + 1}", "seconds": s.get("seconds_hint") or max(2.5, len(s["text"]) / 4.5),
+                                 "render": render, "image": {"prompt": s["image_prompt"]},
+                                 "voice": {"role": s["role"], "speaker": s.get("speaker") or "", "tone": s["tone"], "text": s["text"]}})
+        p["cost"]["plan_cny"] = round(float(p.get("cost", {}).get("plan_cny") or 0) + cny, 4)
+        summary = self._apply_script_doc(p, doc)
+        video_maker.save_project(p)
+        return {"state": self.state(p["id"]), "estimate": graph.estimate(doc), "summary": summary, "doc": doc,
+                "cny": round(cny, 4)}
+
+    def _ensure_edge(self, p, a, b):
+        try:
+            graph.connect(p["graph"], a, b)
+        except graph.GraphError:
+            pass
+
+    def _script_node(self, p, typ, key, title, params, x, y):
+        for n in p["graph"]["nodes"]:
+            if n["type"] == typ and (n.get("params") or {}).get("script_key") == key:
+                old = json.dumps(n.get("params") or {}, ensure_ascii=False, sort_keys=True)
+                n["params"].update(params)
+                n["params"].pop("script_removed", None)
+                n["title"] = title or n.get("title") or n["id"]
+                if json.dumps(n.get("params") or {}, ensure_ascii=False, sort_keys=True) != old:
+                    graph.invalidate_downstream(p["graph"], n["id"])
+                return n
+        n = graph.add_node(p["graph"], typ, x, y, p)
+        n["params"].update(params)
+        n["params"]["script_key"] = key
+        n["title"] = title
+        return n
+
+    def _apply_script_doc(self, p, doc) -> str:
+        """剧本 → 一级节点 + 连线。同 key 更新参数保留产出；剧本里没有的只标记不删除。"""
+        graph.ensure_graph(p)
+        p["title"] = doc["title"] or p.get("title") or p["id"]
+        p["desc"] = doc["desc"] or p.get("desc") or ""
+        p["tags"] = doc["tags"] or p.get("tags") or []
+        script = next((n for n in p["graph"]["nodes"] if n["type"] == "script"), None)
+        if script:
+            script["params"].update({"title": p["title"], "desc": p["desc"], "tags": p["tags"],
+                                     "source_text": str(doc.get("source_text") or script["params"].get("source_text") or "")})
+        keys = set()
+        for i, s in enumerate(doc["shots"]):
+            sid = s["id"]
+            keys.add("image:" + sid); keys.add("voice:" + sid)
+            im = self._script_node(p, "image", "image:" + sid, f"生图 · {sid}",
+                                   dict(s["image"], order=i + 1, script_key="image:" + sid), 420, 40 + i * 300)
+            vo = self._script_node(p, "voice", "voice:" + sid, f"配音 · {sid} · {s['voice']['role']}",
+                                   {"role": s["voice"]["role"], "speaker": s["voice"]["speaker"],
+                                    "engine": s["voice"]["engine"] or "auto", "tone": s["voice"]["tone"],
+                                    "lines": [{"id": "l1", "text": s["voice"]["text"], "tone": s["voice"]["tone"]}],
+                                    "order": i + 1, "script_key": "voice:" + sid}, 820, 40 + i * 300)
+            self._ensure_edge(p, im["id"] + ".image", "mux.image")
+            self._ensure_edge(p, vo["id"] + ".audio", "mux.audio")
+            if s["render"] == "web":
+                wk = "web:" + sid
+                keys.add(wk)
+                wn = self._script_node(p, "web", wk, f"网页动效 · {sid}",
+                                       {"text": s["voice"]["text"], "duration": s["seconds"], "order": i + 1,
+                                        "script_key": wk, "bg": "dark", "sub_pos": "bottom", "fps": 24,
+                                        "gif_scale": 1, "motion": 1, "sub_size": 0, "sub_color": ""}, 1240, 40 + i * 300)
+                self._ensure_edge(p, im["id"] + ".image", wn["id"] + ".image")
+                self._ensure_edge(p, vo["id"] + ".audio", wn["id"] + ".audio")
+                self._ensure_edge(p, wn["id"] + ".video", "mux.video")
+                p["graph"]["edges"] = [e for e in p["graph"]["edges"] if e.get("from") != im["id"] + ".image" or e.get("to") != "mux.image"]
+            elif s["render"] == "ppt":
+                pk = "ppt:" + sid
+                keys.add(pk)
+                pn = self._script_node(p, "ppt", pk, f"PPT 卡片 · {sid}",
+                                       {"text": s["voice"]["text"], "order": i + 1, "script_key": pk,
+                                        "file": "", "points": [], "duration": s["seconds"]}, 40, 500 + i * 260)
+                self._ensure_edge(p, pn["id"] + ".image", "mux.image")
+                p["graph"]["edges"] = [e for e in p["graph"]["edges"] if e.get("from") != im["id"] + ".image" or e.get("to") != "mux.image"]
+            else:
+                # 同一张图如果以前接过网页/PPT，现在改静态：把旧轨道的线断掉
+                for e in list(p["graph"]["edges"]):
+                    if e.get("to") == im["id"] + ".image":
+                        continue
+        for b in doc.get("bgm", {}).get("segments") or []:
+            bk = "bgm:" + b["id"]
+            keys.add(bk)
+            bn = self._script_node(p, "bgm", bk, f"背景配乐 · {b['id']}",
+                                   {"prompt": b["prompt"], "seconds": b["seconds"], "steps": b["steps"],
+                                    "seed": b["seed"], "order": 1, "script_key": bk}, 1640, 40)
+            self._ensure_edge(p, bn["id"] + ".audio", "mux.audio")
+        self._ensure_edge(p, "mux.video", "publish.video")
+        # 剧本里没有的：只标记，不删；把它接到混流的线先断开，免得它继续影响成片
+        removed = 0
+        for n in p["graph"]["nodes"]:
+            k = (n.get("params") or {}).get("script_key")
+            if not k or k in keys:
+                continue
+            n["params"]["script_removed"] = True
+            removed += 1
+            p["graph"]["edges"] = [e for e in p["graph"]["edges"]
+                                   if not (e.get("from", "").startswith(n["id"] + ".") or e.get("to", "").startswith(n["id"] + "."))]
+        return f"{len(doc['shots'])} 个分镜、{len(doc.get('bgm', {}).get('segments') or [])} 段配乐" + (f"；{removed} 个旧节点标成剧本里已移除" if removed else "")
+
+    async def graph_styleframe(self, body):
+        if self.busy():
+            raise HTTPException(409, "正在跑：等它好了，或者先点「停下」")
+        p = self._load(_pid_of(body))
+        nid = str(body.get("id") or "")
+        n = graph.node_of(p["graph"], nid)
+        if n["type"] != "web":
+            raise HTTPException(400, "只有网页动效节点能看图复刻")
+        self._stop.clear()
+        self.job = {"id": int(time.time() * 1000), "st": "run", "mode": "styleframe", "step": nid, "pid": p["id"],
+                    "stage": 3, "msg": "准备交给 Claude Code 看图复刻", "pct": 0, "err": "", "shot": "", "t0": time.time(), "t1": 0.0}
+        self._task = asyncio.get_running_loop().create_task(self._graph_styleframe(p, n))
+        await asyncio.sleep(0.05)
+        return {"job": self.public(), "project": self.graph_view(p)}
+
+    async def _graph_run(self, p, nid=None, ids=None):
+        p["st"] = "run"
+        p["error"] = ""
+        self._save(p, True)
+        try:
+            if nid:
+                await self._graph_one(p, nid)
+            else:
+                only = {str(x) for x in ids} if isinstance(ids, list) and ids else None
+                order = graph.topo_order(p["graph"])
+                tasks = {}
+                for x in order:
+                    if only is not None and x not in only:
+                        continue
+                    tasks[x] = asyncio.get_running_loop().create_task(self._graph_after(p, x, tasks, len(order)))
+                if tasks:
+                    await asyncio.gather(*tasks.values(), return_exceptions=True)
+            if self._stop.is_set():
+                raise StopRequested()
+            fails = [n.get("title") or n.get("id") for n in (p.get("graph") or {}).get("nodes") or [] if n.get("status") == "err"]
+            if fails:
+                raise StudioError("有线没跑成：" + "、".join(str(x) for x in fails[:5]))
+            p["st"] = "done"
+            p["error"] = ""
+            self.job.update(st="done", pct=100, msg="全部完成", stage=4, t1=time.time())
+            feed.add(f"视频工坊「{p.get('title') or p['id']}」的节点跑完了", "ok", job=JOBS)
+        except StopRequested:
+            p["st"] = "stop"
+            for n in (p.get("graph") or {}).get("nodes") or []:
+                if n.get("status") == "run":
+                    n["status"] = "stale"
+            self.job.update(st="stop", msg="停了：没做完的保留着", t1=time.time())
+        except asyncio.CancelledError:
+            p["st"] = "stop"
+            raise
+        except Exception as e:
+            msg = _err_text(e)
+            p["st"] = "err"
+            p["error"] = msg
+            self.job.update(st="err", err=msg, msg="没做成：" + msg[:200], t1=time.time())
+            feed.add(f"视频工坊没做成：{msg[:300]}", "err", job=JOBS)
+        finally:
+            self.job["t1"] = self.job.get("t1") or time.time()
+            self._save(p, True)
+            self._task = None
+
+    async def _graph_after(self, p, nid, tasks, total):
+        for e in graph.incoming(p["graph"], nid):
+            a, _pa = graph.split_port(e["from"])
+            t = tasks.get(a)
+            if t:
+                try:
+                    await t
+                except Exception:
+                    pass
+        if self._stop.is_set():
+            return
+        n = graph.node_of(p["graph"], nid)
+        if n["type"] == "publish":
+            n["status"] = "idle"
+            n["error"] = ""
+            n["outputs"] = []
+            n["params"]["waiting"] = True
+            return
+        if n["type"] == "mux" and not graph.incoming(p["graph"], nid):
+            n["status"] = "idle"
+            n["error"] = ""
+            n["params"]["waiting"] = True
+            return
+        if n["type"] == "script" and not (n["params"].get("topic") or n["params"].get("source_text")):
+            n["status"] = "idle"
+            n["error"] = ""
+            return
+        try:
+            await self._graph_one(p, nid, wait=False)
+        except StopRequested:
+            raise
+        except Exception:
+            pass
+
+    def _require_upstream(self, p, n):
+        bad = []
+        for e in graph.incoming(p["graph"], n["id"]):
+            a, _pa = graph.split_port(e["from"])
+            up = graph.node_of(p["graph"], a)
+            outs = [o for o in (up.get("outputs") or []) if _output_ok(p, o)]
+            if not outs:
+                bad.append(up.get("title") or up.get("id"))
+        if bad:
+            raise StudioError("缺上游产出：" + "、".join(str(x) for x in bad[:5]) + " 还没跑出东西。单节点运行不会自动跑上游，先点它们的「▶ 只跑」")
+        return True
+
+    async def _graph_one(self, p, nid, wait=True):
+        n = graph.node_of(p["graph"], nid)
+        if wait:
+            self._require_upstream(p, n)
+        key = graph.cache_key(n, p["graph"])
+        raw_outs = n.get("outputs") or []
+        outs = [o for o in raw_outs if _output_ok(p, o)]
+        if raw_outs and len(outs) == len(raw_outs) and n.get("cache_key") == key:
+            n.update(status="ok", error="", cache_hit=True)
+            self._save(p, True)
+            return
+        if n["type"] == "publish":
+            self._require_upstream(p, n)
+            n.update(status="ok", error="", cache_hit=False, outputs=[])
+            n["params"]["waiting"] = True
+            self._save(p, True)
+            return
+        n.update(status="run", error="", cache_hit=False)
+        if self.job:
+            self.job.update(msg=f"{n.get('title') or nid}：开始", step=nid)
+        self._save(p, True)
+        try:
+            out = await self._graph_exec(p, n)
+            n["outputs"] = [o for o in (out or []) if _output_ok(p, o)]
+            for o in n["outputs"]:
+                if not o.get("sha256"):
+                    q = Path(p["dir"]) / o.get("rel")
+                    o["sha256"] = cache.sha_file(q)
+                    o["size"] = q.stat().st_size
+            n.update(status="ok", error="", cache_key=key, cache_hit=False, finished=time.time())
+            if n["type"] == "publish":
+                n["params"]["waiting"] = True
+        except StopRequested:
+            n["status"] = "stale"
+            raise
+        except Exception as e:
+            n.update(status="err", error=_err_text(e)[:500], cache_key="")
+            _mark(p, "video", "stale", f"{n.get('title') or nid} 没做成：{_err_text(e)[:120]}")
+            raise
+        finally:
+            self._save(p, True)
+
+    async def _graph_exec(self, p, n):
+        typ = n["type"]
+        if typ == "script":
+            return await asyncio.to_thread(self._exec_script, p, n)
+        if typ == "image":
+            return await self._exec_image(p, n)
+        if typ == "voice":
+            return await self._exec_voice(p, n)
+        if typ == "bgm":
+            return await self._exec_bgm(p, n)
+        if typ == "web":
+            return await self._exec_web(p, n)
+        if typ == "ppt":
+            return await self._exec_ppt(p, n)
+        if typ == "mux":
+            return await self._exec_mux(p, n)
+        if typ == "publish":
+            return []
+        raise StudioError("不认识的节点类型：" + typ)
+
+    # ---------- 各节点执行器 ----------
+    def _up_text(self, p, n, limit=2000):
+        for e in graph.incoming(p["graph"], n["id"]):
+            a, pa = graph.split_port(e["from"])
+            up = graph.node_of(p["graph"], a)
+            if graph.port_type(up["type"], pa, "out") != "text":
+                continue
+            for o in up.get("outputs") or []:
+                if o.get("kind") == "text":
+                    q = Path(p["dir"]) / o.get("rel")
+                    if q.is_file():
+                        try:
+                            return q.read_text("utf-8")[:limit]
+                        except OSError:
+                            pass
+            if up["type"] == "script":
+                return str(up["params"].get("source_text") or up["params"].get("topic") or "")[:limit]
+        return ""
+
+    def _up_audio_dur(self, p, n):
+        cand = []
+        for e in graph.incoming(p["graph"], n["id"]):
+            a, pa = graph.split_port(e["from"])
+            up = graph.node_of(p["graph"], a)
+            if graph.port_type(up["type"], pa, "out") == "audio":
+                cand.extend([o for o in up.get("outputs") or [] if o.get("kind") == "audio"])
+        cand.sort(key=lambda o: 1 if o.get("line") else 0)          # 优先整段音频，不是逐句
+        for o in cand:
+            dur = float(o.get("duration") or 0)
+            if dur:
+                return dur
+            q = Path(p["dir"]) / o.get("rel")
+            if q.is_file():
+                d = _wav_duration(q)
+                if d:
+                    return d
+        return 0.0
+
+    def _exec_script(self, p, n):
+        prm = n["params"]
+        text = str(prm.get("source_text") or "").strip() or str(prm.get("topic") or "").strip()
+        if not text:
+            raise StudioError("先写一个主题，或者把完整口播文案贴进来")
+        d = Path(p["dir"]) / "script"
+        d.mkdir(parents=True, exist_ok=True)
+        rel = f"script/{n['id']}.md"
+        body = f"# {prm.get('title') or prm.get('topic') or '剧本'}\n\n{text}\n"
+        (Path(p["dir"]) / rel).write_text(body, "utf-8")
+        return [_out(p, rel, "text", {"chars": len(text)})]
+
+    async def _exec_image(self, p, n):
+        prm = n["params"]
+        up = self._up_text(p, n, 1200)
+        prompt = str(prm.get("prompt") or "").strip() or up.strip()
+        if not prompt:
+            raise StudioError("生图节点缺提示词：在节点里写一句画面描述，或者接一个剧本节点")
+        ratio = prm.get("ratio") if prm.get("ratio") in imagegen.RATIOS else (p.get("ratio") or "9:16")
+        refs = []
+        for r in prm.get("refs") or []:
+            r = str(r or "")
+            if r.startswith("shot:"):
+                sid = r.split(":", 1)[1]
+                target = next((x for x in p["graph"]["nodes"] if x["type"] == "image" and
+                               (x["id"] == "image-" + sid or str((x.get("params") or {}).get("order")) == sid)), None)
+                o = self._pick_image(p, target) if target else None
+                if o:
+                    refs.append(o["rel"])
+            else:
+                refs.append(r)
+        shot = {"id": n["id"], "text": prompt, "image_prompt": prompt, "role": "旁白", "speaker": "",
+                "tone": "", "seconds_hint": float(prm.get("duration") or 5), "image_st": "idle", "tts_st": "idle",
+                "image": "", "tts": "", "duration": 0.0, "start": 0.0, "end": 0.0, "image_err": "", "tts_err": "",
+                "image_ver": 0, "tts_ver": 0, "img_variants": [], "img_selected": int(prm.get("selected") or 0),
+                "img_fps": [], "image_cache_hit": False, "tts_cache_hit": False, "img_output": prm.get("output") or "normal",
+                "img_format": prm.get("format") or "png", "tts_engine": "auto", "render": "static", "render_clip": "",
+                "render_image": "", "ppt_points": [], "img_refs": refs, "_dest_stem": n["id"],
+                "img_model": prm.get("model") or "", "img_ratio": ratio, "img_resolution": prm.get("resolution") or "2k",
+                "img_quality": prm.get("quality") or "high", "img_complexity": prm.get("complexity") or "medium",
+                "img_transparent": bool(prm.get("transparent")), "img_n": int(prm.get("n") or 1),
+                "img_custom_w": int(prm.get("custom_w") or 0), "img_custom_h": int(prm.get("custom_h") or 0),
+                "gif_frames": int(prm.get("gif_frames") or 8), "gif_delay_ms": int(prm.get("gif_delay_ms") or 150)}
+        pp = self._pseudo(p, [shot])
+        await self._gen_images(pp, ids=[n["id"]])
+        s = pp["shots"][0]
+        outs = []
+        for i, rel in enumerate(s.get("img_variants") or []):
+            o = _out(p, rel, "image", {"index": i, "cache_fp": (s.get("img_fps") or [None] * (i + 1))[i] if i < len(s.get("img_fps") or []) else ""})
+            if o:
+                outs.append(o)
+        if not outs:
+            raise StudioError("生图没返回可用的图片")
+        n["params"]["selected"] = int(s.get("img_selected") or 0)
+        n["cache_hit"] = bool(s.get("image_cache_hit"))
+        try:
+            p["cost"]["images_usd"] = round(float(p.get("cost", {}).get("images_usd") or 0) + float(pp.get("cost", {}).get("images_usd") or 0), 4)
+        except Exception:
+            pass
+        return outs
+
+    async def _exec_voice(self, p, n):
+        prm = n["params"]
+        lines = [x for x in (prm.get("lines") or []) if isinstance(x, dict) and str(x.get("text") or "").strip()]
+        if not lines:
+            up = self._up_text(p, n, 1000).strip()
+            if up:
+                lines = [{"id": "l1", "text": up[:500], "tone": prm.get("tone") or ""}]
+        if not lines:
+            raise StudioError("配音节点缺台词：写一句，或者接一个剧本节点")
+        role = str(prm.get("role") or "旁白")
+        speaker = str(prm.get("speaker") or "")
+        shots = []
+        for i, ln in enumerate(lines):
+            lid = str(ln.get("id") or f"l{i + 1}")[:20]
+            shots.append({"id": f"{n['id']}:{lid}", "text": str(ln.get("text") or "")[:500], "role": role,
+                          "speaker": str(ln.get("speaker") or speaker), "tone": str(ln.get("tone") or prm.get("tone") or ""),
+                          "tts_engine": str(prm.get("engine") or "auto"), "tts_st": "idle", "tts": "", "image": "",
+                          "duration": 0.0, "start": 0.0, "end": 0.0, "tts_err": "", "tts_cache_hit": False,
+                          "_tts_rel": f"tts/{n['id']}_{lid}.wav"})
+        pp = self._pseudo(p, shots)
+        await self._gen_tts(pp, out_prefix=f"{n['id']}_")
+        outs = []
+        for s in pp["shots"]:
+            o = _out(p, s.get("tts"), "audio", {"line": str(s["id"]).split(":", 1)[1] if ":" in str(s["id"]) else "",
+                                                "duration": s.get("duration"), "text": s.get("text")})
+            if o:
+                outs.append(o)
+        for kind, rel in (("audio", pp.get("files", {}).get("voice")), ("timeline", pp.get("files", {}).get("timeline")),
+                          ("text", pp.get("files", {}).get("srt"))):
+            o = _out(p, rel, kind, {"duration": pp.get("total_seconds")} if kind == "audio" else None)
+            if o:
+                outs.append(o)
+        n["cache_hit"] = all(s.get("tts_cache_hit") for s in pp["shots"])
+        try:
+            p["cost"]["tts_cny"] = round(float(p.get("cost", {}).get("tts_cny") or 0) + float(pp.get("cost", {}).get("tts_cny") or 0), 4)
+        except Exception:
+            pass
+        return outs
+
+    async def _exec_bgm(self, p, n):
+        prm = n["params"]
+        pp = self._pseudo(p, [])
+        prompt = str(prm.get("prompt") or "").strip() or self._up_text(p, n, 600).strip()
+        if not prompt:
+            prompt = f"{STYLE_TAG} 风格短视频背景音乐，纯音乐，无人声，情绪贴合旁白，节奏舒缓"
+        pp["bgm_prompt"] = prompt
+        st = pp.setdefault("settings", {})
+        st["bgm_seconds"] = int(prm.get("seconds") or 0)
+        st["bgm_steps"] = int(prm.get("steps") or 8)
+        st["bgm_seed"] = int(prm.get("seed") or 20261118)
+        try:
+            pp["total_seconds"] = float(p.get("total_seconds") or p.get("target_seconds") or 75)
+        except (TypeError, ValueError):
+            pp["total_seconds"] = 75
+        rel = f"bgm/{n['id']}.wav"
+        await self._gen_bgm(pp, dest_rel=rel, project_key=f"bgm:{n['id']}")
+        n["cache_hit"] = bool(pp.get("bgm_cache_hit"))
+        o = _out(p, rel, "audio", {"duration": pp.get("bgm_seconds")})
+        if not o:
+            raise StudioError("配乐没写出文件")
+        return [o]
+
+    def _pick_image(self, p, up_node):
+        outs = [o for o in (up_node.get("outputs") or []) if o.get("kind") == "image" and _output_ok(p, o)]
+        if not outs:
+            return None
+        sel = int((up_node.get("params") or {}).get("selected") or 0)
+        return outs[min(sel, len(outs) - 1)]
+
+    async def _exec_web(self, p, n):
+        prm = n["params"]
+        imgs = [x for x in graph.sorted_upstream(p["graph"], n, "image")]
+        ref = self._pick_image(p, imgs[0]) if imgs else None
+        voices = graph.sorted_upstream(p["graph"], n, "voice")
+        text = str(prm.get("text") or "").strip() or self._up_text(p, n, 1000).strip()
+        role, tone, dur = "旁白", "", 0.0
+        if voices:
+            vp = voices[0].get("params") or {}
+            role = str(vp.get("role") or "旁白")
+            tone = str(vp.get("tone") or "")
+            if not text:
+                text = next((str(x.get("text") or "") for x in vp.get("lines") or [] if str(x.get("text") or "").strip()), "")
+            dur = self._up_audio_dur(p, n)
+        if not text:
+            raise StudioError("网页动效节点缺字幕文字：写一句，或者接配音/剧本节点")
+        if not dur:
+            dur = float(prm.get("duration") or 5)
+        shot = {"id": n["id"], "text": text[:500], "role": role, "tone": tone, "duration": max(1.0, float(dur)),
+                "image": ref.get("rel") if ref else "", "render": "web", "n": 1, "start": 0.0, "end": max(1.0, float(dur)),
+                "seconds_hint": max(1.0, float(dur))}
+        pp = self._pseudo(p, [shot])
+        st = pp.setdefault("settings", {})
+        st.update({"web_bg": prm.get("bg") or "dark", "web_sub_pos": prm.get("sub_pos") or "bottom",
+                   "web_sub_size": int(prm.get("sub_size") or 0), "web_sub_color": prm.get("sub_color") or "",
+                   "web_gif_scale": float(prm.get("gif_scale") or 1), "web_motion": float(prm.get("motion") if prm.get("motion") is not None else 1),
+                   "web_fps": int(prm.get("fps") or 24)})
+        pp["ratio"] = prm.get("ratio") or p.get("ratio") or "9:16"
+        rel = f"render/web_{n['id']}.mp4"
+        W, H = (1080, 1920) if pp["ratio"] != "16:9" else (1920, 1080)
+        fps = int(st["web_fps"])
+        sf = prm.get("styleframe") or {}
+        ref_sha = (ref.get("sha256") if ref else "") or ""
+        if sf.get("html") and prm.get("styleframe_on") and sf.get("ref_sha") == ref_sha and (Path(p["dir"]) / sf["html"]).is_file():
+            key = cache.fingerprint("styleframe", {"ref": ref.get("sha256") if ref else "", "prompt": sf.get("prompt") or "",
+                                                   "w": W, "h": H, "fps": fps, "duration": shot["duration"]})
+            if cache.hit_to(key, Path(p["dir"]) / rel, "tracks"):
+                n["cache_hit"] = True
+            else:
+                await asyncio.to_thread(render_web.render_html_file, Path(p["dir"]) / sf["html"], Path(p["dir"]) / rel,
+                                        W, H, fps, shot["duration"], self._stop.is_set)
+                cache.put(key, Path(p["dir"]) / rel, "tracks", {"type": "styleframe", "w": W, "h": H, "fps": fps})
+        else:
+            await asyncio.to_thread(render_web.render_all, p["dir"], pp, lambda m: self._progress(30, m), self._stop.is_set)
+            n["cache_hit"] = bool(shot.get("render_cache_hit"))
+        o = _out(p, rel, "video", {"duration": shot["duration"]})
+        if not o:
+            raise StudioError("网页动效没写出视频轨")
+        return [o]
+
+    async def _exec_ppt(self, p, n):
+        prm = n["params"]
+        text = str(prm.get("text") or "").strip() or self._up_text(p, n, 1000).strip()
+        if not text:
+            raise StudioError("PPT 节点缺文字：写一句，或者接剧本/配音节点")
+        shot = {"id": n["id"], "text": text[:500], "role": "旁白", "tone": "", "duration": float(prm.get("duration") or 5),
+                "render": "ppt", "n": 1, "ppt_points": prm.get("points") or [], "image": "", "start": 0.0, "end": 5.0}
+        pp = self._pseudo(p, [shot])
+        st = pp.setdefault("settings", {})
+        st["ppt_file"] = str(prm.get("file") or "")
+        pp["ratio"] = prm.get("ratio") or p.get("ratio") or "9:16"
+        async with _loop_gate("ppt", asyncio.Lock):
+            await asyncio.to_thread(render_ppt.render_all, p["dir"], pp, lambda m: self._progress(40, m), self._stop.is_set)
+        n["cache_hit"] = bool(shot.get("render_cache_hit"))
+        rel = shot.get("render_image") or f"render/ppt_{n['id']}.png"
+        o = _out(p, rel, "image", {"duration": shot.get("duration")})
+        if not o:
+            raise StudioError("PPT 没渲染出幻灯片")
+        return [o]
+
+    async def _exec_mux(self, p, n):
+        prm = n["params"]
+        voices = graph.sorted_upstream(p["graph"], n, "voice")
+        if not voices:
+            raise StudioError("混流节点缺上游配音：把配音节点的音频接到 mux.audio")
+        visual_nodes = []
+        for typ in ("image", "web", "ppt"):
+            visual_nodes.extend(graph.sorted_upstream(p["graph"], n, typ))
+        visual_nodes.sort(key=lambda x: (int(x.get("params", {}).get("order") or 0), int(x.get("y") or 0), int(x.get("x") or 0)))
+        visuals = []
+        for vn in visual_nodes:
+            if vn["type"] == "web":
+                o = graph.output_of(vn, "video")
+                if o and _output_ok(p, o):
+                    visuals.append({"kind": "clip", "rel": o["rel"]})
+            elif vn["type"] == "ppt":
+                o = graph.output_of(vn, "image")
+                if o and _output_ok(p, o):
+                    visuals.append({"kind": "image", "rel": o["rel"]})
+            else:
+                o = self._pick_image(p, vn)
+                if o:
+                    visuals.append({"kind": "image", "rel": o["rel"]})
+        segs = []
+        for vn in voices:
+            vprm = vn.get("params") or {}
+            line_by_id = {str(x.get("id")): x for x in vprm.get("lines") or [] if isinstance(x, dict)}
+            line_outs = [o for o in vn.get("outputs") or [] if o.get("kind") == "audio" and o.get("line") and _output_ok(p, o)]
+            if line_outs:
+                for o in line_outs:
+                    ln = line_by_id.get(str(o.get("line"))) or {}
+                    segs.append({"text": str(ln.get("text") or o.get("text") or ""), "role": str(vprm.get("role") or "旁白"),
+                                 "speaker": str(ln.get("speaker") or vprm.get("speaker") or ""),
+                                 "tone": str(ln.get("tone") or vprm.get("tone") or ""), "tts": o["rel"],
+                                 "duration": float(o.get("duration") or _wav_duration(Path(p["dir"]) / o["rel"]))})
+            else:
+                o = graph.output_of(vn, "audio")
+                if not o or not _output_ok(p, o):
+                    continue
+                text = " ".join(str(x.get("text") or "") for x in vprm.get("lines") or [] if str(x.get("text") or "").strip())
+                segs.append({"text": text, "role": str(vprm.get("role") or "旁白"), "speaker": str(vprm.get("speaker") or ""),
+                             "tone": str(vprm.get("tone") or ""), "tts": o["rel"],
+                             "duration": float(o.get("duration") or _wav_duration(Path(p["dir"]) / o["rel"]))})
+        if not segs:
+            raise StudioError("配音节点还没有产出：先把配音跑出来")
+        if not visuals:
+            raise StudioError("混流节点缺画面：接生图、网页动效或 PPT 节点")
+        for i, s in enumerate(segs):
+            v = visuals[i % len(visuals)]
+            s["id"] = f"mux{i + 1}"
+            s["n"] = i + 1
+            s["start"] = 0.0
+            s["end"] = 0.0
+            s["image"] = v["rel"] if v["kind"] == "image" else ""
+            s["render_image"] = v["rel"] if v["kind"] == "image" else ""
+            s["render_clip"] = v["rel"] if v["kind"] == "clip" else ""
+            s["render"] = "web" if v["kind"] == "clip" else "static"
+            s["image_st"] = "ok"
+            s["tts_st"] = "ok"
+        proj = copy.deepcopy(p)
+        proj["_transient"] = True
+        proj["shots"] = segs
+        proj["files"] = {}
+        proj["ratio"] = prm.get("ratio") or p.get("ratio") or "9:16"
+        proj["settings"] = dict(proj.get("settings") or {})
+        proj["settings"].update({"subtitle": bool(prm.get("subtitle", True)), "kenburns": bool(prm.get("kenburns", True)),
+                                 "bgm_volume": float(prm.get("bgm_volume", 0.18)), "duck_depth": float(prm.get("duck_depth", 0.16)),
+                                 "fade": float(prm.get("fade", 2.0)), "use_bgm": False})
+        bgms = graph.sorted_upstream(p["graph"], n, "bgm")
+        if bgms:
+            bo = graph.output_of(bgms[0], "audio")
+            if bo and _output_ok(p, bo) and float(prm.get("bgm_volume", 0.18)) > 0:
+                proj["files"]["bgm"] = bo["rel"]
+                proj["settings"]["use_bgm"] = True
+        await self._build_voice(proj, shots=segs, out_prefix="mux_")
+        r = await asyncio.to_thread(video_maker.compose_video, p["dir"], bool(proj["settings"].get("subtitle", True)),
+                                    float(proj["settings"].get("bgm_volume", 0.18)), bool(proj["settings"].get("kenburns", True)),
+                                    self._stop.is_set, lambda x: self._progress(x.get("pct", 0), x.get("msg", "")),
+                                    duck_depth=float(proj["settings"].get("duck_depth", 0.16)),
+                                    fade=float(proj["settings"].get("fade", 2.0)), project=proj)
+        if r.get("stopped"):
+            raise StopRequested()
+        p["files"]["video"] = r["rel"]
+        if r.get("cover_rel"):
+            p["files"]["cover"] = r["cover_rel"]
+        p["duration"] = r.get("duration")
+        p["resolution"] = f"{r.get('w')}×{r.get('h')}"
+        outs = [_out(p, r["rel"], "video", {"duration": r.get("duration")})]
+        if r.get("cover_rel"):
+            outs.append(_out(p, r["cover_rel"], "image", {"cover": True}))
+        return [o for o in outs if o]
+
+    async def _graph_styleframe(self, p, n):
+        prm = n["params"]
+        sf = prm.setdefault("styleframe", {})
+        key0 = graph.cache_key(n, p["graph"])
+        raw0 = n.get("outputs") or []
+        outs0 = [o for o in raw0 if _output_ok(p, o)]
+        if raw0 and len(outs0) == len(raw0) and n.get("cache_key") == key0 and prm.get("styleframe_on"):
+            n.update(status="ok", error="", cache_hit=True)
+            self.job.update(st="done", pct=100, msg="参数没变：直接用上次复刻的视频轨，没有再调用 Claude Code", stage=4, t1=time.time())
+            self._save(p, True)
+            self._task = None
+            return
+        p["st"] = "run"
+        self._save(p, True)
+        try:
+            if not ccode.usable():
+                raise StudioError("Claude Code 引擎没开，或者没找到 claude：到 设置 › Agent 能力 打开")
+            imgs = graph.sorted_upstream(p["graph"], n, "image")
+            ref = self._pick_image(p, imgs[0]) if imgs else None
+            if not ref:
+                raise StudioError("先把一张图接到网页动效节点的 image 输入口，再交给 Claude Code 复刻")
+            W, H = (1080, 1920) if (p.get("ratio") or "9:16") != "16:9" else (1920, 1080)
+            fps = int(prm.get("fps") or 24)
+            dur = max(1.0, float(prm.get("duration") or 6))
+            work = Path(p["dir"]) / "styleframe" / n["id"]
+            work.mkdir(parents=True, exist_ok=True)
+            html_rel = f"styleframe/{n['id']}/index.html"
+            html = Path(p["dir"]) / html_rel
+            prompt = f"""请把参考图复刻成一个可以录制的动效网页。
+参考图（本地文件，先看图）：{Path(p['dir']) / ref['rel']}
+请写文件：{html}（单文件 HTML，不要外部资源）
+画布：{W}×{H} 像素，帧率 {fps}，时长 {dur:.2f} 秒，循环动效。
+配色必须按 60-30-10：主色占 60%，辅色 30%，点缀色 10%；主色从参考图里取。
+参考图的排版、层级、留白要保留；文字位置和字号按参考图比例排。
+禁止联网加载任何外部资源（字体、图片、脚本、CDN 都不行），图片只能用本地 data URI 或 CSS 画。
+画面里不要放图里以外的 logo、商标、二维码、水印。
+动效要能在无头浏览器里逐帧截图：用 requestAnimationFrame 或 CSS 动画，window.seek(秒) 可选。
+写完后自己检查 index.html 能被浏览器打开。"""
+            steps = []
+            self.job.update(msg="交给 Claude Code 看图复刻（会消耗 Claude Code 额度）", pct=5)
+            eid = -int(time.time() * 1000)
+            self.job["cc_eid"] = eid
+            r = await ccode.run(eid, prompt, steps, lambda m: self.job.update(msg=str(m)[:200], pct=min(70, self.job.get("pct", 0) + 2)),
+                                extra=f"参考图：{ref['rel']}；产物：{html_rel}")
+            if r.get("stopped"):
+                raise StopRequested()
+            if not html.is_file():
+                raise StudioError("Claude Code 没写出 index.html：" + (r.get("text") or "")[:200])
+            html_text = html.read_text("utf-8", "replace")
+            if re.search(r'(?:src|href)\s*=\s*["\']https?://', html_text, re.I):
+                raise StudioError("Claude Code 写的网页加载了外部资源：要求里禁止联网，请重试")
+            sf.update({"html": html_rel, "prompt": prompt[:3000], "ref": ref["rel"], "ref_sha": ref.get("sha256") or "",
+                       "t0": time.time(), "session": r.get("session") or ""})
+            prm["styleframe_on"] = True
+            rel = f"render/web_{n['id']}.mp4"
+            key = cache.fingerprint("styleframe", {"ref": ref.get("sha256") or "", "prompt": prompt[:3000], "w": W, "h": H,
+                                                   "fps": fps, "duration": dur})
+            if cache.hit_to(key, Path(p["dir"]) / rel, "tracks"):
+                n["cache_hit"] = True
+            else:
+                self.job.update(msg="录制动效视频……", pct=75)
+                await asyncio.to_thread(render_web.render_html_file, html, Path(p["dir"]) / rel, W, H, fps, dur, self._stop.is_set)
+                cache.put(key, Path(p["dir"]) / rel, "tracks", {"type": "styleframe", "w": W, "h": H, "fps": fps})
+            o = _out(p, rel, "video", {"duration": dur})
+            n["outputs"] = [x for x in [o] if x]
+            n.update(status="ok", error="", cache_key=graph.cache_key(n, p["graph"]), cache_hit=bool(n.get("cache_hit")), finished=time.time())
+            p["st"] = "done"
+            self.job.update(st="done", pct=100, msg="看图复刻好了：视频轨已生成", stage=4, t1=time.time())
+            feed.add(f"视频工坊「{n.get('title') or n['id']}」看图复刻好了", "ok", job=JOBS)
+        except StopRequested:
+            p["st"] = "stop"
+            self.job.update(st="stop", msg="停了：没做完的保留着", t1=time.time())
+        except Exception as e:
+            msg = _err_text(e)
+            n.update(status="err", error=msg[:500])
+            p["st"] = "err"
+            p["error"] = msg
+            self.job.update(st="err", err=msg, msg="没做成：" + msg[:200], t1=time.time())
+        finally:
+            self._save(p, True)
+            self.job["t1"] = self.job.get("t1") or time.time()
+            self._task = None
+
     # ---------- 发布 ----------
     def add_shot(self, body) -> dict:
         pid = str(body.get("pid") or db.kv_get("studio_active") or "")
-        p = video_maker.load_project(pid)
+        p = self._load(pid)
         _init_role_voices(p)
         used = {str(s.get("id")) for s in p.get("shots") or []}
         n = len(p.get("shots") or []) + 1
@@ -1947,7 +2855,7 @@ class Studio:
     def del_shot(self, body) -> dict:
         pid = str(body.get("pid") or db.kv_get("studio_active") or "")
         sid = str(body.get("id") or "")
-        p = video_maker.load_project(pid)
+        p = self._load(pid)
         before = len(p.get("shots") or [])
         p["shots"] = [s for s in (p.get("shots") or []) if str(s.get("id")) != sid]
         if len(p["shots"]) == before:
@@ -1963,7 +2871,7 @@ class Studio:
 
     def add_ref(self, body) -> dict:
         pid = str(body.get("pid") or db.kv_get("studio_active") or "")
-        p = video_maker.load_project(pid)
+        p = self._load(pid)
         b = imagegen.read_uri(body.get("data") or "")
         pi = imagegen.png_info(b)
         if pi["fmt"] not in ("png", "jpg"):
@@ -1981,7 +2889,7 @@ class Studio:
 
     def to_publish(self, body) -> dict:
         pid = str(body.get("pid") or db.kv_get("studio_active") or "")
-        p = video_maker.load_project(pid)
+        p = self._load(pid)
         d = Path(p["dir"])
         rel = (p.get("files") or {}).get("video") or "output/成片.mp4"
         video = d / rel
@@ -2064,6 +2972,26 @@ S = Studio()
 api = APIRouter()
 
 
+def _pid_of(body) -> str:
+    return str((body or {}).get("pid") or db.kv_get("studio_active") or "")
+
+
+def _output_ok(p, o) -> bool:
+    rel = (o or {}).get("rel") or ""
+    return bool(rel and (Path(p["dir"]) / rel).is_file())
+
+
+def _out(p, rel, kind, extra=None):
+    """项目里的一个产出 → 节点 outputs 的一项（带内容哈希）。"""
+    q = Path(p["dir"]) / str(rel or "") if rel else None
+    if not q or not q.is_file():
+        return None
+    out = {"key": str(rel), "rel": str(rel), "kind": kind, "sha256": cache.sha_file(q), "size": q.stat().st_size}
+    if extra:
+        out.update({k: v for k, v in (extra or {}).items() if v not in (None, "")})
+    return out
+
+
 def _shot_ok(p, s, kind):
     rel = s.get(kind) or ""
     return bool(rel and (Path(p["dir"]) / rel).is_file())
@@ -2124,8 +3052,8 @@ def studio_export_prompt_pack(pid: str = ""):
     p = None
     if pid:
         try:
-            p = video_maker.load_project(pid)
-        except video_maker.MakerError:
+            p = S._load(pid)
+        except (video_maker.MakerError, StudioError):
             p = None
     text = prompt_pack(p)
     return Response(text, media_type="text/markdown; charset=utf-8",
@@ -2217,6 +3145,123 @@ def studio_reveal(body: dict = Body(default={})):
             studio_assets.project_asset(body.get("pid"), body.get("path"))
         return studio_assets.reveal(q)
     except (studio_assets.AssetError, video_maker.MakerError) as e:
+        raise HTTPException(404, str(e)) from None
+
+
+@api.post("/api/studio/graph/add")
+def studio_graph_add(body: dict = Body(default={})):
+    try:
+        return S.graph_add(body)
+    except HTTPException:
+        raise
+    except (graph.GraphError, video_maker.MakerError) as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@api.post("/api/studio/graph/update")
+def studio_graph_update(body: dict = Body(...)):
+    try:
+        return S.graph_update(body)
+    except HTTPException:
+        raise
+    except (graph.GraphError, video_maker.MakerError) as e:
+        raise HTTPException(404, str(e)) from None
+
+
+@api.post("/api/studio/graph/delete")
+def studio_graph_delete(body: dict = Body(...)):
+    try:
+        return S.graph_delete(body)
+    except HTTPException:
+        raise
+    except (graph.GraphError, video_maker.MakerError) as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@api.post("/api/studio/graph/connect")
+def studio_graph_connect(body: dict = Body(...)):
+    try:
+        return S.graph_connect(body)
+    except HTTPException:
+        raise
+    except (graph.GraphError, video_maker.MakerError) as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@api.post("/api/studio/graph/disconnect")
+def studio_graph_disconnect(body: dict = Body(...)):
+    try:
+        return S.graph_disconnect(body)
+    except HTTPException:
+        raise
+    except (graph.GraphError, video_maker.MakerError) as e:
+        raise HTTPException(404, str(e)) from None
+
+
+@api.post("/api/studio/graph/layout")
+def studio_graph_layout(body: dict = Body(...)):
+    try:
+        return S.graph_layout(body)
+    except (graph.GraphError, video_maker.MakerError) as e:
+        raise HTTPException(404, str(e)) from None
+
+
+@api.get("/api/studio/graph/node")
+def studio_graph_node(pid: str = "", id: str = ""):
+    try:
+        return S.graph_node({"pid": pid, "id": id})
+    except (HTTPException, graph.GraphError, video_maker.MakerError) as e:
+        raise HTTPException(404, getattr(e, "detail", str(e))) from None
+
+
+@api.post("/api/studio/graph/run")
+async def studio_graph_run(body: dict = Body(...)):
+    return await S.graph_run(body)
+
+
+@api.post("/api/studio/graph/import")
+def studio_graph_import(body: dict = Body(...)):
+    try:
+        return S.graph_import(body)
+    except HTTPException:
+        raise
+    except StudioError as e:
+        raise HTTPException(400, str(e)) from None
+    except (graph.GraphError, video_maker.MakerError) as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@api.post("/api/studio/graph/plan")
+async def studio_graph_plan(body: dict = Body(...)):
+    try:
+        return await S.graph_plan(body)
+    except HTTPException:
+        raise
+    except (graph.GraphError, video_maker.MakerError) as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@api.post("/api/studio/graph/styleframe")
+async def studio_graph_styleframe(body: dict = Body(...)):
+    return await S.graph_styleframe(body)
+
+
+@api.post("/api/studio/graph/publish")
+def studio_graph_publish(body: dict = Body(default={})):
+    """发布节点：只按节点参数入队，仍然要「发布」窗口人工点两下才发。"""
+    try:
+        p = S._load(_pid_of(body))
+        n = graph.node_of(p["graph"], str(body.get("id") or "publish"))
+        prm = n.get("params") or {}
+        q = dict(prm)
+        q.update({"pid": p["id"]})
+        for k, v in (body or {}).items():
+            if k not in ("pid", "id") and v is not None:
+                q[k] = v
+        return S.to_publish(q)
+    except HTTPException:
+        raise
+    except (graph.GraphError, video_maker.MakerError) as e:
         raise HTTPException(404, str(e)) from None
 
 

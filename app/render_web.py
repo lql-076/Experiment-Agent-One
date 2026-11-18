@@ -181,7 +181,19 @@ def render_shot(project_dir, shot, settings, out_path, W, H, fps=24, stopped=Non
     html = _html(shot, W, H, settings or {})
     hp = render_dir / (Path(out_path).stem + ".html")
     hp.write_text(html, "utf-8")
-    dur = max(.2, float(shot.get("duration") or 5))
+    return render_html_file(hp, out_path, W, H, fps, max(.2, float(shot.get("duration") or 5)), stopped)
+
+
+def render_html_file(html_path, out_path, W, H, fps=24, duration=5.0, stopped=None) -> Path:
+    """把任意本地 HTML 文件逐帧录成 H.264 轨（v3.9.0 看图复刻用；不执行外部脚本，只跑页面自己的动画）。"""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise RenderWebError("没装 Playwright：pip install playwright（浏览器用电脑上的 Edge / Chrome）") from None
+    hp = Path(html_path)
+    if not hp.is_file():
+        raise RenderWebError("找不到要录的网页：" + hp.name)
+    dur = max(.2, float(duration or 5))
     n = max(2, int(round(dur * fps)))
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)

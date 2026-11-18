@@ -7,6 +7,7 @@
 --version：打印版本号。把收到的参数和事情记在 dev/.run/fake_claude_last.json。"""
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -34,6 +35,16 @@ def main():
     if "【没登录】" in prompt:
         sys.stderr.write("Invalid API key · Please run /login\n")
         return 1
+    # v3.9.0 看图复刻：提示词里写了「请写文件：<路径>.html」就真的写一个单文件动效网页（不外链）
+    m = re.search(r"请写文件[：:]\s*([^\n]+\.html)", prompt)
+    if m:
+        hp = Path(m.group(1))
+        hp.parent.mkdir(parents=True, exist_ok=True)
+        hp.write_text("<!doctype html><html><head><meta charset=\"utf-8\"><style>"
+                      "html,body{margin:0;width:1080px;height:1920px;overflow:hidden;background:#071018;color:#eaffff;font-family:sans-serif}"
+                      "#a{position:absolute;inset:0;background:radial-gradient(circle at 50% 40%,#1b4965,#071018);animation:p 3s ease-in-out infinite alternate}"
+                      "@keyframes p{from{opacity:.7}to{opacity:1}}#t{position:absolute;left:8%;right:8%;bottom:14%;font-size:60px;text-align:center}"
+                      "</style></head><body><div id=\"a\"></div><div id=\"t\">看图复刻测试</div></body></html>", "utf-8")
     out({"type": "system", "subtype": "init", "session_id": sid, "model": "deepseek-v4.1-flash", "cwd": os.getcwd(), "tools": ["Bash", "Write", "Edit", "TodoWrite"]})
     if "【慢】" in prompt:
         out({"type": "assistant", "message": {"content": [{"type": "text", "text": "这个要一会儿……"}]}, "session_id": sid, "parent_tool_use_id": None})

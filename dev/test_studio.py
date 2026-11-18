@@ -575,6 +575,413 @@ def test_assets():
     check(ok, "拦下：从 _cache 越界到项目")
 
 
+def test_graph_model():
+    print("\n自由节点图：默认 9 个节点、固定节点、端口类型、环检测、断线")
+    S = studio.Studio()
+    st = S.new_project({"topic": "图模型", "voice_id": "local:preset:Vivian"})
+    p = video_maker.load_project(st["project"]["id"])
+    g = p["graph"]
+    check(len(g["nodes"]) == 9 and not g["edges"], "默认 9 个节点、0 条连线")
+    check([n["type"] for n in g["nodes"]].count("script") == 1 and [n["type"] for n in g["nodes"]].count("mux") == 1
+          and [n["type"] for n in g["nodes"]].count("publish") == 1, "script / mux / publish 各 1 个")
+    check(sum(1 for n in g["nodes"] if n["type"] == "voice") == 2, "默认两个配音角色节点")
+    check(any(n["id"] == "voice-1" and "Serena" in n["params"]["speaker"] for n in g["nodes"]), "白页默认女声 Serena")
+    check(any(n["id"] == "voice-2" and "Dylan" in n["params"]["speaker"] for n in g["nodes"]), "紫苏默认男声 Dylan")
+    a = S.graph_add({"pid": p["id"], "type": "image"})
+    nid = a["node"]["id"]
+    check(a["node"]["type"] == "image" and nid.startswith("image-"), "能加生图节点")
+    ok = False
+    try:
+        S.graph_add({"pid": p["id"], "type": "script"})
+    except Exception:
+        ok = True
+    check(ok, "固定节点不能再加")
+    ok = False
+    try:
+        S.graph_delete({"pid": p["id"], "id": "script"})
+    except Exception:
+        ok = True
+    check(ok, "固定节点不能删")
+    S.graph_delete({"pid": p["id"], "id": nid})
+    check(len(S._load(p["id"])["graph"]["nodes"]) == 9, "普通节点能删")
+    # 类型不兼容
+    ok = False
+    try:
+        S.graph_connect({"pid": p["id"], "from": "mux.video", "to": "image-1.prompt"})
+    except Exception:
+        ok = True
+    check(ok, "视频口接文字口被拦下")
+    b = S.graph_add({"pid": p["id"], "type": "image"})["node"]["id"]
+    S.graph_connect({"pid": p["id"], "from": "image-1.image", "to": b + ".ref"})
+    ok = False
+    try:
+        S.graph_connect({"pid": p["id"], "from": b + ".image", "to": "image-1.ref"})
+    except Exception:
+        ok = True
+    check(ok, "会形成环的连线被拦下")
+    q = S._load(p["id"])["graph"]
+    e = [x for x in q["edges"] if x["to"] == b + ".ref"][0]
+    S.graph_disconnect({"pid": p["id"], "edge": e["id"]})
+    check(not S._load(p["id"])["graph"]["edges"], "点连线能断开")
+
+
+def test_graph_topo_parallel():
+    print("\nDAG 调度：无依赖并行、有依赖按拓扑、发布节点不自动跑")
+    S = studio.Studio()
+    st = S.new_project({"topic": "拓扑", "voice_id": "local:preset:Vivian"})
+    pid = st["project"]["id"]
+    p = S._load(pid)
+    for a, b in (("script.text", "image-1.prompt"), ("script.text", "voice-1.text"),
+                 ("image-1.image", "mux.image"), ("voice-1.audio", "mux.audio"), ("mux.video", "publish.video")):
+        S.graph_connect({"pid": pid, "from": a, "to": b})
+    p = S._load(pid)
+    order = studio.graph.topo_order(p["graph"])
+    check(order.index("script") < order.index("image-1") < order.index("mux") < order.index("publish"), "拓扑顺序对")
+    events = []
+
+    async def fake_exec(self, pp, n):
+        events.append((n["id"], "start", time.time()))
+        await asyncio.sleep(.12)
+        events.append((n["id"], "end", time.time()))
+        return []
+
+    old = studio.Studio._graph_exec
+    studio.Studio._graph_exec = fake_exec
+    try:
+        async def go():
+            await S.graph_run({"pid": pid})
+            t = S._task
+            if t:
+                await t
+        asyncio.run(go())
+    finally:
+        studio.Studio._graph_exec = old
+    starts = {k: t for k, what, t in events if what == "start"}
+    ends = {k: t for k, what, t in events if what == "end"}
+    check("image-1" in starts and "voice-1" in starts and abs(starts["image-1"] - starts["voice-1"]) < .08,
+          "两条独立分支同时开跑")
+    check(starts["mux"] > max(ends["image-1"], ends["voice-1"]) - .02, "汇聚节点等上游都完成")
+    check("publish" not in starts, "发布节点全流程里不自动跑")
+    check(S.job["st"] == "done", "全流程跑完")
+
+
+def test_graph_cache_scope():
+    print("\n节点缓存：改了谁只失效谁和下游；同参数第二次直接命中")
+    S = studio.Studio()
+    st = S.new_project({"topic": "缓存范围", "voice_id": "local:preset:Vivian"})
+    pid = st["project"]["id"]
+    p = S._load(pid)
+    g = p["graph"]
+    for n in g["nodes"]:
+        if n["id"] in ("image-1", "voice-1", "bgm-1", "mux"):
+            n["status"] = "ok"
+            n["cache_key"] = "old"
+    # 先给上游做一个产出，才能连出「下游」
+    d = Path(p["dir"])
+    (d / "images" / "a.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 20)
+    for n in g["nodes"]:
+        if n["id"] == "image-1":
+            n["outputs"] = [{"key": "images/a.png", "rel": "images/a.png", "kind": "image", "sha256": "abc", "size": 20}]
+    video_maker.save_project(p)
+    S.graph_connect({"pid": pid, "from": "image-1.image", "to": "mux.image"})
+    S.graph_update({"pid": pid, "id": "image-1", "params": {"prompt": "改过的画面"}})
+    q = S._load(pid)["graph"]
+    by = {n["id"]: n for n in q["nodes"]}
+    check(by["image-1"]["status"] == "stale" and by["mux"]["status"] == "stale", "改生图节点 → 它和 mux 失效")
+    check(by["voice-1"]["status"] == "ok" and by["bgm-1"]["status"] == "ok", "平行分支不受影响")
+    check(by["image-1"]["cache_key"] == "" and by["mux"]["cache_key"] == "", "下游缓存键清空")
+    # 第二次同参数运行命中，不调执行器
+    calls = []
+
+    async def fake_exec(self, pp, n):
+        calls.append(n["id"])
+        rel = f"images/{n['id']}.png"
+        (Path(pp["dir"]) / rel).parent.mkdir(parents=True, exist_ok=True)
+        (Path(pp["dir"]) / rel).write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 20)
+        return [studio._out(pp, rel, "image")]
+
+    old = studio.Studio._graph_exec
+    studio.Studio._graph_exec = fake_exec
+    try:
+        asyncio.run(S._graph_one(S._load(pid), "image-1"))
+        check(calls == ["image-1"], "第一次真的执行")
+        asyncio.run(S._graph_one(S._load(pid), "image-1"))
+        check(calls == ["image-1"], "第二次同参数直接命中，没有再执行")
+        # 上游产出换了哈希，下游缓存键要变
+        p2 = S._load(pid)
+        q = p2["graph"]
+        by = {n["id"]: n for n in q["nodes"]}
+        key_before = studio.graph.cache_key(by["mux"], q)
+        by["image-1"]["outputs"][0]["sha256"] = "changed"
+        key_after = studio.graph.cache_key(by["mux"], q)
+        check(key_before != key_after, "上游内容哈希变了，下游缓存键跟着变")
+    finally:
+        studio.Studio._graph_exec = old
+
+
+def test_graph_missing_upstream():
+    print("\n单节点运行：上游没产出就报「缺上游产出」，不偷偷跑上游")
+    S = studio.Studio()
+    st = S.new_project({"topic": "缺上游", "voice_id": "local:preset:Vivian"})
+    pid = st["project"]["id"]
+    S.graph_connect({"pid": pid, "from": "image-1.image", "to": "mux.image"})
+    p = S._load(pid)
+    ok = False
+    try:
+        asyncio.run(S._graph_one(p, "mux"))
+    except studio.StudioError as e:
+        ok = "缺上游产出" in str(e)
+    check(ok, "mux 缺图时报缺上游产出")
+    check(S._load(pid)["graph"]["nodes"][1]["status"] != "ok", "上游没有被偷偷跑过")
+
+
+def test_migration():
+    print("\n旧工程自动迁移：一图一节点、一句一配音，产出和缓存保留，.bak 备份，幂等")
+    p = make_project("迁移测试", shots=2, image_count=2, seconds=1.0)
+    d = Path(p["dir"])
+    # 造一点旧缓存指纹，迁移后应保留
+    p["shots"][0]["img_fps"] = ["fp0"]
+    p["shots"][0]["image_cache_hit"] = True
+    p["shots"][1]["tts_engine"] = "cloud"
+    p["shots"][1]["tts_cache_hit"] = True
+    p.pop("graph", None)
+    video_maker.save_project(p)
+    S = studio.Studio()
+    q = S._load(p["id"])
+    g = q["graph"]
+    check((d / "project.json.bak").is_file(), "迁移前留了 project.json.bak")
+    check(sum(1 for n in g["nodes"] if n["type"] == "image") == 2, "两张分镜图 → 两个生图节点")
+    check(sum(1 for n in g["nodes"] if n["type"] == "voice") == 2, "两句台词 → 两个配音节点")
+    by = {n["id"]: n for n in g["nodes"]}
+    check(by["image-1"]["params"]["prompt"] == "第 1 个画面", "生图提示词保留")
+    check(by["voice-1"]["params"]["speaker"] == "local:preset:Vivian", "配音音色保留")
+    check(by["voice-2"]["params"]["engine"] == "cloud", "配音引擎保留")
+    check(by["voice-1"]["params"]["lines"][0]["text"] == "第 1 段测试口播。", "台词保留")
+    check(by["image-1"]["outputs"] and (d / by["image-1"]["outputs"][0]["rel"]).is_file(), "已有图保留")
+    check(by["voice-1"]["outputs"] and (d / by["voice-1"]["outputs"][0]["rel"]).is_file(), "已有配音保留")
+    check(by["image-1"]["cache_hit"] is True and by["voice-2"]["cache_hit"] is True, "缓存命中标记保留")
+    e = {(x["from"], x["to"]) for x in g["edges"]}
+    check(("image-1.image", "mux.image") in e and ("voice-1.audio", "mux.audio") in e, "图和音都接到混流")
+    check(("mux.video", "publish.video") in e, "混流接到发布")
+    n0 = len(g["nodes"])
+    S._load(p["id"])
+    check(len(S._load(p["id"])["graph"]["nodes"]) == n0, "重复打开不会重复迁移（幂等）")
+    # 迁移失败：原工程不动，.bak 还在
+    p2 = make_project("迁移失败测试", shots=1, image_count=1, seconds=1.0)
+    p2.pop("graph", None)
+    video_maker.save_project(p2)
+    orig = (Path(p2["dir"]) / "project.json").read_text("utf-8")
+    old = studio.graph.migrate_from_shots
+    studio.graph.migrate_from_shots = lambda _p: (_ for _ in ()).throw(RuntimeError("故意失败"))
+    try:
+        ok = False
+        try:
+            studio.Studio()._load(p2["id"])
+        except studio.StudioError:
+            ok = True
+        check(ok, "迁移失败给出明确报错")
+        check((Path(p2["dir"]) / "project.json").read_text("utf-8") == orig, "迁移失败原工程没动")
+    finally:
+        studio.graph.migrate_from_shots = old
+
+
+def sample_doc():
+    return {
+        "title": "剧本导入测试", "desc": "简介", "tags": ["AI", "测试"],
+        "bgm": {"segments": [{"id": "bgm-1", "prompt": "calm piano, no vocals", "seconds": 30, "steps": 8, "seed": 1}]},
+        "shots": [
+            {"id": "s1", "seconds": 5, "render": "web",
+             "image": {"prompt": "第一张画面", "n": 1}, "voice": {"role": "白页", "tone": "冷静吐槽", "text": "第一句台词。"}},
+            {"id": "s2", "seconds": 6, "render": "ppt",
+             "image": {"prompt": "第二张画面"}, "voice": {"role": "紫苏", "tone": "夸张惊呼", "text": "第二句台词。"}},
+            {"id": "s3", "seconds": 7, "render": "static",
+             "image": {"prompt": "第三张画面"}, "voice": {"role": "白页", "tone": "轻松调侃", "text": "第三句台词。"}}
+        ]
+    }
+
+
+def test_script_schema():
+    print("\n剧本 schema：JSON / Markdown 都能认，缺字段和类型不对给出行号和原因")
+    doc = studio.graph.parse_script_doc(json.dumps(sample_doc(), ensure_ascii=False))
+    check(len(doc["shots"]) == 3 and [x["render"] for x in doc["shots"]] == ["web", "ppt", "static"], "JSON 分镜和画面轨道")
+    check(doc["bgm"]["segments"][0]["prompt"] == "calm piano, no vocals", "JSON 配乐段")
+    md = """# Markdown 测试
+简介：一句话
+话题：科技 搞笑
+
+## 配乐 bgm-1
+描述：upbeat, no vocals
+时长：30
+
+## 分镜 s1
+画面轨道：网页
+画面：第一张画面
+角色：白页
+语气：冷静吐槽
+台词：第一句。
+
+## 分镜 s2
+画面轨道：静态
+画面：第二张画面
+角色：紫苏
+语气：夸张惊呼
+台词：第二句。
+"""
+    m = studio.graph.parse_script_doc(md)
+    check(m["title"] == "Markdown 测试" and len(m["shots"]) == 2, "Markdown 标题和分镜")
+    check(m["shots"][0]["render"] == "web" and m["shots"][1]["render"] == "static", "Markdown 画面轨道")
+    bad = json.loads(json.dumps(sample_doc()))
+    bad["shots"][1].pop("voice")
+    ok = False
+    try:
+        studio.graph.parse_script_doc(json.dumps(bad, ensure_ascii=False))
+    except studio.graph.GraphError as e:
+        ok = "缺台词" in str(e) and "s2" in str(e)
+    check(ok, "缺台词：指出是哪个分镜、缺什么")
+    bad2 = json.loads(json.dumps(sample_doc()))
+    bad2["shots"][0]["voice"]["role"] = "张三"
+    ok = False
+    try:
+        studio.graph.parse_script_doc(json.dumps(bad2, ensure_ascii=False))
+    except studio.graph.GraphError as e:
+        ok = "角色" in str(e) and "张三" in str(e)
+    check(ok, "角色不对：给出允许值和实际值")
+    ok = False
+    try:
+        studio.graph.parse_script_doc('{"title":"x", bad json}')
+    except studio.graph.GraphError as e:
+        ok = "JSON" in str(e) and "行" in str(e)
+    check(ok, "JSON 语法错：给出行列")
+    ok = False
+    try:
+        studio.graph.parse_script_doc("## 分镜 s1\n画面轨道：网页动画\n画面：x\n台词：y\n角色：白页\n语气：z")
+    except studio.graph.GraphError as e:
+        ok = "画面轨道" in str(e)
+    check(ok, "Markdown 轨道写错：指出字段")
+
+
+def test_script_import():
+    print("\n剧本导入：自动建节点和连线、不生成、幂等、增量更新、移除只标记")
+    S = studio.Studio()
+    st = S.new_project({"topic": "剧本导入", "voice_id": "local:preset:Vivian"})
+    pid = st["project"]["id"]
+    text = json.dumps(sample_doc(), ensure_ascii=False)
+    r = S.graph_import({"pid": pid, "text": text})
+    g = S._load(pid)["graph"]
+    n0 = len(g["nodes"])
+    check(n0 == 9 + 3 * 2 + 2 + 1, "3 个分镜：各加图/音节点，网页/PPT 各加轨道节点，配乐 1 个")
+    check(r["estimate"]["images"] == 3 and r["estimate"]["tts_chars"] > 0, "导入只给预估费用")
+    e = {(x["from"], x["to"]) for x in g["edges"]}
+    check(("mux.video", "publish.video") in e, "混流接到发布")
+    check(any(a.endswith(".image") and b == "mux.image" for a, b in e), "图接到混流")
+    check(any(a.endswith(".audio") and b == "mux.audio" for a, b in e), "音接到混流")
+    check(any(a.endswith(".video") and b == "mux.video" for a, b in e), "网页轨接到混流")
+    # 幂等
+    r2 = S.graph_import({"pid": pid, "text": text})
+    g2 = S._load(pid)["graph"]
+    check(len(g2["nodes"]) == n0, "同一份剧本导入两次，节点数不变")
+    # 增量更新：s1 台词改了，别的节点参数不动
+    doc = sample_doc()
+    doc["shots"][0]["voice"]["text"] = "改过的第一句。"
+    r3 = S.graph_import({"pid": pid, "text": json.dumps(doc, ensure_ascii=False)})
+    g3 = S._load(pid)["graph"]
+    by = {(n["params"].get("script_key") or n["id"]): n for n in g3["nodes"]}
+    check(by["voice:s1"]["params"]["lines"][0]["text"] == "改过的第一句。", "同 key 更新台词")
+    check(by["voice:s2"]["params"]["lines"][0]["text"] == "第二句台词。", "没改的分镜保持原样")
+    check(len(g3["nodes"]) == n0, "增量更新不新增节点")
+    # 移除一个分镜：只标记，不删除；接到混流的线断开
+    doc2 = sample_doc()
+    doc2["shots"] = [doc2["shots"][0]]
+    S.graph_import({"pid": pid, "text": json.dumps(doc2, ensure_ascii=False)})
+    g4 = S._load(pid)["graph"]
+    by = {(n["params"].get("script_key") or n["id"]): n for n in g4["nodes"]}
+    check(by["image:s2"]["params"].get("script_removed") is True, "剧本里没有的节点标成已移除")
+    check(any(n["id"] == by["image:s2"]["id"] for n in g4["nodes"]), "标已移除但不删除")
+    e4 = {(x["from"], x["to"]) for x in g4["edges"]}
+    check((by["image:s2"]["id"] + ".image", "mux.image") not in e4, "已移除节点不再接在混流上")
+    check(len(g4["nodes"]) == n0, "移除不改变节点数")
+    # 没触发任何生成
+    check(all(n["status"] != "ok" or not n["outputs"] for n in g4["nodes"] if n["type"] in ("image", "voice")),
+          "导入没跑生成（没有新产出）")
+
+
+def test_styleframe():
+    print("\n看图复刻：Claude Code（假的）看参考图写 HTML，再录成视频轨；同参数第二次直接命中")
+    try:
+        import playwright  # noqa: F401
+    except Exception as e:
+        print("  跳过：没装 Playwright：", e)
+        return
+    import os
+    S = studio.Studio()
+    st = S.new_project({"topic": "看图复刻", "voice_id": "local:preset:Vivian"})
+    pid = st["project"]["id"]
+    p = S._load(pid)
+    d = Path(p["dir"])
+    (d / "images").mkdir(parents=True, exist_ok=True)
+    ff = ffmpeg()
+    if not ff:
+        print("  跳过：没有 ffmpeg")
+        return
+    ref = d / "images" / "ref.png"
+    png(ff, ref, "0x1e3a8a", 360, 640)
+    img = next(n for n in p["graph"]["nodes"] if n["id"] == "image-1")
+    img["outputs"] = [studio._out(p, "images/ref.png", "image")]
+    img["status"] = "ok"
+    video_maker.save_project(p)
+    S.graph_connect({"pid": pid, "from": "image-1.image", "to": "web-1.image"})
+    p = S._load(pid)
+    S.graph_update({"pid": pid, "id": "web-1", "params": {"text": "看图复刻字幕", "duration": 1, "fps": 12}})
+    p = S._load(pid)
+    web = next(n for n in p["graph"]["nodes"] if n["id"] == "web-1")
+    cc = RUN / ("claude.cmd" if os.name == "nt" else "claude")
+    if os.name == "nt":
+        cc.write_text('@echo off\r\n"%s" "%s" %%*\r\n' % (sys.executable, ROOT / "dev" / "fake_claude.py"), "utf-8")
+    else:
+        cc.write_text('#!/bin/sh\nexec "%s" "%s" "$@"\n' % (sys.executable, ROOT / "dev" / "fake_claude.py"), "utf-8")
+        cc.chmod(0o755)
+    old = {k: settings.S.get(k) for k in ("ccOn", "ccCmd", "ccBash", "wsRun")}
+    settings.S.update({"ccOn": True, "ccCmd": str(cc), "ccBash": "python", "wsRun": False})
+    try:
+        S.job = {"id": 1, "st": "run", "mode": "styleframe", "step": "web-1", "pid": pid, "msg": "", "pct": 0,
+                 "t0": time.time(), "t1": 0, "stage": 3, "err": "", "shot": ""}
+        asyncio.run(S._graph_styleframe(p, web))
+        q = S._load(pid)
+        w = next(n for n in q["graph"]["nodes"] if n["id"] == "web-1")
+        check(w["status"] == "ok" and w.get("outputs"), "复刻后节点完成、有视频轨" + ("（" + str(w.get("error"))[:200] + "）" if w.get("error") else ""))
+        rel = (w.get("outputs") or [{}])[0].get("rel")
+        check(bool(rel) and (d / rel).is_file() and (d / rel).stat().st_size > 1000, "视频轨文件真的录出来了")
+        h = d / (w["params"].get("styleframe") or {}).get("html", "")
+        check(h.is_file(), "Claude Code 写出的 index.html 在")
+        fl = json.loads((ROOT / "dev" / ".run" / "fake_claude_last.json").read_text("utf-8"))
+        pr = fl.get("prompt") or ""
+        check("60-30-10" in pr and "禁止联网" in pr and "1080" in pr, "提示词带 60-30-10、尺寸、禁止外链")
+        check(str(ref) in pr, "提示词带参考图路径")
+        # 第二次：同参数直接命中，不再调用 Claude Code
+        called = []
+
+        async def boom(*a, **kw):
+            called.append(1)
+            raise RuntimeError("不该再调用 Claude Code")
+
+        old_run = studio.ccode.run
+        studio.ccode.run = boom
+        try:
+            p2 = S._load(pid)
+            w2 = next(n for n in p2["graph"]["nodes"] if n["id"] == "web-1")
+            S.job = {"id": 2, "st": "run", "mode": "styleframe", "step": "web-1", "pid": pid, "msg": "", "pct": 0,
+                     "t0": time.time(), "t1": 0, "stage": 3, "err": "", "shot": ""}
+            asyncio.run(S._graph_styleframe(p2, w2))
+        finally:
+            studio.ccode.run = old_run
+        check(not called, "参数没变：没有再调用 Claude Code")
+        w3 = next(n for n in S._load(pid)["graph"]["nodes"] if n["id"] == "web-1")
+        check(w3.get("cache_hit") is True, "节点显示缓存命中")
+    finally:
+        for k, v in old.items():
+            settings.S[k] = v
+
+
 def main():
     shutil.rmtree(RUN, ignore_errors=True)
     RUN.mkdir(parents=True, exist_ok=True)
@@ -588,6 +995,14 @@ def main():
         test_project()
         test_plan_project()
         test_default_nodes()
+        test_graph_model()
+        test_graph_topo_parallel()
+        test_graph_cache_scope()
+        test_graph_missing_upstream()
+        test_migration()
+        test_script_schema()
+        test_script_import()
+        test_styleframe()
         test_style_models()
         test_dual_role_voice()
         test_gemini_pack()
