@@ -642,8 +642,12 @@ def test_graph_topo_parallel():
     async def fake_exec(self, pp, n):
         events.append((n["id"], "start", time.time()))
         await asyncio.sleep(.12)
+        rel = f"fake/{n['id']}.bin"
+        q = Path(pp["dir"]) / rel
+        q.parent.mkdir(parents=True, exist_ok=True)
+        q.write_bytes(b"fake")
         events.append((n["id"], "end", time.time()))
-        return []
+        return [studio._out(pp, rel, "image")]
 
     old = studio.Studio._graph_exec
     studio.Studio._graph_exec = fake_exec

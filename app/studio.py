@@ -2278,9 +2278,14 @@ class Studio:
                     await asyncio.gather(*tasks.values(), return_exceptions=True)
             if self._stop.is_set():
                 raise StopRequested()
-            fails = [n.get("title") or n.get("id") for n in (p.get("graph") or {}).get("nodes") or [] if n.get("status") == "err"]
-            if fails:
-                raise StudioError("有线没跑成：" + "、".join(str(x) for x in fails[:5]))
+            if nid:
+                n1 = graph.node_of(p["graph"], nid)
+                if n1.get("status") == "err":
+                    raise StudioError(n1.get("error") or ("节点没跑成：" + nid))
+            else:
+                fails = [n.get("title") or n.get("id") for n in (p.get("graph") or {}).get("nodes") or [] if n.get("status") == "err"]
+                if fails:
+                    raise StudioError("有线没跑成：" + "、".join(str(x) for x in fails[:5]))
             p["st"] = "done"
             p["error"] = ""
             self.job.update(st="done", pct=100, msg="全部完成", stage=4, t1=time.time())
@@ -2333,7 +2338,7 @@ class Studio:
             n["error"] = ""
             return
         try:
-            await self._graph_one(p, nid, wait=False)
+            await self._graph_one(p, nid)
         except StopRequested:
             raise
         except Exception:
@@ -2496,6 +2501,8 @@ class Studio:
                 "gif_frames": int(prm.get("gif_frames") or 8), "gif_delay_ms": int(prm.get("gif_delay_ms") or 150)}
         pp = self._pseudo(p, [shot])
         await self._gen_images(pp, ids=[n["id"]])
+        if self.job:
+            self.job["step"] = n["id"]
         s = pp["shots"][0]
         outs = []
         for i, rel in enumerate(s.get("img_variants") or []):
@@ -2533,6 +2540,8 @@ class Studio:
                           "_tts_rel": f"tts/{n['id']}_{lid}.wav"})
         pp = self._pseudo(p, shots)
         await self._gen_tts(pp, out_prefix=f"{n['id']}_")
+        if self.job:
+            self.job["step"] = n["id"]
         outs = []
         for s in pp["shots"]:
             o = _out(p, s.get("tts"), "audio", {"line": str(s["id"]).split(":", 1)[1] if ":" in str(s["id"]) else "",
@@ -2568,6 +2577,8 @@ class Studio:
             pp["total_seconds"] = 75
         rel = f"bgm/{n['id']}.wav"
         await self._gen_bgm(pp, dest_rel=rel, project_key=f"bgm:{n['id']}")
+        if self.job:
+            self.job["step"] = n["id"]
         n["cache_hit"] = bool(pp.get("bgm_cache_hit"))
         o = _out(p, rel, "audio", {"duration": pp.get("bgm_seconds")})
         if not o:

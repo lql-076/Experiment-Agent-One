@@ -236,8 +236,9 @@ def migrate_from_shots(p) -> dict:
             "quality": s.get("img_quality") or (p.get("settings") or {}).get("img_quality") or "high",
             "complexity": s.get("img_complexity") or (p.get("settings") or {}).get("img_complexity") or "medium",
             "transparent": bool(s.get("img_transparent", (p.get("settings") or {}).get("img_transparent"))),
-            "output": s.get("img_output") or "normal", "format": s.get("img_format") or "png",
-            "n": int(s.get("img_n") or 1), "custom_w": int(s.get("img_custom_w") or 0),
+            "output": s.get("img_output") or ("gif" if s.get("img_gif", (p.get("settings") or {}).get("img_gif")) else "normal"),
+            "format": s.get("img_format") or "png",
+            "n": int(s.get("img_n") or (p.get("settings") or {}).get("img_n") or 1), "custom_w": int(s.get("img_custom_w") or 0),
             "custom_h": int(s.get("img_custom_h") or 0), "gif_frames": int(s.get("gif_frames") or 8),
             "gif_delay_ms": int(s.get("gif_delay_ms") or 150), "refs": s.get("img_refs") or [], "order": i + 1})
         rels = s.get("img_variants") or ([s.get("image")] if s.get("image") else [])
