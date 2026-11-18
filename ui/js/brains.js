@@ -63,7 +63,7 @@ $('#ov').addEventListener('click', function (ev) {
   doAct(a.act, t);
 });
 function doAct(act, btn) {
-  if (act === 'topup') { window.open('https://platform.deepseek.com/top_up', '_blank', 'noopener'); return; }
+  if (act === 'topup') { copyText('https://platform.deepseek.com/top_up'); toast('已复制充值地址：https://platform.deepseek.com/top_up', 5000); return; }
   if (act === 'go_cloud') { closeBrain(); openSec('cloud'); return; }
   if (act === 'import_summary') { $('#sumFile').click(); return; }
   if (act === 'copy_prompt') { api('POST', '/api/actions/copy_prompt', {}).then(function (j) { copyText(j.prompt); }).catch(function (e) { toast(e.message); }); return; }

@@ -29,6 +29,14 @@ ace-step/
 tools/7z/
 tools/downloads/
 
+# ── 密钥、依赖、运行时数据（永远不上传） ──
+.env
+.env.*
+!.env.example
+node_modules/
+# Node 版工作区的运行时数据（.studio_data 里是跑出来的工程状态，不是源码）
+workspace/.studio_data/
+
 # ── 开发用 ──
 dist/
 docs/旧版说明*/

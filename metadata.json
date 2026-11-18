@@ -1,0 +1,5 @@
+{
+  "name": "Experiment Agent One",
+  "description": "Local-first personal AI assistant cockpit with smart routing, memory, reminders, hardware telemetry, TTS/BGM/ImageGen tools, and Video Studio.",
+  "requestFramePermissions": []
+}

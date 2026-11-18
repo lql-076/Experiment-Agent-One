@@ -29,8 +29,8 @@ document.addEventListener('fullscreenchange', syncFull);
 document.addEventListener('webkitfullscreenchange', syncFull);
 $('#btnFull').addEventListener('click', toggleFull);
 function placeInd(instant) {
-  var a = $('.nav[data-view][aria-current="page"]'), ind = $('#navInd'), rail = $('.rail');
-  if (!a || !ind || root.dataset.mode !== 'normal') return;
+  var a = $('.nav[aria-current="page"]'), ind = $('#navInd'), rail = $('.rail');
+  if (!a || !ind || root.dataset.mode !== 'normal' || a.hidden) return;
   var rr = rail.getBoundingClientRect(), br = a.getBoundingClientRect();
   if (instant) ind.classList.add('instant');
   ind.style.width = br.width + 'px'; ind.style.height = br.height + 'px';
@@ -123,8 +123,12 @@ function goView(v) {
   var usingVT = moving();
   var t = vt(function () {
     S.view = v;
+    root.dataset.view = v;
     if (!TOOL && typeof saveUI === 'function') saveUI({ lastView: v });
-    $$('.nav[data-view]').forEach(function (b) { if (b.dataset.view === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+    $$('.nav[data-view], .nav[data-tool]').forEach(function (b) {
+      var match = (b.dataset.view && b.dataset.view === v) || (b.dataset.tool && b.dataset.tool === v);
+      if (match) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
     $$('.view').forEach(function (el) { el.classList.toggle('active', el.id === 'view-' + v); });
     if (v === 'home') { D.homeDirty = false; renderHome(true); }
     if (v === 'brains') renderBrains();

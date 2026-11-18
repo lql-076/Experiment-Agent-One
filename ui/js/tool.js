@@ -11,28 +11,27 @@ if (root.dataset.tool && !TOOL) delete root.dataset.tool;
 var TOOL_ARG = (function () { try { var a = new URLSearchParams(location.search).get('arg'); return a ? JSON.parse(a) : null; } catch (e) { return null; } })();
 
 function toolUrl(key, arg) { return '/?tool=' + key + (arg ? '&arg=' + encodeURIComponent(JSON.stringify(arg)) : ''); }
-/* 打开一个工具窗口（已经开着就拿到前面，并把要跳到哪一块告诉它） */
+/* 打开一个工具视图：桌面窗口优先拉起独立窗口；网页 / iframe 环境里直接原地切换视图 */
 function openTool(key, arg) {
   var a = deskApi();
   if (a && a.open_tool) { a.open_tool(key, arg ? JSON.stringify(arg) : '').catch(function () { toast('窗口没打开，再点一次试试'); }); return; }
-  if (!isHttp) { goView(key); applyToolArg(key, arg); return; }        // 双击 index.html 的演示模式：开不了新窗口，就在这里看
-  var w = window.open(toolUrl(key, arg), 'agent-' + key, 'width=1440,height=880');
-  if (!w) { toast('浏览器拦住了新窗口：允许弹出窗口，或者在桌面窗口里用'); return; }
-  try { w.focus(); } catch (e) { /* 拿不到就算了 */ }
+  goView(key);
+  applyToolArg(key, arg);
 }
-/* 去某一页：主窗口里点工具 → 开工具窗口；工具窗口里去另一个工具 → 开那个工具的窗口；就是自己 → 直接跳 */
+/* 去某一页：主窗口里点工具 → 切视图或开桌面工具窗口 */
 function openView(v, arg) {
   if (v === 'chat' || v === 'home') { if (TOOL) openMain(v === 'chat' ? { chat: 1 } : null); else { goView('home'); if (v === 'chat') chatOpen(); } return; }
   if (TOOL_KEYS.indexOf(v) < 0) { goView(v); return; }
-  if (TOOL === v || (!TOOL && !isHttp)) { goView(v); applyToolArg(v, arg); return; }
+  if (TOOL === v || !deskApi()) { goView(v); applyToolArg(v, arg); return; }
   openTool(v, arg);
 }
 function openSec(sec, act) { openView('settings', { sec: sec, act: act || '' }); }
-/* 工具窗口里点「去对话」这类：回到主窗口 */
+/* 工具窗口里点「去对话」这类：回到主窗口或主页视图 */
 function openMain(arg) {
   var a = deskApi();
   if (a && a.open_main) { a.open_main(arg ? JSON.stringify(arg) : '').catch(function () {}); return; }
-  var w = window.open('/' + (arg && arg.chat ? '?chat=1' : ''), 'agent-main'); if (w) try { w.focus(); } catch (e) { /* 算了 */ }
+  goView('home');
+  if (arg && arg.chat && typeof chatOpen === 'function') chatOpen();
 }
 /* 工具窗口收到「跳到哪一块」：设置的某个分区、事件的某一条、重新自检…… */
 function applyToolArg(v, arg) {
@@ -51,7 +50,7 @@ function mainArg(s) { var a = null; try { a = typeof s === 'string' ? JSON.parse
 /* ---------- 工具窗口的标题栏：名字、置顶、收起、关掉 ---------- */
 function toolBoot() {
   if (!TOOL) return;
-  document.title = TOOL_NAME[TOOL] + ' · Agent';
+  document.title = TOOL_NAME[TOOL] + ' · Experiment Agent One';
   $('#tbTool').innerHTML = $('.nav[data-tool="' + TOOL + '"] svg').outerHTML + '<b>' + TOOL_NAME[TOOL] + '</b>';
   S.view = '';
   $$('.view').forEach(function (el) { el.classList.toggle('active', el.id === 'view-' + TOOL); });
@@ -64,7 +63,7 @@ $('#twPin').addEventListener('click', function () {
   a.set_top(on).then(function (st) { b.setAttribute('aria-pressed', !!(st && st.top)); toast(st && st.top ? '置顶了：一直在别的窗口上面' : '不置顶了'); }).catch(function () {});
 });
 $('#twMin').addEventListener('click', function () { var a = deskApi(); if (a) a.minimize(); });
-$('#twClose').addEventListener('click', function () { var a = deskApi(); if (a && a.close_window) a.close_window(); else window.close(); });
+$('#twClose').addEventListener('click', function () { var a = deskApi(); if (a && a.close_window) a.close_window(); else goView('home'); });
 window.addEventListener('pywebviewready', function () { var a = deskApi(); if (TOOL && a && a.state) a.state().then(function (st) { $('#twPin').setAttribute('aria-pressed', !!(st && st.top)); }).catch(function () {}); });
 
 /* 左边的工具按钮 */

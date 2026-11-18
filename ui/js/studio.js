@@ -1,833 +1,1286 @@
 'use strict';
-/* ================= 视频工坊 · 七模块零连线画布（v4.0.0 / R11）=================
-   没有端口、没有连线、没有 DAG、没有「缺上游」。
-   7 个模块：剧本与策划 / 生图测试台 / 配音·白页 / 配音·紫苏 / 背景配乐 /
-             视频制作总成（网页动效 + PPT + FFmpeg 三窗）/ 成片预览与发布。
-   模块之间靠项目 Lists/ 下的 Markdown 清单协作。每个模块都能单独点运行。 */
-var ST_STYLE = '知识科普 × 科技数码 × 搞笑段子';
-var ST_ROLES = ['白页', '紫苏', '旁白'];
+/* ================= 视频工坊 · 四核心生产板块 + 居中窄聊 + 右下角全员 Agent 头像灯区 =================
+   左栏（宽栏）：生图 Agent、配乐 Agent 独立板块同屏展开
+   中栏（收窄）：唯一项目群聊、Mode B 审批卡片、产物内嵌预览与 @ 指令输入框（全局底栏已隐藏）
+   右栏（宽栏）：上方同屏展示 配音 Agent、视频生成 Agent（含分镜帧预览与 FFmpeg MP4 合成/播放）；
+                 右下角固定专属团队头像灯区，展示全部 9 个真实 Agent，谁在工作谁亮起，点击可快捷 @ 或查看状态与质检详情 */
+
 var ST_RATIOS = ['9:16', '16:9', '1:1', '3:4', '4:3', '2:3', '3:2'];
-var ST_LISTS = ['配音清单_白页.md', '配音清单_紫苏.md', '配乐清单.md', '视频渲染清单.md', '生图清单.md'];
-var ST_TYPE_LABEL = { script: '剧本', image: '生图测试', voice: '配音', bgm: '配乐', compose: '视频总成', publish: '发布' };
-var ST_IDS = ['script', 'image', 'voice-white', 'voice-zisu', 'bgm', 'compose', 'publish'];
-var ST_DEFAULT = { script: [350, 470], image: [380, 620], voice: [400, 500], bgm: [360, 360], compose: [1610, 720], publish: [360, 600] };
-var STUDIO = {
-  st: null, t: null, hwT: null, hwBusy: false, pid: '', sig: {}, nodeSig: {}, editing: false, dragging: false,
-  saveT: {}, layoutT: null, layoutPending: false, saving: null, audio: null, fitted: false,
-  canvas: { x: 20, y: 20, s: 1, auto: true }, drag: null, resize: null, pan: null, fetching: null, lastPid: '', autoPlay: ''
+var ST_ROLES = ['白页', '紫苏', '旁白'];
+
+var ST_STATUS_LABEL = {
+  idle: '待命',
+  thinking: '思考中',
+  running: '工作中',
+  waiting_input: '排队中',
+  waiting_approval: '待审批',
+  failed: '失败',
+  completed: '完成',
+  paused: '已暂停',
 };
-try {
-  if (U.studioView4 && typeof U.studioView4 === 'object') {
-    STUDIO.canvas.x = +U.studioView4.x || 20; STUDIO.canvas.y = +U.studioView4.y || 20;
-    STUDIO.canvas.s = Math.max(.25, Math.min(2, +U.studioView4.s || 1)); STUDIO.canvas.auto = false;
-  }
-} catch (e) {}
+
+var ST_TASK_LABEL = {
+  pending: '等待上游',
+  ready: '就绪',
+  running: '执行中',
+  waiting_approval: '待审批',
+  succeeded: '已完成',
+  failed: '失败',
+  retrying: '重试中',
+  cancelled: '已取消',
+  paused: '已暂停',
+  cached: '缓存命中',
+};
+
+var ST_AGENT_ORDER = [
+  ['supervisor', '总导演', '全局拆解与调度'],
+  ['script', '剧本', '台词编写与导入'],
+  ['storyboard', '分镜', '镜头切分与节奏'],
+  ['image', '生图', '分镜插图与参考图'],
+  ['voice', '配音', '逐句语音与混音轨'],
+  ['bgm', '配乐', '背景音乐生成'],
+  ['video_gen', '视频', '动态/PPT视觉帧'],
+  ['compose', '合成', 'FFmpeg MP4 压制'],
+  ['qa', '质检', 'FFprobe 实时验收'],
+];
+
+var ST_AGENT_ICONS = {
+  supervisor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 19.5c.8-3.3 3.4-5 6.5-5s5.7 1.7 6.5 5"/><path d="M18 4l2 2-2 2M4 6h3"/></svg>',
+  script: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h9l4 4v12H6z"/><path d="M15 4v4h4"/><path d="M9.5 12h6M9.5 15.5h4.5"/></svg>',
+  storyboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="7.5" height="6"/><rect x="13" y="4.5" width="7.5" height="6"/><rect x="3.5" y="13.5" width="7.5" height="6"/><rect x="13" y="13.5" width="7.5" height="6"/></svg>',
+  image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4.5 17.5l4.8-4.5 3.6 3.2 2.8-2.4 3.8 3.7"/></svg>',
+  voice: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3.5" width="6" height="10" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><path d="M12 18v3M8.5 21h7"/></svg>',
+  bgm: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17.5V6l10-2v11.5"/><circle cx="6.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="15.5" r="2.5"/></svg>',
+  video_gen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5.5" width="17" height="13"/><path d="M10 9.5l5 2.5-5 2.5z"/></svg>',
+  compose: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 12h4M12 12h8M4 17h12M20 17h0"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="17" r="2"/></svg>',
+  qa: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l7 3v5.5c0 4.5-3 7.8-7 9-4-1.2-7-4.5-7-9V6.5z"/><path d="M9 12.2l2 2 4.2-4.2"/></svg>',
+};
+
+var STUDIO = {
+  st: null,
+  t: null,
+  fetchBusy: false,
+  pid: '',
+  lastPid: '',
+  sig: {},
+  pref: {},
+  topic: '',
+  chatWide: false,
+  collapsedPanes: {},
+  inspectAgentId: '',
+  chatFilter: 'all', // 'all' | 'chat' | 'events'
+  replyTo: null, // { msg_id, sender_name, text }
+  pendingAttachments: [],
+  newProjOpen: false,
+  importOpen: false,
+};
 
 function studioSt() { return useLive() ? STUDIO.st : stDemo(); }
 function studioProj() { var s = studioSt(); return s && s.project; }
-function studioJob() { var s = studioSt(); return s && s.job; }
-function studioRunning() { var j = studioJob(); return !!(j && j.st === 'run'); }
-function stMods() { var p = studioProj(); return (p && p.modules) || []; }
-function stModMap() { var m = {}; stMods().forEach(function (x) { m[x.id] = x; }); return m; }
-function stSize(b) { b = +b || 0; return b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b >= 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB'; }
-function stMedia(pid, rel, ver) { return '/api/studio/media?pid=' + encodeURIComponent(pid || '') + '&path=' + encodeURIComponent(rel || '') + '&v=' + (ver || Date.now()); }
-function stAsset(pid, rel, ver) { return '/api/studio/asset?pid=' + encodeURIComponent(pid || '') + '&path=' + encodeURIComponent(rel || '') + (ver ? '&v=' + encodeURIComponent(ver) : ''); }
-function stSet(id, v) { var e = $('#' + id); if (e && e.textContent !== v) e.textContent = v; }
-function stPut(id, html) { var e = $('#' + id); if (!e || STUDIO.sig[id] === html) return; STUDIO.sig[id] = html; e.innerHTML = html; }
-
-/* ---------- 演示 ---------- */
-function stDemo() {
-  var p = { id: 'demo', name: '演示项目', title: '三个被低估的 AI 用法', desc: '', tags: ['AI'], ratio: '9:16',
-    files: {}, total_seconds: 12, duration: 0, resolution: '', video_ok: false, dir: 'F:\\Agent\\工作区\\视频工坊\\演示项目',
-    lists: { '配音清单_白页.md': '# 配音清单 · 白页\n\n## 01\n台词：先说一个反常识的结论。\n语气：冷静吐槽',
-             '配音清单_紫苏.md': '# 配音清单 · 紫苏\n\n## 02\n台词：等等，这也太离谱了吧？\n语气：轻松调侃',
-             '配乐清单.md': '# 配乐清单\n\n## 01\n描述：upbeat electronic, no vocals',
-             '视频渲染清单.md': '# 视频渲染清单\n\n## 01\n方式：网页动效\n字幕：先说一个反常识的结论。\n画面：深色科技感排版',
-             '生图清单.md': '# 生图清单（可选）\n\n## 01\n提示词：暖光书桌前的年轻人' } };
-  var defs = [['script', 'script', '剧本与策划', 40, 40, 350, 470], ['image', 'image', '生图测试台（独立）', 430, 40, 380, 620],
-    ['voice-white', 'voice', '角色配音 · 白页', 850, 40, 400, 500], ['voice-zisu', 'voice', '角色配音 · 紫苏', 850, 570, 400, 500],
-    ['bgm', 'bgm', '背景配乐（Stable Audio 3）', 1290, 40, 360, 360], ['compose', 'compose', '视频制作总成（Claude Code 驱动）', 40, 1120, 1610, 720],
-    ['publish', 'publish', '成片预览与抖音发布', 1290, 430, 360, 600]];
-  var prms = {
-    script: { topic: '三个被低估的 AI 用法', title: '三个被低估的 AI 用法', desc: '', tags: ['AI'] },
-    image: { prompt: '暖光书桌前的年轻人，竖屏中景', model: 'gpt-image-2.5-sunburst-vip', ratio: '9:16', resolution: '2k', quality: 'high', complexity: 'medium', n: 1, output: 'normal', format: 'png', refs: [] },
-    'voice-white': { role: '白页', speaker: 'local:preset:Serena', engine: 'auto', tone: '冷静吐槽', lines: [{ id: 'l1', line_index: 1, text: '先说一个反常识的结论。', tone: '' }] },
-    'voice-zisu': { role: '紫苏', speaker: 'local:preset:Dylan', engine: 'auto', tone: '轻松调侃', lines: [{ id: 'l1', line_index: 2, text: '等等，这也太离谱了吧？', tone: '' }] },
-    bgm: { prompt: 'upbeat electronic, no vocals', seconds: 75, steps: 8, seed: 20261118 },
-    compose: { subtitle: true, ratio: '9:16', bgm_volume: .18, duck_depth: .16, fade: 2, fps: 24, cc_drive: true,
-      shots: [{ id: 's01', line_index: 1, render: 'web', text: '先说一个反常识的结论。', visual: '深色科技感排版', seconds: 6 },
-              { id: 's02', line_index: 2, render: 'ppt', text: '等等，这也太离谱了吧？', visual: '两个要点', seconds: 6 }] },
-    publish: { title: '三个被低估的 AI 用法', desc: '', tags: ['AI'], mode: 'single', declaration: '内容由AI生成' }
-  };
-  p.modules = defs.map(function (d) {
-    return { id: d[0], type: d[1], title: d[2], x: d[3], y: d[4], w: d[5], h: d[6], params: JSON.parse(JSON.stringify(prms[d[0]])),
-      outputs: [], status: 'idle', error: '', cache_hit: false };
-  });
-  return { projects: [{ id: 'demo', name: '演示项目', title: '三个被低估的 AI 用法', created: '2026-11-18 02:00:00', ratio: '9:16', st: 'idle', shots: 7, video: false }],
-    active: 'demo', project: p, job: null,
-    voices: [{ id: 'local:preset:Vivian', label: 'Vivian · 女声', engine: 'local' }, { id: 'local:preset:Serena', label: 'Serena · 女声', engine: 'local' },
-      { id: 'local:preset:Dylan', label: 'Dylan · 男声', engine: 'local' }, { id: 'local:preset:Uncle_Fu', label: 'Uncle_Fu · 男声', engine: 'local' }],
-    models: [{ id: 'gpt-image-2.5-sunburst-vip', name: 'GPT Image 2.5 Sunburst VIP', vendor: 'OpenAI', gif: true, svg: true, price: .03 }],
-    style_tag: ST_STYLE, roles: ST_ROLES, publish: { pending: 0, batch: 0 } };
+function studioAgents() { var s = studioSt(); return (s && s.agents) || []; }
+function studioAgentMap() {
+  var m = {};
+  studioAgents().forEach(function (a) { m[a.id] = a; });
+  return m;
 }
 
-/* ---------- 外壳 ---------- */
+function stAsset(pid, rel, ver) {
+  var s = String(rel || '');
+  if (/^(data:|blob:|https?:\/\/|\/api\/)/i.test(s)) return s;
+  return '/api/studio/asset?pid=' + encodeURIComponent(pid || '') + '&path=' + encodeURIComponent(s) + (ver ? '&v=' + encodeURIComponent(ver) : '');
+}
+
+function stSize(b) {
+  b = +b || 0;
+  return b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB'
+    : b >= 1e6 ? (b / 1e6).toFixed(1) + ' MB'
+    : Math.max(1, Math.round(b / 1e3)) + ' KB';
+}
+
+function stFmtClock(ts) {
+  if (!ts) return '';
+  var d = new Date(ts * 1000);
+  var p = function (n) { return String(n).padStart(2, '0'); };
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+function stPut(id, html) {
+  var e = $('#' + id);
+  if (!e || STUDIO.sig[id] === html) return false;
+  STUDIO.sig[id] = html;
+  e.innerHTML = html;
+  return true;
+}
+
+function stSetText(id, v) {
+  var e = $('#' + id);
+  if (e && e.textContent !== String(v)) e.textContent = String(v);
+}
+
+function stPaneBusyInteraction(paneId) {
+  var body = $('#stPaneBody-' + paneId);
+  if (!body) return false;
+  var a = document.activeElement;
+  if (a && body.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+  var playing = [].slice.call(body.querySelectorAll('audio, video')).some(function (m) {
+    return !m.paused && !m.ended;
+  });
+  return playing;
+}
+
+function stVoiceOptions(cur) {
+  var vs = (studioSt() && studioSt().voices) || [];
+  var groups = {};
+  vs.forEach(function (v) {
+    var g = v.engine === 'cloud' ? '百炼云端' : '本地预设';
+    (groups[g] = groups[g] || []).push(v);
+  });
+  var out = [];
+  if (cur && !vs.some(function (v) { return v.id === cur; })) {
+    out.push('<option value="' + esc(cur) + '" selected>' + esc(cur) + '</option>');
+  }
+  Object.keys(groups).forEach(function (g) {
+    out.push('<optgroup label="' + esc(g) + '">' + groups[g].map(function (v) {
+      return '<option value="' + esc(v.id) + '"' + (v.id === cur ? ' selected' : '') + '>' + esc(v.label) + '</option>';
+    }).join('') + '</optgroup>');
+  });
+  return out.join('') || '<option value="local:preset:Serena">Serena · 预设女声</option>';
+}
+
+function stModelOptions(cur) {
+  var ms = (studioSt() && studioSt().models) || [];
+  var out = [];
+  if (cur && !ms.some(function (m) { return m.id === cur; })) {
+    out.push('<option value="' + esc(cur) + '" selected>' + esc(cur) + '</option>');
+  }
+  ms.forEach(function (m) {
+    out.push('<option value="' + esc(m.id) + '"' + (m.id === cur ? ' selected' : '') + '>' +
+      esc((m.vendor ? m.vendor + ' · ' : '') + m.name + (m.price ? ' ($' + m.price + ')' : '')) + '</option>');
+  });
+  return out.join('') || '<option value="gpt-image-2.5-sunburst-vip">GPT Image 2.5 Sunburst VIP</option>';
+}
+
+/* ---------- 演示数据 ---------- */
+function stDemo() {
+  var now = Math.floor(Date.now() / 1000);
+  var p = {
+    id: 'demo',
+    revision: 1,
+    name: '演示项目',
+    title: '三个被低估的 AI 用法',
+    desc: '知识科普 × 科技数码 × 搞笑段子',
+    tags: ['AI', '科普'],
+    ratio: '9:16',
+    target_duration: 60,
+    created: '2026-11-18 10:00:00',
+    updated_at: now,
+    dir: 'workspace/.studio_data/demo',
+    script_summary: '2 句台词 · 2 镜 · 目标 10s',
+    shots: [
+      { shot_id: 'shot_01', order: 1, render: 'web', visual_prompt: '暖光桌面科技特写与主题标题动效', subtitle_text: '先说一个反常识的结论。', duration_sec: 5 },
+      { shot_id: 'shot_02', order: 2, render: 'ppt', visual_prompt: '双栏对比信息卡片：常见误区 vs 高效工作流', subtitle_text: '等等，这也太离谱了吧？', duration_sec: 5 },
+    ],
+    dialogues: [
+      { line_id: 'line_01', shot_id: 'shot_01', order: 1, role: '白页', speaker: 'local:preset:Serena', engine: 'auto', text: '先说一个反常识的结论。', tone: '冷静吐槽' },
+      { line_id: 'line_02', shot_id: 'shot_02', order: 2, role: '紫苏', speaker: 'local:preset:Dylan', engine: 'auto', text: '等等，这也太离谱了吧？', tone: '轻松调侃' },
+    ],
+    bgm: { prompt: 'upbeat electronic, no vocals', seconds: 75, steps: 8, seed: 20261118 },
+    image_config: {
+      model: 'gpt-image-2.5-sunburst-vip', ratio: '9:16', resolution: '2k', quality: 'high', n: 1, output: 'normal', refs: [],
+      items: [
+        { item_id: 'img_01', shot_id: 'shot_01', label: '镜头 1 配图', prompt: '暖光桌面科技特写', ratio: '9:16', transparent: false },
+        { item_id: 'img_02', shot_id: 'shot_02', label: '镜头 2 配图', prompt: '信息对比卡片插图', ratio: '9:16', transparent: false },
+      ],
+    },
+    compose_config: { fps: 24, bgm_volume: 0.18, duck_depth: 0.16, fade: 2, subtitle: true, cc_drive: true },
+    publish_config: { title: '三个被低估的 AI 用法', desc: '知识科普 × 科技数码 × 搞笑段子', tags: ['AI', '科普'], mode: 'single', declaration: '内容由AI生成' },
+    assets: [],
+    tasks: [],
+    approvals: [],
+    messages: [
+      {
+        msg_id: 'demo-1', ts: now - 30, kind: 'agent', sender_id: 'supervisor', sender_name: '总导演 Agent',
+        text: '当前处于演示模式。界面仅保留生图、配乐、配音、视频生成四块工作区；总导演/剧本/分镜/质检等全部 9 个 Agent 均在右下角实时在线，工作时头像会自动亮起。',
+      },
+    ],
+    qa: null,
+    video_ok: false,
+    lists: {},
+  };
+  var agents = [
+    { id: 'supervisor', name: '总导演 Agent', role: 'Supervisor', responsibility: '拆解目标、调度 DAG、审批门控', tools: ['plan.decompose', 'task.schedule'], status: 'idle', brief: '待命', unread: 0 },
+    { id: 'script', name: '剧本 Agent', role: 'Script', responsibility: '编写双角色台词并分配 line_id', tools: ['script.plan', 'script.import'], status: 'idle', brief: '已就绪 (2 句)', unread: 0 },
+    { id: 'storyboard', name: '分镜 Agent', role: 'Storyboard', responsibility: '划分 shot_id 与画面节奏', tools: ['storyboard.build'], status: 'idle', brief: '2 镜 · 10s', unread: 0 },
+    { id: 'image', name: '生图 Agent', role: 'Image', responsibility: '调用 API易/生图模型并管理版本', tools: ['image.generate'], status: 'idle', brief: '待命', unread: 0 },
+    { id: 'voice', name: '配音 Agent', role: 'Voice', responsibility: '按 line_id 增量合成百炼/本地配音', tools: ['voice.synthesize_line'], status: 'idle', brief: '待命', unread: 0 },
+    { id: 'bgm', name: '配乐 Agent', role: 'BGM', responsibility: '生成 -1 dBFS 归一背景音乐', tools: ['bgm.generate'], status: 'idle', brief: '待命', unread: 0 },
+    { id: 'video_gen', name: '视频生成 Agent', role: 'Video Gen', responsibility: '渲染网页动效与 PPT 卡片帧', tools: ['video.render_frames'], status: 'idle', brief: '待命', unread: 0 },
+    { id: 'compose', name: '后期合成 Agent', role: 'Compose', responsibility: 'FFmpeg 音画混流与 MP4 压制', tools: ['compose.ffmpeg', 'subtitle.srt'], status: 'idle', brief: '待命', unread: 0 },
+    { id: 'qa', name: '质检 Agent', role: 'QA', responsibility: 'FFprobe 成片与资源一致性验收', tools: ['qa.inspect'], status: 'idle', brief: '待命', unread: 0 },
+  ];
+  return {
+    projects: [{ id: 'demo', name: '演示项目', title: '三个被低估的 AI 用法', created: '2026-11-18 10:00:00', ratio: '9:16', revision: 1, st: 'idle', shots: 2, video: false }],
+    active: 'demo',
+    project: p,
+    agents: agents,
+    tools: [],
+    tool_health: { ffmpeg: true, ffprobe: true, deepseek: false, apiyi: false, bailian: false },
+    resources: { active_tasks: 0, queued_tasks: 0, pending_approvals: 0, project_cost_usd: 0, project_cost_cny: 0 },
+    voices: [
+      { id: 'local:preset:Serena', label: 'Serena · 预设女声', engine: 'local' },
+      { id: 'local:preset:Dylan', label: 'Dylan · 预设男声', engine: 'local' },
+      { id: 'cloud:longanlingxin_v3.1', label: '龙安灵心 · 百炼女声', engine: 'cloud' },
+    ],
+    models: [{ id: 'gpt-image-2.5-sunburst-vip', name: 'GPT Image 2.5 Sunburst VIP', vendor: 'OpenAI', price: 0.03 }],
+  };
+}
+
+/* ---------- 仅保留 4 个生产板块：左栏 生图+配乐；右栏 配音+视频生成 ---------- */
+var LEFT_PANES = [
+  ['image', '生图 Agent', true],
+  ['bgm', '配乐 Agent', true],
+];
+
+var RIGHT_PANES = [
+  ['voice', '配音 Agent', true],
+  ['video_gen', '视频生成 Agent', true],
+];
+
+function stPaneShell(id, title, isAgent) {
+  return '<section class="st-pane' + (STUDIO.collapsedPanes[id] ? ' collapsed' : '') + '" id="stPane-' + esc(id) + '">' +
+    '<header class="st-pane-h">' +
+      '<div class="st-pane-title">' +
+        (isAgent ? '<span class="st-ag-dot idle" id="stDot-' + esc(id) + '"></span>' : '') +
+        '<b>' + esc(title) + '</b>' +
+        '<span class="st-pane-stat" id="stStat-' + esc(id) + '">待命</span>' +
+      '</div>' +
+      '<div class="st-pane-ops">' +
+        (isAgent ? '<button type="button" class="btn mini ghost" data-at-agent="' + esc(id) + '" title="在聊天框 @ 提到此 Agent">@</button>' +
+          '<button type="button" class="btn mini primary" data-agent-run="' + esc(id) + '">▶ 跑</button>' +
+          '<button type="button" class="btn mini ghost" id="stPauseBtn-' + esc(id) + '" data-agent-act="' + esc(id) + ':pause">暂停</button>' +
+          '<button type="button" class="btn mini danger" data-agent-act="' + esc(id) + ':stop">停</button>' : '') +
+        '<button type="button" class="btn mini ghost" data-fold-pane="' + esc(id) + '">' + (STUDIO.collapsedPanes[id] ? '展开' : '收起') + '</button>' +
+      '</div>' +
+    '</header>' +
+    '<div class="st-pane-body" id="stPaneBody-' + esc(id) + '"></div>' +
+  '</section>';
+}
+
 function studioShell() {
-  return '<div class="st"><div class="st-top" id="stTop"></div>' +
-    '<div class="st-hw" id="stHw">' +
-    '<span class="st-hw-g"><i>CPU</i><b id="stHwCpu">—</b><em>% · <span id="stHwCpuF">—</span> GHz</em><u><s id="stHwCpuBar"></s></u></span>' +
-    '<span class="st-hw-g"><i>内存</i><b id="stHwRam">—</b><em>/ <span id="stHwRamT">—</span> GB · <span id="stHwRamP">—</span>%</em><u><s id="stHwRamBar"></s></u></span>' +
-    '<span class="st-hw-g"><i>GPU</i><b id="stHwGpu">—</b><em>% · <span id="stHwTemp">—</span>°C</em><u><s id="stHwGpuBar"></s></u></span>' +
-    '<span class="st-hw-g"><i>显存</i><b id="stHwVram">—</b><em>/ <span id="stHwVramT">—</span> GB · <span id="stHwVramP">—</span>%</em><u><s id="stHwVramBar"></s></u></span>' +
-    '<span class="st-hw-src" id="stHwSrc">2 秒刷新</span></div>' +
-    '<div class="st-canvas" id="stCanvas"><div class="st-world" id="stWorld"></div>' +
-    '<div class="st-canvas-tip">拖动空白平移 · 滚轮缩放 · 模块可拖动、右下角缩放</div></div></div>';
+  return '<div class="st' + (STUDIO.chatWide ? ' chat-wide' : '') + '">' +
+    '<div class="st-top" id="stTop"></div>' +
+    '<div class="st-work">' +
+      '<section class="st-col-left" aria-label="生图与配乐面板">' +
+        '<div class="st-col-h">' +
+          '<b>画面与配乐</b>' +
+          '<div class="st-anchors">' +
+            '<button type="button" data-jump-pane="image">生图</button>' +
+            '<button type="button" data-jump-pane="bgm">配乐</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="st-panes" id="stLeftPanes">' +
+          LEFT_PANES.map(function (p) { return stPaneShell(p[0], p[1], p[2]); }).join('') +
+        '</div>' +
+      '</section>' +
+      '<section class="st-col-center" aria-label="项目群聊">' +
+        '<div class="st-chat-head" id="stChatHead"></div>' +
+        '<div class="st-msgs" id="stMsgs"></div>' +
+        '<div class="st-comp" id="stComp">' +
+          '<div class="st-comp-reply" id="stReplyBar" hidden></div>' +
+          '<div class="st-row" id="stAttachBar" hidden></div>' +
+          '<div class="st-comp-atbar" id="stAtBar">' +
+            '<button type="button" data-at-insert="@总导演 ">@总导演</button>' +
+            '<button type="button" data-at-insert="@剧本 ">@剧本</button>' +
+            '<button type="button" data-at-insert="@分镜 ">@分镜</button>' +
+            '<button type="button" data-at-insert="@生图 ">@生图</button>' +
+            '<button type="button" data-at-insert="@配音 ">@配音</button>' +
+            '<button type="button" data-at-insert="@配乐 ">@配乐</button>' +
+            '<button type="button" data-at-insert="@视频 ">@视频</button>' +
+            '<button type="button" data-at-insert="@合成 ">@合成</button>' +
+            '<button type="button" data-at-insert="@质检 ">@质检</button>' +
+          '</div>' +
+          '<div class="st-comp-row">' +
+            '<textarea class="inp st-comp-in" id="stChatInput" rows="2" placeholder="输入创作要求或 @Agent 指令（Enter 发送）"></textarea>' +
+            '<div class="st-comp-side">' +
+              '<button type="button" class="btn mini primary" id="stBtnSend">发送</button>' +
+              '<label class="btn mini ghost st-filebtn" title="上传参考图或导入剧本">附件<input type="file" id="stChatFile" accept="image/*,.md,.markdown,.txt,.json" multiple></label>' +
+            '</div>' +
+          '</div>' +
+          '<div class="st-comp-foot">' +
+            '<button type="button" class="linkbtn" data-quick-cmd="从头制作一版完整短视频并做质检">全流程策划</button>' +
+            '<button type="button" class="linkbtn" data-quick-cmd="@配音 重新合成全部配音">@配音</button>' +
+            '<button type="button" class="linkbtn" data-quick-cmd="@合成 重新压制 MP4 成片">@合成</button>' +
+            '<button type="button" class="linkbtn" data-quick-cmd="@质检 检查成片质量">@质检</button>' +
+          '</div>' +
+        '</div>' +
+      '</section>' +
+      '<section class="st-col-right" aria-label="配音视频生成与团队状态">' +
+        '<div class="st-col-h">' +
+          '<b>配音与视频生成</b>' +
+          '<div class="st-anchors">' +
+            '<button type="button" data-jump-pane="voice">配音</button>' +
+            '<button type="button" data-jump-pane="video_gen">视频生成</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="st-panes" id="stRightPanes">' +
+          RIGHT_PANES.map(function (p) { return stPaneShell(p[0], p[1], p[2]); }).join('') +
+        '</div>' +
+        '<div class="st-avpop" id="stAvInspect" hidden></div>' +
+        '<div class="st-avdock" id="stAvatarDock" aria-label="Agent 团队实时状态灯"></div>' +
+      '</section>' +
+    '</div>' +
+  '</div>';
 }
 
 function renderStudio(force) {
-  var v = $('#view-studio'); if (!v) return;
-  if (!v.querySelector('.st')) { v.innerHTML = studioShell(); STUDIO.sig = {}; STUDIO.nodeSig = {}; bindCanvas(); }
-  if ((STUDIO.editing || STUDIO.dragging) && !force) { syncMeta(); return; }
-  if (force) STUDIO.nodeSig = {};
-  renderTop(); renderCanvas(); syncMeta();
-  if (!STUDIO.fitted && STUDIO.canvas.auto) { STUDIO.fitted = true; fitCanvas(); }
+  var v = $('#view-studio');
+  if (!v) return;
+  if (!v.querySelector('.st')) {
+    v.innerHTML = studioShell();
+    STUDIO.sig = {};
+  }
+  var rootEl = v.querySelector('.st');
+  if (rootEl) rootEl.classList.toggle('chat-wide', !!STUDIO.chatWide);
+
+  renderTop();
+  renderPaneHeaders();
+  renderAllPanes(force);
+  renderChatHead();
+  renderMessages();
+  renderComposerMeta();
+  renderAvatarDock();
 }
 
+/* ---------- 顶栏 ---------- */
 function renderTop() {
-  var s = studioSt() || {}, ps = s.projects || [], p = s.project, run = studioRunning();
+  var s = studioSt() || {}, ps = s.projects || [], p = s.project || {}, res = s.resources || {};
+  var runningCount = +(res.active_tasks || 0);
+  var queuedCount = +(res.queued_tasks || 0);
+  var pendingApr = +(res.pending_approvals || 0);
+  var anyRun = runningCount > 0 || queuedCount > 0;
+
   var sel = '<select class="inp st-projsel" id="stProj" aria-label="切换项目">' + (ps.length ? ps.map(function (x) {
-    return '<option value="' + esc(x.id) + '"' + (p && x.id === p.id ? ' selected' : '') + '>' + esc(x.title || x.name) + ' · ' + esc((x.created || '').slice(5, 16)) + '</option>';
-  }).join('') : '<option value="">还没有项目</option>') + '</select>';
-  var html = '<div class="st-brand"><b>视频工坊</b><span class="st-style">' + esc(ST_STYLE) + ' · 零连线独立模块</span></div>' +
-    '<div class="st-proj"><label for="stProj">项目</label>' + sel + '<button class="btn mini ghost" data-st="new">新建</button></div>' +
-    '<div class="st-acts"><button class="btn mini ghost" data-st="fit">适应窗口</button>' +
-    '<button class="btn primary st-runall" data-st="run"' + (run ? ' disabled' : '') + '>▶ 从头跑通全流程</button>' +
-    '<button class="btn mini danger" data-st="stop"' + (run ? '' : ' disabled') + '>■ 停下</button></div>';
+    return '<option value="' + esc(x.id) + '"' + (p.id === x.id ? ' selected' : '') + '>' +
+      esc(x.title || x.name) + ' · ' + esc(x.ratio || '9:16') + '</option>';
+  }).join('') : '<option value="">无项目</option>') + '</select>';
+
+  var newBar = STUDIO.newProjOpen
+    ? '<div class="st-row" style="width:100%;padding-top:.32rem;border-top:1px solid var(--ln)">' +
+        '<input class="inp" id="stNewTopic" style="flex:1;min-width:12rem" placeholder="输入新项目主题，例如：AI 编程提效的 3 个技巧">' +
+        '<select class="inp" id="stNewRatio" style="width:5.2rem">' + ST_RATIOS.map(function (r) { return '<option value="' + r + '">' + r + '</option>'; }).join('') + '</select>' +
+        '<input class="inp" id="stNewSec" type="number" min="15" max="300" value="60" style="width:4.5rem" title="目标时长（秒）">' +
+        '<button type="button" class="btn mini primary" data-act="createProj">创建</button>' +
+        '<button type="button" class="btn mini ghost" data-act="cancelNewProj">取消</button>' +
+      '</div>'
+    : '';
+
+  var importBar = STUDIO.importOpen
+    ? '<div class="st-field" style="width:100%;padding-top:.32rem;border-top:1px solid var(--ln)">' +
+        '<div class="st-row"><label style="font-size:.72rem;color:var(--text3)">粘贴台词或剧本 JSON（支持「白页：xxx」）：</label><span class="sp" style="flex:1"></span>' +
+          '<button type="button" class="btn mini primary" data-act="doImport">导入并同步分镜</button>' +
+          '<button type="button" class="btn mini ghost" data-act="toggleImport">关闭</button></div>' +
+        '<textarea class="inp" id="stImportText" rows="3" placeholder="白页：先说一个反常识的结论。\n紫苏：这也太离谱了吧？"></textarea>' +
+      '</div>'
+    : '';
+
+  var html = '<div class="st-brand"><b>视频工坊</b><span>生图 · 配乐 · 配音 · 视频生成</span></div>' +
+    '<div class="st-proj">' + sel + '<button type="button" class="btn mini ghost" data-act="toggleNewProj">新建</button></div>' +
+    '<div class="st-top-meta">' +
+      '<span>版本 <b class="st-num">r' + (p.revision || 1) + '</b></span>' +
+      '<span>分镜 <b class="st-num">' + ((p.shots || []).length) + '</b></span>' +
+      '<span>台词 <b class="st-num">' + ((p.dialogues || []).length) + '</b></span>' +
+      (anyRun ? '<span style="color:var(--hud)">运行 <b class="st-num">' + runningCount + '</b> · 排队 <b class="st-num">' + queuedCount + '</b></span>' : '') +
+      (pendingApr ? '<span style="color:var(--warn)">待审批 <b class="st-num">' + pendingApr + '</b></span>' : '') +
+      '<span>成片 ' + (p.video_ok ? '<b style="color:var(--ok)">已就绪</b>' : '<b>未生成</b>') + '</span>' +
+    '</div>' +
+    '<div class="st-top-acts">' +
+      '<button type="button" class="btn mini ghost" data-act="toggleImport">导入剧本</button>' +
+      '<button type="button" class="btn mini primary" data-act="runFull">▶ 全流程制作</button>' +
+      '<button type="button" class="btn mini danger" data-act="stopAll"' + (anyRun ? '' : ' disabled') + '>■ 全部停下</button>' +
+      '<button type="button" class="btn mini ghost" data-act="toggleChatWidth">' + (STUDIO.chatWide ? '收窄聊天' : '略宽聊天') + '</button>' +
+    '</div>' + newBar + importBar;
+
   stPut('stTop', html);
 }
 
-/* ---------- 硬件条 ---------- */
-function stHWBar(id, v, max) { var e = $('#' + id); if (e) e.style.width = Math.max(0, Math.min(100, (+v || 0) / (max || 100) * 100)).toFixed(1) + '%'; }
-function renderStHW(h) {
-  h = h || (window.HW || {}); var cpu = h.cpu || {}, gpu = h.gpu || {}, ram = h.ram || {};
-  stSet('stHwCpu', cpu.load == null ? '—' : (+cpu.load).toFixed(0)); stSet('stHwCpuF', cpu.clock == null ? '—' : (+cpu.clock).toFixed(2));
-  stSet('stHwRam', ram.used == null ? '—' : (+ram.used).toFixed(1)); stSet('stHwRamT', ram.total == null ? '—' : (+ram.total).toFixed(0));
-  stSet('stHwRamP', ram.load == null ? '—' : (+ram.load).toFixed(0)); stSet('stHwGpu', gpu.load == null ? '—' : (+gpu.load).toFixed(0));
-  stSet('stHwTemp', !gpu.temp ? '—' : (+gpu.temp).toFixed(0)); stSet('stHwVram', gpu.vram == null ? '—' : (+gpu.vram).toFixed(1));
-  stSet('stHwVramT', gpu.vramTotal == null ? '—' : (+gpu.vramTotal).toFixed(0)); stSet('stHwVramP', gpu.vramPct == null ? '—' : (+gpu.vramPct).toFixed(0));
-  stHWBar('stHwCpuBar', cpu.load, 100); stHWBar('stHwRamBar', ram.load, 100); stHWBar('stHwGpuBar', gpu.load, 100); stHWBar('stHwVramBar', gpu.vramPct, 100);
-  stSet('stHwSrc', useLive() ? '2 秒刷新' : '演示数据');
+/* ---------- 更新保留的 4 个核心板块头部实时状态（不破坏输入框与媒体播放） ---------- */
+function renderPaneHeaders() {
+  var am = studioAgentMap();
+  LEFT_PANES.concat(RIGHT_PANES).forEach(function (cfg) {
+    var id = cfg[0], isAgent = cfg[2];
+    var pane = $('#stPane-' + id);
+    if (pane) pane.classList.toggle('collapsed', !!STUDIO.collapsedPanes[id]);
+    var foldBtn = pane ? pane.querySelector('[data-fold-pane]') : null;
+    if (foldBtn) foldBtn.textContent = STUDIO.collapsedPanes[id] ? '展开' : '收起';
+
+    if (isAgent) {
+      var ag = am[id] || { status: 'idle', brief: '待命', paused: false };
+      var st = ag.status || 'idle';
+      // 视频生成面板兼看 compose 状态，让成片压制时视频生成头部也给出提示
+      if (id === 'video_gen') {
+        var cmp = am.compose;
+        if (st === 'idle' && cmp && (cmp.status === 'running' || cmp.status === 'thinking')) {
+          st = cmp.status;
+          ag = cmp;
+        }
+      }
+      var dot = $('#stDot-' + id);
+      if (dot) dot.className = 'st-ag-dot ' + st;
+      var stEl = $('#stStat-' + id);
+      if (stEl) {
+        stEl.className = 'st-pane-stat ' + st;
+        var label = ST_STATUS_LABEL[st] || st;
+        stEl.textContent = ag.brief && ag.brief !== '待命' ? (label + ' · ' + ag.brief) : label;
+      }
+      var pbtn = $('#stPauseBtn-' + id);
+      if (pbtn) {
+        pbtn.textContent = ag.paused ? '恢复' : '暂停';
+        pbtn.setAttribute('data-agent-act', id + ':' + (ag.paused ? 'resume' : 'pause'));
+      }
+    }
+  });
 }
-function stHWTick() {
-  if (document.visibilityState === 'hidden' || STUDIO.hwBusy) return;
-  if (!useLive()) { renderStHW(window.HW); return; }
-  STUDIO.hwBusy = true;
-  api('GET', '/api/hw', null, 6000).then(renderStHW).catch(function () { renderStHW({}); }).then(function () { STUDIO.hwBusy = false; });
+
+function renderAllPanes(force) {
+  var p = studioProj() || {};
+  var builders = {
+    image: buildImagePane,
+    bgm: buildBgmPane,
+    voice: buildVoicePane,
+    video_gen: buildVideoGenPane,
+  };
+
+  Object.keys(builders).forEach(function (id) {
+    if (!force && stPaneBusyInteraction(id)) return;
+    var html = builders[id](p);
+    if (force) STUDIO.sig['stPaneBody-' + id] = null;
+    stPut('stPaneBody-' + id, html);
+  });
 }
-function stHWStart() { stHWStop(); if (document.visibilityState === 'hidden') return; stHWTick(); STUDIO.hwT = setInterval(stHWTick, 2000); }
-function stHWStop() { if (STUDIO.hwT) clearInterval(STUDIO.hwT); STUDIO.hwT = null; }
+
+/* ---------- 左栏：生图 + 配乐 ---------- */
+function buildImagePane(p) {
+  var ic = p.image_config || {}, items = ic.items || [], refs = ic.refs || [];
+  return '<div class="st-field"><label>生图模型</label><select class="inp" id="stImgModel">' + stModelOptions(ic.model) + '</select></div>' +
+    '<div class="st-row2">' +
+      '<div class="st-field"><label>分辨率</label><select class="inp" id="stImgRes">' +
+        ['1k', '2k', '4k'].map(function (r) { return '<option value="' + r + '"' + (ic.resolution === r ? ' selected' : '') + '>' + r.toUpperCase() + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div class="st-field"><label>输出格式</label><select class="inp" id="stImgOut">' +
+        '<option value="normal"' + (ic.output !== 'svg' ? ' selected' : '') + '>位图 PNG</option>' +
+        '<option value="svg"' + (ic.output === 'svg' ? ' selected' : '') + '>矢量 SVG</option>' +
+      '</select></div>' +
+    '</div>' +
+    '<div class="st-row">' +
+      '<button type="button" class="btn mini primary" data-act="saveImgCfg">保存生图参数</button>' +
+      '<label class="btn mini ghost st-filebtn">上传参考图<input type="file" id="stRefUpload" accept="image/*" multiple></label>' +
+      '<span style="font-size:.7rem;color:var(--text3)">参考图 ' + refs.length + '/16</span>' +
+    '</div>' +
+    (refs.length ? '<div class="st-artgrid">' + refs.map(function (r, idx) {
+      return '<div class="st-art-img" style="max-width:5rem"><img src="' + esc(stAsset(p.id, r)) + '" style="width:4.5rem;height:3.5rem" alt=""><button type="button" class="linkbtn" data-del-ref="' + idx + '">移除</button></div>';
+    }).join('') + '</div>' : '') +
+    '<div class="st-cardgrid">' + (items.length ? items.map(function (it) {
+      var shot = (p.shots || []).filter(function (s) { return s.shot_id === it.shot_id; })[0];
+      var ast = shot && shot.image_asset_id ? (p.assets || []).filter(function (a) { return a.asset_id === shot.image_asset_id; })[0] : null;
+      var vers = (p.assets || []).filter(function (a) { return a.kind === 'image' && it.shot_id && a.shot_id === it.shot_id; }).slice(-4);
+      return '<div class="st-cardrow">' +
+        '<div class="st-cardrow-h"><b>' + esc(it.shot_id || it.item_id) + '</b><span>' + esc(it.label) + '</span><span class="sp"></span>' +
+          '<button type="button" class="btn mini" data-agent-run="image" data-shot-id="' + esc(it.shot_id || '') + '">▶ 重绘此镜</button>' +
+        '</div>' +
+        '<div style="font-size:.72rem;color:var(--text2)">' + esc(it.prompt) + '</div>' +
+        (ast ? '<img class="st-thumb" src="' + esc(stAsset(p.id, ast.rel, ast.sha256)) + '" data-open-img="' + esc(ast.asset_id) + '" data-rel="' + esc(ast.rel) + '" data-sha="' + esc(ast.sha256 || '') + '" data-label="' + esc(ast.label || '') + '">' : '') +
+        (vers.length > 1 ? '<div class="st-row">' + vers.map(function (v) {
+          return '<button type="button" class="btn mini ' + (v.adopted ? 'primary' : 'ghost') + '" data-adopt-asset="' + esc(v.asset_id) + '">v' + v.version + (v.adopted ? ' 当前' : ' 回滚') + '</button>';
+        }).join('') + '</div>' : '') +
+      '</div>';
+    }).join('') : '<div style="font-size:.74rem;color:var(--text3)">暂无分镜生图条目，可通过聊天或「导入剧本」生成。</div>') + '</div>';
+}
+
+function buildBgmPane(p) {
+  var b = p.bgm || {};
+  var bgmAst = b.asset_id ? (p.assets || []).filter(function (a) { return a.asset_id === b.asset_id; })[0] : null;
+  return '<div class="st-field"><label>音乐风格 Prompt</label><textarea class="inp" id="stBgmPrompt" rows="2">' + esc(b.prompt || '') + '</textarea></div>' +
+    '<div class="st-row2">' +
+      '<div class="st-field"><label>时长（秒）</label><input class="inp st-num" id="stBgmSec" type="number" min="10" max="240" value="' + (b.seconds || 75) + '"></div>' +
+      '<div class="st-field"><label>采样步数 / Seed</label>' +
+        '<div class="st-row2"><input class="inp st-num" id="stBgmSteps" type="number" min="4" max="32" value="' + (b.steps || 8) + '">' +
+        '<input class="inp st-num" id="stBgmSeed" type="number" value="' + (b.seed || 20261118) + '"></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="st-row"><button type="button" class="btn mini primary" data-act="saveBgmCfg">保存配乐参数</button></div>' +
+    (bgmAst ? '<audio controls preload="metadata" style="width:100%" src="' + esc(stAsset(p.id, bgmAst.rel, bgmAst.sha256)) + '"></audio>'
+      : '<div style="font-size:.72rem;color:var(--text3)">尚未生成配乐文件 bgm/bgm.wav</div>');
+}
+
+/* ---------- 右栏：配音 + 视频生成（含分镜帧预览与 MP4 合成输出） ---------- */
+function buildVoicePane(p) {
+  var lines = (p.dialogues || []).slice().sort(function (a, b) { return a.order - b.order; });
+  var merged = (p.assets || []).slice().reverse().filter(function (a) { return a.rel === 'tts/voice.wav'; })[0];
+  return (merged ? '<div class="st-field"><label>全片合并音轨（tts/voice.wav）</label><audio controls preload="metadata" style="width:100%" src="' + esc(stAsset(p.id, merged.rel, merged.sha256)) + '"></audio></div>' : '') +
+    '<div class="st-row"><button type="button" class="btn mini ghost" data-act="addLine">+ 新增一句台词</button></div>' +
+    '<div class="st-cardgrid">' + (lines.length ? lines.map(function (d) {
+      var ast = d.audio_asset_id ? (p.assets || []).filter(function (a) { return a.asset_id === d.audio_asset_id; })[0] : null;
+      var vers = (p.assets || []).filter(function (a) { return a.kind === 'audio' && a.line_id === d.line_id; }).slice(-3);
+      return '<div class="st-cardrow" data-line-card="' + esc(d.line_id) + '">' +
+        '<div class="st-cardrow-h"><b>' + esc(d.line_id) + '</b><span>' + esc(d.shot_id) + '</span>' +
+          '<select class="inp" data-line-role="' + esc(d.line_id) + '" style="min-height:1.5rem;width:4.2rem;font-size:.7rem">' +
+            ST_ROLES.map(function (r) { return '<option value="' + r + '"' + (d.role === r ? ' selected' : '') + '>' + r + '</option>'; }).join('') +
+          '</select>' +
+          '<select class="inp" data-line-eng="' + esc(d.line_id) + '" style="min-height:1.5rem;width:4.5rem;font-size:.7rem">' +
+            '<option value="auto"' + (d.engine === 'auto' ? ' selected' : '') + '>自动</option>' +
+            '<option value="cloud"' + (d.engine === 'cloud' ? ' selected' : '') + '>百炼云</option>' +
+            '<option value="local"' + (d.engine === 'local' ? ' selected' : '') + '>本地</option>' +
+          '</select>' +
+        '</div>' +
+        '<div class="st-row2">' +
+          '<select class="inp" data-line-spk="' + esc(d.line_id) + '">' + stVoiceOptions(d.speaker) + '</select>' +
+          '<input class="inp" data-line-tone="' + esc(d.line_id) + '" placeholder="语气" value="' + esc(d.tone || '') + '">' +
+        '</div>' +
+        '<textarea class="inp" data-line-text="' + esc(d.line_id) + '" rows="2">' + esc(d.text || '') + '</textarea>' +
+        (ast ? '<audio controls preload="metadata" style="width:100%;height:1.8rem" src="' + esc(stAsset(p.id, ast.rel, ast.sha256)) + '"></audio>' : '') +
+        '<div class="st-row">' +
+          '<button type="button" class="btn mini primary" data-line-save="' + esc(d.line_id) + '">保存</button>' +
+          '<button type="button" class="btn mini" data-agent-run="voice" data-line-id="' + esc(d.line_id) + '">▶ 仅重配此句</button>' +
+          '<button type="button" class="btn mini danger" data-line-del="' + esc(d.line_id) + '">删除</button>' +
+        '</div>' +
+        (vers.length > 1 ? '<div class="st-row">' + vers.map(function (v) {
+          return '<button type="button" class="btn mini ' + (v.adopted ? 'primary' : 'ghost') + '" data-adopt-asset="' + esc(v.asset_id) + '">v' + v.version + (v.adopted ? ' 当前' : ' 回滚') + '</button>';
+        }).join('') + '</div>' : '') +
+      '</div>';
+    }).join('') : '<div style="font-size:.74rem;color:var(--text3)">暂无台词，请先「导入剧本」或在中间群聊描述主题。</div>') + '</div>';
+}
+
+function buildVideoGenPane(p) {
+  var shots = p.shots || [], cc = p.compose_config || {}, vFile = p.files && p.files.video;
+  var framesHtml = shots.length ? '<div class="st-cardgrid">' + shots.map(function (s) {
+    var ast = s.frame_asset_id ? (p.assets || []).filter(function (a) { return a.asset_id === s.frame_asset_id; })[0] : null;
+    return '<div class="st-cardrow">' +
+      '<div class="st-cardrow-h"><b>' + esc(s.shot_id) + '</b><span>' + esc(String(s.render || 'web').toUpperCase()) + ' · ' + s.duration_sec + 's</span></div>' +
+      (ast ? '<img class="st-thumb" src="' + esc(stAsset(p.id, ast.rel, ast.sha256)) + '" data-open-img="' + esc(ast.asset_id) + '" data-rel="' + esc(ast.rel) + '" data-sha="' + esc(ast.sha256 || '') + '" data-label="' + esc(ast.label || '') + '">'
+        : '<span style="font-size:.72rem;color:var(--text3)">尚未渲染视觉帧</span>') +
+    '</div>';
+  }).join('') + '</div>' : '<div style="font-size:.74rem;color:var(--text3)">暂无分镜视觉帧</div>';
+
+  var composeHtml = '<div style="border-top:1px solid var(--ln);padding-top:.5rem;margin-top:.1rem;display:flex;flex-direction:column;gap:.45rem">' +
+    '<div class="st-row2">' +
+      '<div class="st-field"><label>成片帧率 FPS</label><select class="inp" id="stCmpFps">' +
+        [24, 30, 60].map(function (f) { return '<option value="' + f + '"' + (+cc.fps === f ? ' selected' : '') + '>' + f + ' fps</option>'; }).join('') +
+      '</select></div>' +
+      '<div class="st-field"><label>淡入淡出（秒）</label><input class="inp st-num" id="stCmpFade" type="number" min="0" max="10" step="0.5" value="' + (cc.fade != null ? cc.fade : 2) + '"></div>' +
+    '</div>' +
+    '<div class="st-row2">' +
+      '<div class="st-field"><label>配乐音量 <span id="stCmpVolVal" class="st-num">' + Math.round((+cc.bgm_volume || 0.18) * 100) + '%</span></label>' +
+        '<input type="range" id="stCmpVol" min="0" max="100" value="' + Math.round((+cc.bgm_volume || 0.18) * 100) + '"></div>' +
+      '<div class="st-field"><label>人声闪避 <span id="stCmpDuckVal" class="st-num">' + Math.round((+cc.duck_depth || 0.16) * 100) + '%</span></label>' +
+        '<input type="range" id="stCmpDuck" min="0" max="80" value="' + Math.round((+cc.duck_depth || 0.16) * 100) + '"></div>' +
+    '</div>' +
+    '<div class="st-row">' +
+      '<label style="font-size:.74rem;display:flex;align-items:center;gap:.3rem"><input type="checkbox" id="stCmpSub"' + (cc.subtitle !== false ? ' checked' : '') + '> 挂载 SRT 字幕</label>' +
+      '<button type="button" class="btn mini ghost" data-act="saveComposeCfg">保存参数</button>' +
+      '<button type="button" class="btn mini primary" data-agent-run="compose">▶ 合成 MP4 成片</button>' +
+    '</div>' +
+    (vFile && vFile.url
+      ? '<video class="st-video" controls preload="metadata" src="' + esc(vFile.url) + '"></video>' +
+        '<div class="st-row"><a class="btn mini ghost" href="' + esc(vFile.url) + '" download="' + esc((p.title || 'final') + '.mp4') + '">下载 MP4 成片</a>' +
+          '<button type="button" class="btn mini primary" data-act="publishProject">提交到发布队列</button></div>'
+      : '<div style="font-size:.72rem;color:var(--text3)">尚未压制 output/final.mp4，就绪后点击「▶ 合成 MP4 成片」即可输出</div>') +
+  '</div>';
+
+  return framesHtml + composeHtml;
+}
+
+/* ---------- 右下角专属 Agent 团队头像灯区 & 轻浮层 ---------- */
+function renderAvatarDock() {
+  var am = studioAgentMap(), p = studioProj() || {};
+  var workingCount = 0;
+
+  var tiles = ST_AGENT_ORDER.map(function (item) {
+    var id = item[0], shortName = item[1], titleHint = item[2];
+    var ag = am[id] || { id: id, name: shortName + ' Agent', status: 'idle', brief: '待命' };
+    var st = ag.status || 'idle';
+    var isWorking = st === 'running' || st === 'thinking';
+    if (isWorking) workingCount++;
+
+    var cls = 'st-av' +
+      (isWorking ? ' working' : '') +
+      (st === 'waiting_approval' || st === 'waiting_input' ? ' ' + st : '') +
+      (st === 'completed' ? ' completed' : '') +
+      (st === 'failed' ? ' failed' : '') +
+      (STUDIO.inspectAgentId === id ? ' sel' : '');
+
+    var stTxt = ST_STATUS_LABEL[st] || st;
+    return '<button type="button" class="' + cls + '" data-av-click="' + esc(id) + '" title="' + esc(ag.name + ' · ' + titleHint + (ag.brief ? ' · ' + ag.brief : '')) + '">' +
+      '<span class="st-av-face">' + (ST_AGENT_ICONS[id] || '') + '<i class="st-av-led" aria-hidden="true"></i></span>' +
+      '<span class="st-av-name">' + esc(shortName) + '</span>' +
+      '<span class="st-av-st">' + esc(stTxt) + '</span>' +
+    '</button>';
+  }).join('');
+
+  var dockHtml = '<div class="st-avdock-h">' +
+      '<b>Agent 团队实时灯区</b>' +
+      '<span class="st-num" style="color:' + (workingCount ? 'var(--hot,var(--hud))' : 'var(--text3)') + '">' +
+        (workingCount ? (workingCount + ' 个工作中 · 已亮起') : '全员待命 · 点击头像查看/调度') +
+      '</span>' +
+    '</div>' +
+    '<div class="st-avgrid">' + tiles + '</div>';
+
+  stPut('stAvatarDock', dockHtml);
+  renderAgentInspect(p, am);
+}
+
+function renderAgentInspect(p, am) {
+  var pop = $('#stAvInspect');
+  if (!pop) return;
+  var aid = STUDIO.inspectAgentId;
+  if (!aid) {
+    if (!pop.hidden) pop.hidden = true;
+    stPut('stAvInspect', '');
+    return;
+  }
+  var cfg = ST_AGENT_ORDER.filter(function (x) { return x[0] === aid; })[0];
+  var ag = am[aid] || { id: aid, name: (cfg ? cfg[1] + ' Agent' : aid), responsibility: (cfg ? cfg[2] : ''), status: 'idle', brief: '待命' };
+  var tasks = (p.tasks || []).filter(function (t) { return t.agent_id === aid; }).slice(-3).reverse();
+  var stLabel = ST_STATUS_LABEL[ag.status] || ag.status;
+
+  var qaHtml = '';
+  if (aid === 'qa') {
+    var qa = p.qa;
+    qaHtml = '<div style="border-top:1px solid var(--ln);padding-top:.35rem;display:flex;flex-direction:column;gap:.25rem">' +
+      '<div class="st-row"><button type="button" class="btn mini primary" data-act="runQa">运行 FFprobe 实时质检</button></div>' +
+      (qa ? '<div style="font-size:.72rem;color:' + (qa.passed ? 'var(--ok)' : 'var(--bad)') + ';font-weight:600">' + esc(qa.score_label) + ' · ' + esc(qa.summary) + '</div>' +
+        (qa.checks || []).map(function (c) {
+          return '<div class="st-qacheck"><b class="' + (c.passed ? 'ok' : (c.severity === 'warn' ? 'warn' : 'bad')) + '">' + (c.passed ? 'PASS' : 'FAIL') + '</b>' +
+            '<div><div>' + esc(c.name) + '</div><span>' + esc(c.detail) + '</span></div></div>';
+        }).join('') : '<div style="font-size:.7rem;color:var(--text3)">尚未执行 FFprobe 质检</div>') +
+    '</div>';
+  }
+
+  var extraScriptHtml = '';
+  if (aid === 'supervisor' || aid === 'script' || aid === 'storyboard') {
+    extraScriptHtml = '<div class="st-row">' +
+      '<button type="button" class="btn mini ghost" data-act="planScript">DeepSeek 智能策划</button>' +
+      '<button type="button" class="btn mini ghost" data-act="toggleImport">导入文本/JSON</button>' +
+    '</div>';
+  }
+
+  var taskHtml = tasks.length ? tasks.map(function (tk) {
+    return '<div class="st-cardrow">' +
+      '<div class="st-cardrow-h"><b>' + esc(tk.title) + '</b><span class="sp"></span><span class="st-num">' + esc(ST_TASK_LABEL[tk.state] || tk.state) + ' · ' + Math.round(tk.progress || 0) + '%</span></div>' +
+      '<div class="st-pbar"><b style="width:' + Math.max(0, Math.min(100, +tk.progress || 0)) + '%"></b></div>' +
+      (tk.error ? '<div style="font-size:.7rem;color:var(--bad)">' + esc(tk.error) + '</div>' : '') +
+      ((tk.state === 'running' || tk.state === 'ready' || tk.state === 'pending')
+        ? '<div class="st-row"><button type="button" class="btn mini danger" data-task-act="' + esc(tk.task_id) + ':cancel">仅取消此任务</button></div>' : '') +
+    '</div>';
+  }).join('') : '';
+
+  var html = '<div class="st-avpop-h">' +
+      '<b>' + esc(ag.name) + '</b>' +
+      '<span>' + esc(stLabel) + (ag.brief && ag.brief !== '待命' ? (' · ' + esc(ag.brief)) : '') + '</span>' +
+      '<span class="sp"></span>' +
+      '<button type="button" class="btn mini ghost" data-act="closeInspect">×</button>' +
+    '</div>' +
+    '<div style="font-size:.72rem;color:var(--text2)">职责：' + esc(ag.responsibility || (cfg ? cfg[2] : '')) + '</div>' +
+    '<div class="st-row">' +
+      '<button type="button" class="btn mini ghost" data-at-agent="' + esc(aid) + '">@ 提到聊天框</button>' +
+      '<button type="button" class="btn mini primary" data-agent-run="' + esc(aid) + '">▶ 跑</button>' +
+      '<button type="button" class="btn mini ghost" data-agent-act="' + esc(aid) + ':' + (ag.paused ? 'resume' : 'pause') + '">' + (ag.paused ? '恢复' : '暂停') + '</button>' +
+      '<button type="button" class="btn mini danger" data-agent-act="' + esc(aid) + ':stop">停</button>' +
+    '</div>' +
+    extraScriptHtml +
+    taskHtml +
+    qaHtml;
+
+  pop.hidden = false;
+  stPut('stAvInspect', html);
+}
+
+/* ---------- 中栏：项目群聊与协同消息 ---------- */
+function renderChatHead() {
+  var p = studioProj() || {};
+  var html = '<b>群聊协调</b>' +
+    '<span class="st-num">' + esc(p.ratio || '9:16') + ' · ' + (p.target_duration || 60) + 's</span>' +
+    '<button type="button" class="linkbtn" data-act="exportPack">导出策划包</button>' +
+    '<div class="st-chat-filters">' +
+      '<button type="button" data-cfilter="all" class="' + (STUDIO.chatFilter === 'all' ? 'on' : '') + '">全部</button>' +
+      '<button type="button" data-cfilter="chat" class="' + (STUDIO.chatFilter === 'chat' ? 'on' : '') + '">对话</button>' +
+      '<button type="button" data-cfilter="events" class="' + (STUDIO.chatFilter === 'events' ? 'on' : '') + '">事件</button>' +
+    '</div>';
+  stPut('stChatHead', html);
+}
+
+function stRenderInlineAssets(p, msg) {
+  var assets = msg.assets || [];
+  if (!assets.length) return '';
+  var imgs = assets.filter(function (a) { return a.kind === 'image'; });
+  var others = assets.filter(function (a) { return a.kind !== 'image'; });
+  var out = '';
+
+  if (imgs.length) {
+    out += '<div class="st-artgrid">' + imgs.map(function (a) {
+      var src = stAsset(p.id, a.rel, a.sha256);
+      return '<div class="st-art-img" data-open-img="' + esc(a.asset_id) + '" data-rel="' + esc(a.rel) + '" data-sha="' + esc(a.sha256 || '') + '" data-label="' + esc(a.label || a.rel) + '">' +
+        '<img src="' + esc(src) + '" alt="' + esc(a.label || '') + '">' +
+        '<span title="' + esc(a.label || a.rel) + '">' + esc(a.label || a.rel) + '</span>' +
+      '</div>';
+    }).join('') + '</div>';
+  }
+
+  if (others.length) {
+    out += '<div class="st-artgrid">' + others.map(function (a) {
+      var src = stAsset(p.id, a.rel, a.sha256);
+      if (a.kind === 'audio') {
+        return '<div class="st-art-media">' +
+          '<div class="st-art-media-h"><b>' + esc(a.label || a.rel) + '</b>' +
+            '<span>' + (a.duration ? a.duration.toFixed(1) + 's' : '') + '</span></div>' +
+          '<audio controls preload="metadata" src="' + esc(src) + '"></audio>' +
+        '</div>';
+      }
+      if (a.kind === 'video') {
+        return '<div class="st-art-media">' +
+          '<div class="st-art-media-h"><b>' + esc(a.label || a.rel) + '</b>' +
+            '<span><a class="linkbtn" href="' + esc(src) + '" download="' + esc((p.title || 'final') + '.mp4') + '">下载</a></span></div>' +
+          '<video controls preload="metadata" src="' + esc(src) + '"></video>' +
+        '</div>';
+      }
+      return '<div class="st-art-media"><div class="st-art-media-h"><b>' + esc(a.label || a.rel) + '</b></div></div>';
+    }).join('') + '</div>';
+  }
+
+  return out;
+}
+
+function stRenderApprovalCard(p, msg) {
+  var apr = (p.approvals || []).filter(function (a) { return a.approval_id === msg.approval_id; })[0];
+  if (!apr) return '<div class="st-msg-bubble">' + esc(msg.text || '') + '</div>';
+  var stMap = { pending: '待你确认', approved: '已批准执行', rejected: '已拒绝' };
+  var items = (apr.affected_items || []).slice(0, 6);
+  return '<div class="st-apr ' + esc(apr.status) + '">' +
+    '<div class="st-apr-h"><b>' + esc(apr.title) + '</b><span class="st-apr-st">' + esc(stMap[apr.status] || apr.status) + '</span></div>' +
+    '<div class="st-apr-sum">' + esc(apr.summary) + '</div>' +
+    (items.length ? '<ul class="st-apr-list">' + items.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') +
+    '<div class="st-apr-foot">' +
+      '<span class="st-apr-cost">预估 ¥' + (+apr.estimated_cost_cny || 0).toFixed(2) + ' / $' + (+apr.estimated_cost_usd || 0).toFixed(3) + '</span>' +
+      (apr.status === 'pending'
+        ? '<button type="button" class="btn mini primary" data-approve="' + esc(apr.approval_id) + '">批准并执行</button>' +
+          '<button type="button" class="btn mini danger" data-reject="' + esc(apr.approval_id) + '">拒绝</button>'
+        : (apr.decision_note ? '<span style="font-size:.68rem;color:var(--text3)">' + esc(apr.decision_note) + '</span>' : '')) +
+    '</div>' +
+  '</div>';
+}
+
+function renderMessages() {
+  var p = studioProj() || {};
+  var box = $('#stMsgs');
+  if (!box) return;
+  var nearBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 80;
+
+  var msgs = (p.messages || []).filter(function (m) {
+    if (STUDIO.chatFilter === 'chat') return m.kind !== 'task_event';
+    if (STUDIO.chatFilter === 'events') return m.kind === 'task_event' || m.kind === 'discussion';
+    return true;
+  });
+
+  var html = msgs.length ? msgs.map(function (m) {
+    if (m.kind === 'task_event') {
+      var es = esc(m.event_state || 'running');
+      return '<div class="st-tevent">' +
+        '<span class="st-tevent-dot ' + es + '"></span>' +
+        '<time>' + esc(stFmtClock(m.ts)) + '</time>' +
+        '<span title="' + esc(m.text) + '"><b>' + esc(m.sender_name) + '</b>：' + esc(m.text) + '</span>' +
+      '</div>';
+    }
+
+    if (m.kind === 'discussion') {
+      return '<details class="st-disc">' +
+        '<summary>协作 · <b>' + esc(m.sender_name) + '</b> · ' + esc(stFmtClock(m.ts)) + '</summary>' +
+        '<pre>' + esc(m.details || m.text) + '</pre>' +
+      '</details>';
+    }
+
+    var isUser = m.kind === 'user';
+    var quoteHtml = m.reply_preview ? '<div class="st-quote">回复：' + esc(m.reply_preview) + '</div>' : '';
+    var mentionHtml = (m.mentions && m.mentions.length)
+      ? '<span class="st-mentions">' + m.mentions.map(function (x) { return '@' + esc(x); }).join(' ') + '</span>' : '';
+    var attachHtml = (m.attachments && m.attachments.length)
+      ? '<div style="font-size:.68rem;color:var(--text3);margin-top:.18rem">附件：' + m.attachments.map(function (a) { return esc(a.name || a.rel); }).join('、') + '</div>' : '';
+
+    var bodyHtml = m.kind === 'approval'
+      ? stRenderApprovalCard(p, m)
+      : ('<div class="st-msg-bubble">' + quoteHtml + esc(m.text || '') + attachHtml + '</div>' + stRenderInlineAssets(p, m));
+
+    var jumpAttr = !isUser && m.sender_id && (m.sender_id === 'image' || m.sender_id === 'bgm' || m.sender_id === 'voice' || m.sender_id === 'video_gen')
+      ? '<button type="button" class="linkbtn" data-jump-pane="' + esc(m.sender_id) + '">定位面板</button>' : '';
+
+    return '<div class="st-msg ' + esc(m.kind) + '">' +
+      '<div class="st-msg-meta">' +
+        '<b>' + esc(m.sender_name || (isUser ? '你' : 'Agent')) + '</b>' +
+        mentionHtml +
+        '<time>' + esc(stFmtClock(m.ts)) + '</time>' +
+        '<span class="st-msg-acts">' +
+          '<button type="button" class="linkbtn" data-reply-msg="' + esc(m.msg_id) + '">引用</button>' +
+          jumpAttr +
+        '</span>' +
+      '</div>' +
+      bodyHtml +
+    '</div>';
+  }).join('') : '<div style="color:var(--text3);font-size:.76rem;padding:.75rem 0">暂无匹配消息。</div>';
+
+  if (stPut('stMsgs', html) && nearBottom) {
+    requestAnimationFrame(function () { box.scrollTop = box.scrollHeight; });
+  }
+}
+
+function renderComposerMeta() {
+  var rb = $('#stReplyBar');
+  if (rb) {
+    if (STUDIO.replyTo) {
+      rb.hidden = false;
+      rb.innerHTML = '<span>引用 <b>' + esc(STUDIO.replyTo.sender_name) + '</b>：' + esc(String(STUDIO.replyTo.text || '').slice(0, 48)) + '</span>' +
+        '<button type="button" class="linkbtn" data-act="clearReply">取消</button>';
+    } else {
+      rb.hidden = true;
+      rb.innerHTML = '';
+    }
+  }
+  var ab = $('#stAttachBar');
+  if (ab) {
+    if (STUDIO.pendingAttachments.length) {
+      ab.hidden = false;
+      ab.innerHTML = '<span style="font-size:.68rem;color:var(--text3)">附件：</span>' +
+        STUDIO.pendingAttachments.map(function (a, i) {
+          return '<span style="font-size:.68rem;border:1px solid var(--line2);padding:.05rem .3rem">' +
+            esc(a.name) + ' <button type="button" class="linkbtn" data-del-attach="' + i + '">×</button></span>';
+        }).join('');
+    } else {
+      ab.hidden = true;
+      ab.innerHTML = '';
+    }
+  }
+}
+
+/* ---------- 滚动定位并高亮指定板块 ---------- */
+function stJumpToPane(paneId) {
+  var id = paneId === 'compose' ? 'video_gen' : paneId;
+  var el = $('#stPane-' + id);
+  if (!el) return;
+  if (STUDIO.collapsedPanes[id]) {
+    STUDIO.collapsedPanes[id] = false;
+    renderPaneHeaders();
+  }
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  el.classList.add('flash');
+  setTimeout(function () { el.classList.remove('flash'); }, 1200);
+}
+
+/* ---------- 保留全局兼容空钩子 ---------- */
+function stHWStart() {}
+function stHWStop() {}
+
+/* ---------- 后端同步与生命周期 ---------- */
+function studioFetch() {
+  if (!useLive() || STUDIO.fetchBusy) { renderStudio(); return Promise.resolve(); }
+  STUDIO.fetchBusy = true;
+  var url = '/api/studio/state' + (STUDIO.pid ? '?pid=' + encodeURIComponent(STUDIO.pid) : '');
+  return api('GET', url, null, 8000).then(function (j) {
+    STUDIO.st = j;
+    if (j && j.project && j.project.id) {
+      STUDIO.pid = j.project.id;
+      STUDIO.lastPid = j.project.id;
+    }
+    renderStudio();
+  }).catch(function () {
+    renderStudio();
+  }).then(function () {
+    STUDIO.fetchBusy = false;
+  });
+}
+
+function studioPost(path, body, msg) {
+  if (!useLive()) { toast('演示模式下只支持本地浏览，请切回实时后端', 3500); return Promise.resolve(null); }
+  var p = studioProj();
+  var payload = Object.assign({ pid: STUDIO.pid || (p && p.id) || '' }, body || {});
+  return api('POST', '/api/studio/' + path, payload, 45000).then(function (j) {
+    if (j && j.state) STUDIO.st = j.state;
+    else if (j && j.project) STUDIO.st = j;
+    if (msg) toast(msg);
+    renderStudio(true);
+    return j;
+  }).catch(function (e) {
+    toast(e.message || '操作失败', 6000);
+    throw e;
+  });
+}
+
+function studioReq(method, path, body, msg) {
+  if (!useLive()) { toast('演示模式下不支持修改后端数据', 3500); return Promise.resolve(null); }
+  var p = studioProj();
+  var payload = Object.assign({ pid: STUDIO.pid || (p && p.id) || '' }, body || {});
+  return api(method, '/api/studio/' + path, payload, 45000).then(function (j) {
+    if (j && j.state) STUDIO.st = j.state;
+    if (msg) toast(msg);
+    renderStudio(true);
+    return j;
+  }).catch(function (e) {
+    toast(e.message || '请求失败', 6000);
+    throw e;
+  });
+}
+
+function studioEnter() {
+  studioLeave();
+  studioFetch();
+  STUDIO.t = setInterval(function () {
+    if (S.view !== 'studio' || document.hidden || !useLive()) return;
+    studioFetch();
+  }, 1500);
+}
+
+function studioLeave() {
+  if (STUDIO.t) clearInterval(STUDIO.t);
+  STUDIO.t = null;
+  $$('#view-studio audio, #view-studio video').forEach(function (m) {
+    try { m.pause(); } catch (e) {}
+  });
+}
+
 document.addEventListener('visibilitychange', function () {
-  if (!STUDIO.hwT && S.view === 'studio' && !document.hidden) stHWStart(); else if (STUDIO.hwT && document.hidden) stHWStop();
+  if (S.view !== 'studio') return;
+  if (!document.hidden) studioFetch();
 });
 
-/* ---------- 模块骨架 ---------- */
-function stStatus(m) {
-  var j = studioJob(), p = studioProj(), rt = m.runtime || {};
-  if (rt.status === 'queued') return 'queue';
-  if (rt.status === 'running') return 'run';
-  if (rt.status === 'error') return 'bad';
-  if (rt.status === 'ok') return 'done';
-  if (j && j.st === 'run' && j.pid === (p && p.id) && j.step === m.id && m.status === 'run') return 'run';
-  if (m.status === 'ok' || m.status === 'warn') return 'done';
-  if (m.status === 'err') return 'bad';
-  if (m.status === 'stale') return 'stale';
-  if (m.status === 'run') return 'run';
-  return 'idle';
-}
-function stLamp(m, id) { return '<span class="st-lamp st-' + stStatus(m) + '"' + (id ? ' data-lamp="' + esc(m.id) + '"' : '') + '></span>'; }
-function stHeader(m) {
-  return '<header class="st-node-h" data-drag="' + esc(m.id) + '"><span class="st-node-n st-t-' + esc(m.type) + '">' + esc(ST_TYPE_LABEL[m.type] || m.type) + '</span>' +
-    '<b title="' + esc(m.title || '') + '">' + esc(m.title || m.id) + '</b>' + stLamp(m, true) +
-    '<button class="st-nrun" data-run="' + esc(m.id) + '" title="只跑这个模块">▶ 只跑</button></header>';
-}
-function stFooter(m) {
-  var j = studioJob(), p = studioProj(), cur = j && j.st === 'run' && j.pid === (p && p.id) && j.step === m.id;
-  var msg = (cur && j.msg) || m.error || (m.status === 'ok' ? '已完成' : m.status === 'stale' ? '要重做' : m.status === 'err' ? '出错' : '待命');
-  return '<footer class="st-node-f">' + (m.cache_hit ? '<em class="st-tag ok">缓存命中</em>' : '') +
-    '<span data-pmsg="' + esc(m.id) + '">' + esc(String(msg).slice(0, 60)) + '</span></footer>';
-}
-function stModule(m, body, cls) {
-  return '<section class="hud st-node ' + (cls || '') + ' st-m-' + esc(m.id) + '" data-node="' + esc(m.id) + '" data-type="' + esc(m.type) + '" style="left:' + m.x + 'px;top:' + m.y + 'px;width:' + m.w + 'px;height:' + m.h + 'px">' +
-    stHeader(m) +
-    '<div class="st-rt"><div class="st-rbar"><b data-rbar="' + esc(m.id) + '"></b></div><div class="st-rline"><span data-rphase="' + esc(m.id) + '">待命</span><span data-rtime="' + esc(m.id) + '"></span></div></div>' +
-    '<div class="st-node-body" id="stNode-' + esc(m.id) + '">' + body + '</div>' + stFooter(m) +
-    '<span class="st-rs" data-rs="' + esc(m.id) + '" title="拖动改变模块大小"></span></section>';
+/* ---------- 发送聊天指令与附件 ---------- */
+function stSendChat(overrideText) {
+  var inp = $('#stChatInput');
+  var text = typeof overrideText === 'string' ? overrideText : String(inp ? inp.value : '').trim();
+  if (!text && !STUDIO.pendingAttachments.length) { toast('先输入指令或附上参考图/剧本'); return; }
+  if (!overrideText && inp) inp.value = '';
+  var replyId = STUDIO.replyTo ? STUDIO.replyTo.msg_id : undefined;
+  var attachments = STUDIO.pendingAttachments.slice();
+  STUDIO.replyTo = null;
+  STUDIO.pendingAttachments = [];
+  renderComposerMeta();
+
+  studioPost('chat/send', {
+    text: text || '请查看我上传的参考附件并给出下一步建议',
+    reply_to: replyId,
+    attachments: attachments,
+  }).then(function () {
+    var box = $('#stMsgs');
+    if (box) box.scrollTop = box.scrollHeight;
+  }).catch(function () {});
 }
 
-/* ---------- 小控件 ---------- */
-function stSelect(opts, cur) { return opts.map(function (x) { return '<option value="' + esc(x[0]) + '"' + (String(cur) === String(x[0]) ? ' selected' : '') + '>' + esc(x[1]) + '</option>'; }).join(''); }
-function stModelOptions(cur) {
-  var ms = (studioSt() && studioSt().models) || [], out = [];
-  if (cur && !ms.some(function (m) { return m.id === cur; })) out.push('<option value="' + esc(cur) + '" selected>' + esc(cur) + '</option>');
-  ms.forEach(function (m) { out.push('<option value="' + esc(m.id) + '"' + (m.id === cur ? ' selected' : '') + '>' + esc((m.vendor ? m.vendor + ' · ' : '') + m.name + (m.gif ? ' · GIF' : '')) + '</option>'); });
-  return out.join('') || '<option value="">用设置里的默认模型</option>';
-}
-function stVoiceOptions(cur) {
-  var vs = (studioSt() && studioSt().voices) || [], groups = {};
-  vs.forEach(function (v) { var g = v.engine === 'cloud' ? '百炼云端' : '本地'; (groups[g] = groups[g] || []).push(v); });
-  var out = [], found = vs.some(function (v) { return v.id === cur; });
-  if (cur && !found) out.push('<option value="' + esc(cur) + '" selected>' + esc(cur) + '</option>');
-  Object.keys(groups).forEach(function (g) { out.push('<optgroup label="' + esc(g) + '">' + groups[g].map(function (v) {
-    return '<option value="' + esc(v.id) + '"' + (v.id === cur ? ' selected' : '') + '>' + esc(v.label) + '</option>'; }).join('') + '</optgroup>'); });
-  return out.join('') || '<option value="">还没有音色</option>';
-}
-function stLbOuts(p, m, kind) {
-  return (m.outputs || []).filter(function (o) { return !kind || o.kind === kind; }).map(function (o) {
-    return { url: stAsset(p.id, o.rel, o.sha256), name: o.rel, rel: o.rel, pid: p.id, cacheHit: !!m.cache_hit };
-  });
-}
-function stLbOpen(p, m, kind, i) {
-  var items = stLbOuts(p, m, kind); if (!items.length) { toast('这个模块还没有图'); return; }
-  if (window.Lightbox) Lightbox.open(items, Math.max(0, Math.min(items.length - 1, +i || 0)));
-}
-function stThumbs(p, m, kind) {
-  var outs = (m.outputs || []).filter(function (o) { return o.kind === kind; });
-  if (!outs.length) return '<div class="st-nohint">还没有产出</div>';
-  return '<div class="st-outgrid">' + outs.map(function (o, i) {
-    return '<button class="st-outthumb" data-lb="' + esc(m.id) + ':' + (kind || 'image') + ':' + i + '"><img src="' + esc(stAsset(p.id, o.rel, o.sha256)) + '" alt=""><span>' + esc(String(o.rel).split('/').pop()) + '</span></button>';
-  }).join('') + '</div>';
-}
-function stVideos(p, m) {
-  var outs = (m.outputs || []).filter(function (o) { return o.kind === 'video'; });
-  return outs.map(function (o) {
-    return '<div class="st-vbox"><video class="st-video" controls preload="metadata" src="' + esc(stAsset(p.id, o.rel, o.sha256)) + '"></video>' +
-      '<div class="st-media-err" data-mediaerr="1"></div></div>';
-  }).join('') || '<div class="st-nohint">还没有视频</div>';
-}
-function stAudios(p, m) {
-  var outs = (m.outputs || []).filter(function (o) { return o.kind === 'audio'; });
-  return '<div class="st-audios">' + (outs.map(function (o, i) {
-    return '<div class="st-audio"><audio controls preload="metadata" src="' + esc(stAsset(p.id, o.rel, o.sha256)) + '"></audio>' +
-      '<div class="st-audio-meta"><b>' + esc(String(o.rel).split('/').pop()) + '</b><span>' + (o.duration ? (+o.duration).toFixed(1) + ' 秒' : '') + '</span></div>' +
-      '<div class="st-media-err" data-mediaerr="1"></div></div>';
-  }).join('') || '<div class="st-nohint">还没有音频</div>') + '</div>';
-}
-function stListBox(p, name) {
-  var text = (p.lists || {})[name] || '';
-  return '<details class="st-listbox"><summary>📄 ' + esc(name) + '</summary><textarea class="inp" data-list="' + esc(name) + '" rows="4" spellcheck="false">' + esc(text) + '</textarea>' +
-    '<div class="st-row2"><button class="btn mini" data-listsave="' + esc(name) + '">保存清单并重新载入</button><span class="st-hint">改完清单，对应模块按新内容重做</span></div></details>';
-}
-
-/* ---------- 模块 1 ---------- */
-function stScriptBody(p, m) {
-  var prm = m.params || {}, l = p.lists || {};
-  return '<textarea class="inp st-topic" data-p="topic" rows="2" spellcheck="false" placeholder="写主题，或者把完整口播文案贴进来">' + esc(prm.source_text || prm.topic || '') + '</textarea>' +
-    '<div class="st-row"><input class="inp" data-p="title" maxlength="30" placeholder="发布标题" value="' + esc(prm.title || p.title || '') + '"><input class="inp" data-p="tags" placeholder="话题 空格隔开" value="' + esc((prm.tags || p.tags || []).join ? (prm.tags || p.tags || []).join(' ') : (prm.tags || '')) + '"></div>' +
-    '<textarea class="inp" data-p="desc" rows="2" spellcheck="false" placeholder="发布简介">' + esc(prm.desc || p.desc || '') + '</textarea>' +
-    '<div class="st-row2"><button class="btn mini primary" data-act="plan">DeepSeek 拆解</button><button class="btn mini ghost" data-act="importToggle">导入剧本</button></div>' +
-    '<div class="st-import" id="stImportBox" hidden><textarea class="inp" id="stImport" rows="4" spellcheck="false" placeholder="贴 JSON 或 Markdown 剧本；格式见 说明 › 视频工坊剧本格式"></textarea>' +
-    '<div class="st-row"><label class="btn mini ghost st-file">选文件<input type="file" id="stImportFile" accept=".md,.markdown,.txt,.json" hidden></label><button class="btn mini primary" data-act="import">导入并生成清单</button><button class="linkbtn" data-act="importCancel">取消</button></div></div>' +
-    '<button class="btn mini st-wide" data-act="lists">重新生成 5 份 Markdown 清单</button>' +
-    '<div class="st-liststat">清单：' + ST_LISTS.map(function (n) { return '<em class="' + (l[n] ? 'ok' : '') + '">' + esc(n.replace('.md', '')) + '</em>'; }).join('') + '</div>' +
-    '<div class="st-hint">导入只建清单和模块参数，不会自动花钱；DeepSeek 拆解会消耗一点额度。</div>';
-}
-
-/* ---------- 模块 2 ---------- */
-function stImageBody(p, m) {
-  var prm = m.params || {}, res = prm.resolution || '2k', out = prm.output || 'normal', fmt = prm.format || 'png';
-  var frames = +prm.gif_frames || 8, delay = +prm.gif_delay_ms || 150, cw = +prm.custom_w || 1024, ch = +prm.custom_h || 1024;
-  var items = prm.items || [];
-  return '<div class="st-badgenote">独立测试工具 · 不参与视频主流程 · 每次点生成都会重新出图</div>' +
-    '<div class="st-bigout">' + stThumbs(p, m, 'image') + '</div>' +
-    (items.length ? '<div class="st-subrow"><label class="st-lab">清单</label><select data-p="selected">' + items.map(function (x, i) {
-      return '<option value="' + i + '"' + (+prm.selected === i ? ' selected' : '') + '>' + esc(x.prompt.slice(0, 28)) + '</option>'; }).join('') + '</select></div>' : '') +
-    '<textarea class="inp" data-p="prompt" rows="3" spellcheck="false" placeholder="这一张的画面提示词">' + esc(prm.prompt || '') + '</textarea>' +
-    '<div class="st-subrow"><select data-p="model">' + stModelOptions(prm.model) + '</select><select data-p="ratio">' + stSelect(ST_RATIOS.map(function (x) { return [x, x]; }), prm.ratio || p.ratio) + '</select></div>' +
-    '<div class="st-subrow"><select data-p="resolution">' + stSelect([['1k', '1K'], ['2k', '2K'], ['4k', '4K'], ['custom', '自定义']], res) + '</select>' +
-    '<select data-p="n">' + stSelect([[1, '1 张'], [2, '2 张'], [3, '3 张'], [4, '4 张']], prm.n || 1) + '</select></div>' +
-    '<div class="st-subrow"><select data-p="quality">' + stSelect([['auto', 'quality auto'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']], prm.quality || 'high') + '</select>' +
-    '<select data-p="complexity">' + stSelect([['low', 'complexity low'], ['medium', 'medium'], ['high', 'high']], prm.complexity || 'medium') + '</select></div>' +
-    (res === 'custom' ? '<div class="st-subrow"><label class="st-lab">宽</label><input class="inp st-num2" data-p="custom_w" type="number" min="16" max="3840" step="16" value="' + cw + '"><label class="st-lab">高</label><input class="inp st-num2" data-p="custom_h" type="number" min="16" max="3840" step="16" value="' + ch + '"><span class="st-hint" data-sizeerr="' + esc(m.id) + '"></span></div>' : '') +
-    '<div class="seg st-outtype">' + [['normal', '普通'], ['gif', 'GIF'], ['svg', 'SVG']].map(function (x) {
-      return '<button data-out="' + esc(m.id) + ':' + x[0] + '" aria-pressed="' + (out === x[0]) + '">' + x[1] + '</button>'; }).join('') + '</div>' +
-    (out === 'gif' ? '<div class="st-subrow"><label class="st-lab">帧数</label><input class="inp st-num2" data-p="gif_frames" type="number" min="2" max="16" value="' + frames + '"><label class="st-lab">每帧 ms</label><input class="inp st-num2" data-p="gif_delay_ms" type="number" min="20" max="2000" value="' + delay + '"></div>'
-      : out === 'svg' ? '<div class="st-hint">SVG 矢量图，背景透明。</div>'
-        : '<div class="st-subrow"><select data-p="format">' + stSelect([['png', 'PNG'], ['jpeg', 'JPEG'], ['webp', 'WebP']], fmt) + '</select><label class="st-chk"><input type="checkbox" data-p="transparent"' + (prm.transparent ? ' checked' : '') + '>透明 alpha</label></div>') +
-    '<div class="st-refs">' + (prm.refs || []).map(function (r, i) {
-      return '<span class="st-ref" title="' + esc(r) + '"><img src="' + esc(stMedia(p.id, r)) + '" alt=""><button data-refdel="' + esc(m.id) + ':' + i + '">×</button></span>'; }).join('') +
-      '<label class="btn mini ghost st-file">+ 参考图<input type="file" accept="image/png,image/jpeg" multiple data-ref-file="' + esc(m.id) + '" hidden></label></div>' +
-    '<button class="btn primary st-wide" data-run="' + esc(m.id) + '" data-label="▶ 立即生成测试">▶ 立即生成测试</button>' +
-    stListBox(p, '生图清单.md');
-}
-
-/* ---------- 模块 3/4 ---------- */
-function stVoiceBody(p, m) {
-  var prm = m.params || {}, lines = prm.lines || [];
-  var listName = m.id === 'voice-white' ? '配音清单_白页.md' : '配音清单_紫苏.md';
-  return '<div class="st-subrow"><select data-p="role">' + stSelect(ST_ROLES.map(function (x) { return [x, x]; }), prm.role || (m.id === 'voice-white' ? '白页' : '紫苏')) + '</select>' +
-    '<select data-p="engine">' + stSelect([['auto', '自动选引擎'], ['local', '本地 Qwen3-TTS'], ['cloud', '百炼云端']], prm.engine || 'auto') + '</select></div>' +
-    '<div class="st-subrow"><select data-p="speaker">' + stVoiceOptions(prm.speaker || '') + '</select></div>' +
-    '<input class="inp" data-p="tone" value="' + esc(prm.tone || '') + '" placeholder="默认语气：冷静吐槽 / 轻松调侃">' +
-    '<div class="st-lines">' + lines.map(function (ln, i) {
-      return '<div class="st-line" data-line="' + i + '"><div class="st-line-h"><b>#' + (ln.line_index || i + 1) + '</b><span class="sp"></span>' +
-        '<button class="linkbtn" data-lineplay="' + esc(m.id) + ':' + i + '">▶ 试听/重配</button><button class="linkbtn" data-linedel="' + esc(m.id) + ':' + i + '">删除</button></div>' +
-        '<textarea class="inp" data-line-text rows="1" spellcheck="false">' + esc(ln.text || '') + '</textarea>' +
-        '<input class="inp" data-line-tone value="' + esc(ln.tone || '') + '" placeholder="这一句的语气（可空）"></div>';
-    }).join('') + '</div>' +
-    '<div class="st-row2"><button class="btn mini ghost" data-lineadd="' + esc(m.id) + '">+ 加一句</button><button class="btn mini ghost" data-bulk="' + esc(m.id) + '">批量贴台词</button></div>' +
-    '<details class="st-bulk" id="stBulk-' + esc(m.id) + '"><summary>批量贴台词（一行一句）</summary><textarea class="inp" data-bulk-text rows="3" spellcheck="false"></textarea><button class="btn mini primary" data-bulkgo="' + esc(m.id) + '">替换成这些句</button></details>' +
-    '<button class="btn primary st-wide" data-run="' + esc(m.id) + '" data-label="▶ 单独运行本角色配音">▶ 单独运行本角色配音</button>' +
-    '<div class="st-outlabel">本角色音频</div>' + stAudios(p, m) +
-    '<div class="st-hint">白页/紫苏按全局句序写 tts/shotNN.wav，最后汇总 voice.wav + .srt + timeline.json。</div>' +
-    stListBox(p, listName);
-}
-
-/* ---------- 模块 5 ---------- */
-function stBgmBody(p, m) {
-  var prm = m.params || {};
-  return '<textarea class="inp" data-p="prompt" rows="3" spellcheck="false" placeholder="英文描述最好：风格、情绪、乐器、速度；不要人声">' + esc(prm.prompt || '') + '</textarea>' +
-    '<div class="st-row"><label class="st-lab">时长</label><input class="inp st-num" data-p="seconds" type="number" min="10" max="380" value="' + (+prm.seconds || 75) + '"><span class="st-hint">秒</span></div>' +
-    '<div class="st-row2"><label class="st-f"><span class="st-lab">步数</span><input class="inp" data-p="steps" type="number" min="1" max="32" value="' + (+prm.steps || 8) + '"></label>' +
-    '<label class="st-f"><span class="st-lab">种子</span><input class="inp" data-p="seed" type="number" value="' + (+prm.seed || 20261118) + '"></label></div>' +
-    '<button class="btn primary st-wide" data-run="' + esc(m.id) + '" data-label="▶ 单独生成配乐">▶ 单独生成配乐</button>' +
-    '<div class="st-outlabel">试听</div>' + stAudios(p, m) + stListBox(p, '配乐清单.md');
-}
-
-/* ---------- 模块 6 ---------- */
-function stMonA(j) {
-  var w = (j && j.web) || {}, p = studioProj();
-  var img = w.preview_rel ? '<img class="st-mon-img" data-lbmon="web" src="' + esc(stMedia(p.id, w.preview_rel)) + '" alt="" title="点开看大图">' : '<div class="st-mon-empty">等网页动效渲染…</div>';
-  return '<div class="st-mon st-mon-a"><div class="st-mon-h"><b>监控 A · 网页动效渲染</b>' + (w.st === 'run' ? '<em class="st-tag run">渲染中</em>' : w.st === 'ok' ? '<em class="st-tag ok">完成</em>' : w.st === 'err' ? '<em class="st-tag bad">出错</em>' : '<em class="st-tag">待命</em>') + '</div>' +
-    '<div class="st-mon-body">' + img + '<div class="st-mon-meta"><span>镜头 ' + (w.current || 0) + '/' + (w.total || 0) + '</span><span>帧 ' + (w.frame || 0) + '/' + (w.total_frames || '—') + '</span><span>FPS ' + (w.fps || 0) + '</span><span>Claude Code：' + esc(w.cc || '没开') + '</span></div>' +
-    '<div class="st-mon-msg">' + esc(w.msg || '等合成') + '</div></div>' +
-    '<button class="btn mini ghost st-mon-run" data-runpart="web">▶ 仅重跑网页动效</button></div>';
-}
-function stMonB(j) {
-  var w = (j && j.ppt) || {}, p = studioProj();
-  var slides = (w.slides || []).map(function (rel, i) {
-    return '<button class="st-slide" data-lbslide="' + i + '"><img src="' + esc(stAsset(p.id, rel)) + '" alt=""><span>' + (i + 1) + '</span></button>'; }).join('');
-  return '<div class="st-mon st-mon-b"><div class="st-mon-h"><b>监控 B · PPT 卡片</b>' + (w.st === 'run' ? '<em class="st-tag run">渲染中</em>' : w.st === 'ok' ? '<em class="st-tag ok">完成</em>' : w.st === 'err' ? '<em class="st-tag bad">出错</em>' : '<em class="st-tag">待命</em>') + '</div>' +
-    '<div class="st-mon-body"><div class="st-slides">' + (slides || '<div class="st-mon-empty">等 PPT 卡片…</div>') + '</div>' +
-    '<div class="st-mon-meta"><span>' + (w.current || 0) + '/' + (w.total || 0) + ' 页</span><span>' + esc(w.msg || '') + '</span></div></div>' +
-    '<button class="btn mini ghost st-mon-run" data-runpart="ppt">▶ 仅重跑 PPT 卡片</button></div>';
-}
-function stMonC(j, m) {
-  var w = (j && j.ffmpeg) || {}, prm = m.params || {}, pa = w.params || {};
-  var vol = Math.round((pa.bgm_volume != null ? +pa.bgm_volume : (+prm.bgm_volume || .18)) * 100);
-  return '<div class="st-mon st-mon-c"><div class="st-mon-h"><b>监控 C · FFmpeg 混流压制</b>' + (w.st === 'run' ? '<em class="st-tag run">压制中</em>' : w.st === 'ok' ? '<em class="st-tag ok">完成</em>' : w.st === 'err' ? '<em class="st-tag bad">出错</em>' : '<em class="st-tag">待命</em>') + '</div>' +
-    '<div class="st-mon-body"><div class="st-pbar big"><b style="width:' + Math.max(0, Math.min(100, +w.pct || 0)) + '%"></b></div>' +
-    '<div class="st-mon-meta"><span>' + (+w.pct || 0).toFixed(0) + '%</span><span>第 ' + (w.frame || 0) + ' 帧</span><span>编码 ' + (w.fps || pa.fps || 30) + ' fps</span><span>' + esc(pa.ratio || prm.ratio || '9:16') + '</span><span>字幕 ' + (pa.subtitle !== false ? '开' : '关') + '</span><span>配乐 ' + vol + '%</span><span>闪避 ' + (pa.duck_depth != null ? pa.duck_depth : prm.duck_depth) + '</span></div>' +
-    '<pre class="st-fflog">' + esc(w.log || '等压制…') + '</pre></div>' +
-    '<button class="btn mini ghost st-mon-run" data-runpart="ffmpeg">▶ 仅重跑 FFmpeg 压制</button></div>';
-}
-function stComposeBody(p, m) {
-  var prm = m.params || {}, j = studioJob();
-  return '<div class="st-badgenote">Claude Code + 网页动效 + PPT + FFmpeg · 不依赖生图模块</div>' +
-    '<div class="st-comp-top"><div class="st-comp-opts">' +
-    '<label class="st-check"><input type="checkbox" data-p="subtitle"' + (prm.subtitle !== false ? ' checked' : '') + '> 硬字幕</label>' +
-    '<label class="st-check"><input type="checkbox" data-p="cc_drive"' + (prm.cc_drive !== false ? ' checked' : '') + '> 用 Claude Code 写网页动效（会消耗额度）</label>' +
-    '<span class="st-lab">画幅</span><div class="seg st-seg"><button data-muxratio="9:16" aria-pressed="' + ((prm.ratio || p.ratio) !== '16:9') + '">9:16</button><button data-muxratio="16:9" aria-pressed="' + ((prm.ratio || p.ratio) === '16:9') + '">16:9</button></div>' +
-    '<label class="st-f"><span class="st-lab">配乐音量</span><input class="inp" data-p="bgm_volume" type="number" min="0" max="60" step="5" value="' + Math.round((+prm.bgm_volume || .18) * 100) + '"></label>' +
-    '<label class="st-f"><span class="st-lab">闪避</span><input class="inp" data-p="duck_depth" type="number" min="0" max="1" step="0.05" value="' + (+prm.duck_depth || .16) + '"></label>' +
-    '<label class="st-f"><span class="st-lab">淡出秒</span><input class="inp" data-p="fade" type="number" min="0" max="6" step="0.5" value="' + (+prm.fade || 2) + '"></label>' +
-    '<label class="st-f"><span class="st-lab">FPS</span><input class="inp" data-p="fps" type="number" min="12" max="30" value="' + (+prm.fps || 24) + '"></label></div>' +
-    '<div class="st-row2"><button class="btn primary" data-run="' + esc(m.id) + '" data-label="▶ 一键合成（三窗同时开工）">▶ 一键合成（三窗同时开工）</button><button class="btn mini ghost" data-act="openout">打开输出文件夹</button></div></div>' +
-    '<div class="st-monitor">' + stMonA(j) + stMonB(j) + stMonC(j, m) + '</div>' +
-    '<div class="st-outlabel">成片</div>' + stVideos(p, m) + stListBox(p, '视频渲染清单.md');
-}
-
-/* ---------- 模块 7 ---------- */
-function stPublishBody(p, m) {
-  var prm = m.params || {}, files = p.files || {}, video = files.video, cover = files.cover;
-  var tags = (prm.tags || p.tags || []).join ? (prm.tags || p.tags || []).join(' ') : (prm.tags || '');
-  var pub = (studioSt() && studioSt().publish) || {};
-  return (p.video_ok && video ? '<video class="st-video" controls preload="metadata" src="' + esc(video.url || stMedia(p.id, video.rel)) + '"></video><div class="st-vinfo"><span>' + esc(p.resolution || '') + ' · ' + (+p.duration || 0).toFixed(1) + ' 秒</span><span>' + stSize(video.size) + '</span></div>' : '<div class="st-vempty"><b>成片会在这里</b><span>先在模块 6 一键合成</span></div>') +
-    (cover ? '<button class="st-cover" data-lbpublish="1"><img src="' + esc(cover.url || stAsset(p.id, cover.rel)) + '" alt=""><span>封面 · 点开看大图</span></button>' : '') +
-    '<div class="st-row"><label class="st-lab">标题</label><input class="inp" data-p="title" maxlength="30" value="' + esc(prm.title || p.title || '') + '"></div>' +
-    '<textarea class="inp" data-p="desc" rows="2" spellcheck="false" placeholder="简介">' + esc(prm.desc || p.desc || '') + '</textarea>' +
-    '<input class="inp" data-p="tags" value="' + esc(tags) + '" placeholder="话题 空格隔开">' +
-    '<div class="st-subrow"><select data-p="mode">' + stSelect([['single', '单条送审'], ['batch', '加入批量清单']], prm.mode || 'single') + '</select>' +
-    '<select data-p="cover"><option value="auto">封面自动</option></select></div>' +
-    '<div class="st-row2"><label class="st-f"><span class="st-lab">定时发布</span><input class="inp" data-p="schedule" type="datetime-local" value="' + esc(prm.schedule || '') + '"></label>' +
-    '<select data-p="declaration">' + ['内容由AI生成', '内容自行拍摄', '内容取材网络', '虚构演绎，仅供娱乐', '可能引人不适', '危险行为，请勿模仿'].map(function (x) {
-      return '<option' + ((prm.declaration || '内容由AI生成') === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select></div>' +
-    '<input class="inp" data-p="collection" value="' + esc(prm.collection || '') + '" placeholder="合集（可空）">' +
-    '<button class="btn primary st-wide" data-act="publish">送去发布（进待确认队列）</button>' +
-    '<div class="st-hint">待确认 ' + (pub.pending || 0) + ' 条 · 批量 ' + (pub.batch || 0) + ' 条。绝不会自动点发送。</div>';
-}
-
-function stBody(p, m) {
-  if (m.id === 'script') return stScriptBody(p, m);
-  if (m.id === 'image') return stImageBody(p, m);
-  if (m.id === 'voice-white' || m.id === 'voice-zisu') return stVoiceBody(p, m);
-  if (m.id === 'bgm') return stBgmBody(p, m);
-  if (m.id === 'compose') return stComposeBody(p, m);
-  if (m.id === 'publish') return stPublishBody(p, m);
-  return '';
-}
-function stModuleHTML(p, m) { return stModule(m, stBody(p, m)); }
-
-/* ---------- 画布 ---------- */
-function renderCanvas(force) {
-  var p = studioProj(); if (!p) return;
-  var w = $('#stWorld'); if (!w) return;
-  var mods = stMods(), seen = {};
-  var mx = 1900, my = 1900;
-  mods.forEach(function (m) { mx = Math.max(mx, +m.x + +m.w + 200); my = Math.max(my, +m.y + +m.h + 200); });
-  w.style.width = mx + 'px'; w.style.height = my + 'px';
-  mods.forEach(function (m) {
-    seen[m.id] = 1;
-    var el = w.querySelector('[data-node="' + m.id + '"]');
-    var html = stModuleHTML(p, m);
-    if (!el) { w.insertAdjacentHTML('beforeend', html); STUDIO.nodeSig[m.id] = html; return; }
-    if (force || STUDIO.nodeSig[m.id] !== html) {
-      var ae = document.activeElement;
-      var inside = !!(ae && el.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName));
-      if (inside && !force) { syncOne(el, m); return; }
-      el.outerHTML = html; STUDIO.nodeSig[m.id] = html;
-    } else syncOne(el, m);
-  });
-  w.querySelectorAll('[data-node]').forEach(function (el) { if (!seen[el.getAttribute('data-node')]) el.remove(); });
-  applyCanvas();
-}
-function syncOne(el, m) {
-  var lamp = el.querySelector('[data-lamp]'); if (lamp) lamp.className = 'st-lamp st-' + stStatus(m);
-  var f = el.querySelector('[data-pmsg]'); if (f) f.textContent = String(m.error || (m.status === 'ok' ? '已完成' : m.status === 'stale' ? '要重做' : '待命')).slice(0, 60);
-}
-function applyCanvas() {
-  var w = $('#stWorld'); if (!w) return;
-  w.style.transform = 'translate(' + STUDIO.canvas.x + 'px,' + STUDIO.canvas.y + 'px) scale(' + STUDIO.canvas.s + ')';
-  var tip = $('.st-canvas-tip'); if (tip) tip.textContent = Math.round(STUDIO.canvas.s * 100) + '% · 空白拖动平移 · 滚轮缩放 · 模块可拖动、右下角缩放';
-}
-function stBounds() {
-  var ns = stMods(); if (!ns.length) return { x: 0, y: 0, w: 1800, h: 1900 };
-  var x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
-  ns.forEach(function (n) { x1 = Math.min(x1, +n.x); y1 = Math.min(y1, +n.y); x2 = Math.max(x2, +n.x + +n.w); y2 = Math.max(y2, +n.y + +n.h); });
-  return { x: x1, y: y1, w: Math.max(200, x2 - x1), h: Math.max(200, y2 - y1) };
-}
-function fitCanvas() {
-  var c = $('#stCanvas'); if (!c) return;
-  var b = stBounds(), vw = c.clientWidth, vh = c.clientHeight;
-  var s = Math.min((vw - 36) / b.w, (vh - 36) / b.h);
-  s = Math.max(.22, Math.min(1.1, s));
-  STUDIO.canvas.s = s;
-  STUDIO.canvas.x = Math.round((vw - b.w * s) / 2 - b.x * s);
-  STUDIO.canvas.y = Math.round((vh - b.h * s) / 2 - b.y * s);
-  STUDIO.canvas.auto = true; applyCanvas(); saveView();
-}
-function saveView() { if (typeof saveUI === 'function') saveUI({ studioView4: { x: STUDIO.canvas.x, y: STUDIO.canvas.y, s: STUDIO.canvas.s } }); }
-
-/* ---------- 数据 ---------- */
-function stApi(path, body, timeout) {
-  if (!useLive()) { toast('演示模式：连上后端才能用'); return Promise.reject(new Error('demo')); }
-  return api('POST', '/api/studio/' + path, body || {}, timeout || 120000);
-}
-function stSaveModule(mid, patch, quiet) {
-  var p = studioProj(); if (!p) return Promise.resolve();
-  clearTimeout(STUDIO.saveT[mid]);
-  function go() {
-    var pr = stApi('module/update', { pid: p.id, id: mid, params: patch }, 30000).then(function (j) {
-      if (j.project && STUDIO.st) STUDIO.st.project = j.project;
-      if (!quiet) { STUDIO.sig = {}; STUDIO.nodeSig = {}; renderStudio(true); }
-      return j;
-    }).catch(function (e) { toast(e.message, 8000); throw e; });
-    STUDIO.saving = pr;
-    pr.then(function () { if (STUDIO.saving === pr) STUDIO.saving = null; }, function () { if (STUDIO.saving === pr) STUDIO.saving = null; });
-    return pr;
-  }
-  if (quiet === 'debounce') return new Promise(function (r) { STUDIO.saveT[mid] = setTimeout(function () { go().then(r, r); }, 550); });
-  return go();
-}
-function stCollect(mid) {
-  var el = document.querySelector('[data-node="' + mid + '"]'); if (!el) return {};
-  var o = {};
-  el.querySelectorAll('[data-p]').forEach(function (x) {
-    var k = x.getAttribute('data-p');
-    if (x.type === 'checkbox') o[k] = !!x.checked;
-    else if (x.type === 'range') o[k] = (+x.value || 0) / 100;
-    else o[k] = x.value;
-  });
-  var m = stModMap()[mid];
-  if (m && (mid === 'voice-white' || mid === 'voice-zisu')) {
-    var lines = [];
-    el.querySelectorAll('[data-line]').forEach(function (row) {
-      var old = (m.params.lines || [])[+row.getAttribute('data-line')] || {};
-      lines.push({ id: old.id || ('l' + (lines.length + 1)), line_index: old.line_index || lines.length + 1,
-        text: (row.querySelector('[data-line-text]') || {}).value || '', tone: (row.querySelector('[data-line-tone]') || {}).value || '',
-        speaker: old.speaker || '', engine: old.engine || 'auto' });
-    });
-    o.lines = lines;
-  }
-  if (mid === 'image') ['n', 'gif_frames', 'gif_delay_ms', 'custom_w', 'custom_h', 'selected'].forEach(function (k) { if (o[k] != null) o[k] = +o[k] || 0; });
-  if (mid === 'bgm') ['seconds', 'steps', 'seed'].forEach(function (k) { if (o[k] != null) o[k] = +o[k] || 0; });
-  if (mid === 'compose') ['duck_depth', 'fade', 'fps'].forEach(function (k) { if (o[k] != null) o[k] = +o[k] || 0; });
-  if (mid === 'compose' && o.bgm_volume != null) o.bgm_volume = (+o.bgm_volume || 0) / 100;
-  return o;
-}
-function stSizeCheck(w, h) {
-  w = +w; h = +h;
-  if (!w || !h) return '宽和高都要填';
-  if (w % 16 || h % 16) return '宽高必须是 16 的倍数';
-  if (Math.max(w, h) > 3840) return '长边不能超过 3840';
-  if (Math.max(w, h) / Math.min(w, h) > 3) return '长宽比不能超过 3:1';
-  var px = w * h;
-  if (px < 655360 || px > 8294400) return '总像素要在 655,360 – 8,294,400 之间';
-  return '';
-}
-function stSizeHint(mid) {
-  var el = document.querySelector('[data-node="' + mid + '"]'); if (!el) return;
-  var w = el.querySelector('[data-p="custom_w"]'), h = el.querySelector('[data-p="custom_h"]');
-  var o = el.querySelector('[data-sizeerr]'); if (o && w && h) { var msg = stSizeCheck(w.value, h.value); o.textContent = msg; o.style.color = msg ? 'var(--bad)' : 'var(--text3)'; }
-}
-
-/* ---------- 拖动/缩放/平移 ---------- */
-function bindCanvas() {
-  var cv = $('#stCanvas'); if (!cv || cv.dataset.bound === '1') return;
-  cv.dataset.bound = '1';
-  var space = false;
-  document.addEventListener('keydown', function (e) { if (e.code === 'Space' && S.view === 'studio') space = true; });
-  document.addEventListener('keyup', function (e) { if (e.code === 'Space') space = false; });
-  cv.addEventListener('pointerdown', function (ev) {
-    var rs = ev.target.closest('[data-rs]');
-    if (rs && ev.button === 0) {
-      var rm = stModMap()[rs.getAttribute('data-rs')];
-      if (rm) { STUDIO.resize = { id: rm.id, x: ev.clientX, y: ev.clientY, w: +rm.w, h: +rm.h }; STUDIO.dragging = true; var rz = cv.querySelector('[data-node="' + rm.id + '"]'); if (rz) rz.style.zIndex = 9; cv.setPointerCapture(ev.pointerId); ev.preventDefault(); }
-      return;
-    }
-    var hd = ev.target.closest('[data-drag]');
-    if (hd && ev.button === 0) {
-      var id = hd.getAttribute('data-drag'), m = stModMap()[id];
-      if (m) { STUDIO.drag = { id: id, x: ev.clientX, y: ev.clientY, ox: +m.x, oy: +m.y }; STUDIO.dragging = true; var dz = cv.querySelector('[data-node="' + id + '"]'); if (dz) dz.style.zIndex = 9; cv.setPointerCapture(ev.pointerId); ev.preventDefault(); }
-      return;
-    }
-    if (ev.target.closest('.st-node') || ev.target.closest('button,input,textarea,select,label,summary')) return;
-    if (ev.button === 0 || ev.button === 1 || space) {
-      STUDIO.pan = { x: ev.clientX, y: ev.clientY, ox: STUDIO.canvas.x, oy: STUDIO.canvas.y };
-      STUDIO.canvas.auto = false; cv.setPointerCapture(ev.pointerId); ev.preventDefault();
-    }
-  });
-  cv.addEventListener('pointermove', function (ev) {
-    if (STUDIO.resize) {
-      var m = stModMap()[STUDIO.resize.id]; if (!m) return;
-      m.w = Math.max(300, Math.round(STUDIO.resize.w + (ev.clientX - STUDIO.resize.x) / STUDIO.canvas.s));
-      m.h = Math.max(180, Math.round(STUDIO.resize.h + (ev.clientY - STUDIO.resize.y) / STUDIO.canvas.s));
-      var el = cv.querySelector('[data-node="' + m.id + '"]'); if (el) { el.style.width = m.w + 'px'; el.style.height = m.h + 'px'; }
-      return;
-    }
-    if (STUDIO.drag) {
-      var m2 = stModMap()[STUDIO.drag.id]; if (!m2) return;
-      m2.x = Math.round(STUDIO.drag.ox + (ev.clientX - STUDIO.drag.x) / STUDIO.canvas.s);
-      m2.y = Math.round(STUDIO.drag.oy + (ev.clientY - STUDIO.drag.y) / STUDIO.canvas.s);
-      var el2 = cv.querySelector('[data-node="' + m2.id + '"]'); if (el2) { el2.style.left = m2.x + 'px'; el2.style.top = m2.y + 'px'; }
-      return;
-    }
-    if (STUDIO.pan) {
-      STUDIO.canvas.x = Math.round(STUDIO.pan.ox + ev.clientX - STUDIO.pan.x);
-      STUDIO.canvas.y = Math.round(STUDIO.pan.oy + ev.clientY - STUDIO.pan.y);
-      applyCanvas();
-    }
-  });
-  function up() {
-    if (STUDIO.drag || STUDIO.resize) saveLayout(true);
-    if (STUDIO.pan) saveView();
-    STUDIO.dragging = false; STUDIO.drag = STUDIO.resize = STUDIO.pan = null;
-  }
-  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-  cv.addEventListener('wheel', function (ev) {
-    ev.preventDefault();
-    var r = cv.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
-    var wx = (mx - STUDIO.canvas.x) / STUDIO.canvas.s, wy = (my - STUDIO.canvas.y) / STUDIO.canvas.s;
-    var f = ev.deltaY < 0 ? 1.1 : 1 / 1.1;
-    STUDIO.canvas.s = Math.max(.22, Math.min(2, STUDIO.canvas.s * f));
-    STUDIO.canvas.x = mx - wx * STUDIO.canvas.s; STUDIO.canvas.y = my - wy * STUDIO.canvas.s;
-    STUDIO.canvas.auto = false; applyCanvas(); saveView();
-  }, { passive: false });
-}
-function saveLayout(now) {
-  var p = studioProj(); if (!p) return;
-  clearTimeout(STUDIO.layoutT);
-  var snap = stMods().map(function (m) { return { id: m.id, x: m.x, y: m.y, w: m.w, h: m.h }; });
-  function send() {
-    if (!useLive()) return;
-    STUDIO.layoutPending = true;
-    stApi('module/layout', { pid: p.id, modules: snap }, 15000).catch(function () {}).then(function () { STUDIO.layoutPending = false; }, function () { STUDIO.layoutPending = false; });
-  }
-  if (now) send(); else STUDIO.layoutT = setTimeout(send, 450);
-}
-function stElapsed(rt) {
-  if (!rt || !rt.started_at) return '';
-  if (rt.status === 'running' || rt.status === 'queued') return '已耗时 ' + (Math.max(0, Date.now() / 1000 - rt.started_at)).toFixed(1) + 's';
-  if (rt.last_took_s) return '耗时 ' + (+rt.last_took_s).toFixed(1) + 's';
-  return '';
-}
-function syncMeta() {
-  stMods().forEach(function (m) {
-    var el = document.querySelector('[data-node="' + m.id + '"]'); if (!el) return;
-    var rt = m.runtime || {}, st = stStatus(m), busy = rt.status === 'running' || rt.status === 'queued';
-    el.classList.toggle('st-live', busy);
-    el.classList.toggle('st-queued', rt.status === 'queued');
-    var lamp = el.querySelector('[data-lamp]'); if (lamp) lamp.className = 'st-lamp st-' + st;
-    var bar = el.querySelector('[data-rbar]'); if (bar) bar.style.width = Math.max(0, Math.min(100, +rt.pct || 0)) + '%';
-    var ph = el.querySelector('[data-rphase]'); if (ph) ph.textContent = String(rt.phase || '待命').slice(0, 120);
-    var tm = el.querySelector('[data-rtime]'); if (tm) tm.textContent = stElapsed(rt);
-    el.querySelectorAll('[data-run="' + m.id + '"]').forEach(function (b) {
-      b.classList.toggle('st-btn-live', busy);
-      if (busy) b.textContent = (rt.status === 'queued' ? '排队中' : '运行中 · ' + Math.round(+rt.pct || 0) + '%') + '（点此停止）';
-      else if (b.classList.contains('st-nrun')) b.textContent = '▶ 只跑';
-      else if (b.dataset.label) b.textContent = b.dataset.label;
-    });
-    var msg = el.querySelector('[data-pmsg]');
-    if (msg) {
-      var j = studioJob(), p = studioProj(), cur = j && j.st === 'run' && j.pid === (p && p.id) && j.step === m.id;
-      msg.textContent = String(rt.phase || (cur && j.msg) || m.error || (m.status === 'ok' ? '已完成' : m.status === 'stale' ? '要重做' : m.status === 'err' ? '出错' : '待命')).slice(0, 60);
-    }
-  });
-  var nav = $('.nav[data-tool="studio"]'); if (nav) nav.classList.toggle('on-busy', studioRunning());
-  stBindMedia();
-}
-function stBindMedia() {
-  document.querySelectorAll('#view-studio audio, #view-studio video').forEach(function (a) {
-    if (a.dataset.merr === '1') return;
-    a.dataset.merr = '1';
-    a.addEventListener('error', function () {
-      var box = a.parentElement && a.parentElement.querySelector('[data-mediaerr]');
-      if (!box) return;
-      box.textContent = '播放失败，正在读取原因…';
-      fetch(a.src, { cache: 'no-store' }).then(function (r) {
-        return r.json().catch(function () { return {}; }).then(function (j) {
-          box.textContent = '播放失败：' + (j.detail || ('HTTP ' + r.status));
-        });
-      }).catch(function (e) { box.textContent = '播放失败：' + (e.message || '网络错误'); });
-    });
-  });
-}
-function stAnyRunning() {
-  return stMods().some(function (m) { var rt = m.runtime || {}; return rt.status === 'running' || rt.status === 'queued'; });
-}
-function stSchedulePoll() {
-  clearInterval(STUDIO.t);
-  STUDIO.t = setInterval(function () { if (S.view === 'studio') studioFetch(); }, stAnyRunning() ? 600 : 1300);
-}
-
-/* ---------- 动作 ---------- */
-function stStopModule(mid) {
-  var p = studioProj(); if (!p) return;
-  api('POST', '/api/studio/stop', { module_id: mid }, 30000).then(function (j) {
-    toast(j.msg || '停下中', 5000); studioFetch();
-  }).catch(function (e) { toast(e.message, 8000); });
-}
-function stRun(mid, part) {
-  var p = studioProj(); if (!p) { toast('还没有项目'); return; }
-  if (mid && !part) {
-    var rt = (stModMap()[mid] || {}).runtime || {};
-    if (rt.status === 'running' || rt.status === 'queued') { stStopModule(mid); return; }
-  }
-  var body = { pid: p.id };
-  if (mid) body.id = mid;
-  if (mid === 'image') body.force = true;
-  if (part) { body.id = 'compose'; body.part = part; }
-  stApi('module/run', body, 180000).then(function (j) {
-    if (j.project && STUDIO.st) STUDIO.st.project = j.project;
-    toast(mid ? (part ? '开始仅重跑这一步' : '开始跑这个模块') : '白页 + 紫苏 + 配乐三路并行，随后进视频总成', 5000);
-    renderStudio(true); studioFetch();
-  }).catch(function (e) { toast(e.message, 9000); });
-}
-function stImport() {
-  var t = $('#stImport'), f = $('#stImportFile'), p = studioProj(); if (!p) return;
-  var text = t ? t.value : '';
-  if (!text.trim() && f && f.files && f.files[0]) {
-    var r = new FileReader(); r.onload = function () { if (t) t.value = r.result || ''; stImport(); };
-    r.readAsText(f.files[0], 'utf-8'); return;
-  }
-  if (!text.trim()) { toast('把剧本贴进来，或者选一个 .md / .json 文件'); return; }
-  stApi('script/import', { pid: p.id, text: text }, 60000).then(function (j) {
-    if (j.state) STUDIO.st = j.state;
-    var e = j.estimate || {};
-    toast('导入好了：' + (j.summary || '') + ' · 5 份清单已生成 · 预估 $' + (e.image_usd || 0).toFixed(2), 9000);
-    STUDIO.sig = {}; STUDIO.nodeSig = {}; renderStudio(true);
-  }).catch(function (e) { toast(e.message, 9000); });
-}
-function stPlan() {
-  var p = studioProj(); if (!p) return;
-  var m = stModMap()['script'], prm = m.params || {};
-  stApi('script/plan', { pid: p.id, topic: prm.topic || prm.source_text || '', seconds: p.target_seconds || 75 }, 180000).then(function (j) {
-    if (j.state) STUDIO.st = j.state;
-    toast('拆好了：' + (j.summary || '') + ' · 5 份清单已生成', 9000);
-    STUDIO.sig = {}; STUDIO.nodeSig = {}; renderStudio(true);
-  }).catch(function (e) { toast(e.message, 9000); });
-}
-function stSaveList(name) {
-  var p = studioProj(); if (!p) return;
-  var ta = document.querySelector('[data-list="' + name + '"]'); if (!ta) return;
-  api('PUT', '/api/studio/list', { pid: p.id, name: name, text: ta.value }, 30000).then(function (j) {
-    if (j.state) STUDIO.st = j.state;
-    toast('清单保存了，对应模块按新内容重做', 5000);
-    STUDIO.sig = {}; STUDIO.nodeSig = {}; renderStudio(true);
-  }).catch(function (e) { toast(e.message, 9000); });
-}
-function stRegenLists() {
-  var p = studioProj(); if (!p) return;
-  stApi('module/run', { pid: p.id, id: 'script' }, 60000).then(function () { toast('5 份清单已按当前内容重新生成', 5000); studioFetch(); }).catch(function (e) { toast(e.message, 8000); });
-}
-function stPublish() {
-  var p = studioProj(); if (!p) return;
-  var m = stModMap()['publish'], prm = m.params || {};
-  var ta = document.querySelector('[data-node="publish"] [data-p="tags"]');
-  var tags = ta ? ta.value : '';
-  api('POST', '/api/studio/to_publish', { pid: p.id, mode: prm.mode || 'single', title: prm.title || p.title, desc: prm.desc || p.desc,
-    tags: tags, schedule: prm.schedule || '', cover: prm.cover || 'auto', declaration: prm.declaration || '内容由AI生成', collection: prm.collection || '' }, 30000)
-    .then(function (j) { toast(j.msg || '已送去发布队列', 9000); studioFetch(); }).catch(function (e) { toast(e.message, 9000); });
-}
-function studioPlay(url) {
-  if (!url) { toast('还没有可听的音频'); return; }
-  if (STUDIO.audio) { try { STUDIO.audio.pause(); } catch (e) {} }
-  STUDIO.audio = new Audio(url);
-  STUDIO.audio.play().catch(function (e) { toast('放不了：' + e.message); });
-}
-function studioDo(path, body, ok) {
-  if (!useLive()) { toast('演示模式：连上后端才能用'); return Promise.reject(); }
-  return api('POST', '/api/studio/' + path, body || {}, 30000).then(function (j) {
-    if (j && j.project) { STUDIO.st.project = j.project; STUDIO.sig = {}; STUDIO.nodeSig = {}; renderStudio(true); }
-    if (ok) toast(ok, 5000);
-    return j;
-  }).catch(function (e) { toast(e.message, 8000); throw e; });
-}
-function studioFetch() {
-  if (!useLive()) { renderStudio(); return Promise.resolve(); }
-  if (STUDIO.fetching) return STUDIO.fetching;
-  if (STUDIO.dragging || STUDIO.layoutPending || STUDIO.saving) return Promise.resolve();
-  STUDIO.fetching = fetch('/api/studio/state', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('state ' + r.status); return r.json(); }).then(function (j) {
-    var was = STUDIO.st && STUDIO.st.job && STUDIO.st.job.st === 'run' ? STUDIO.st.job : null;
-    var oldPid = STUDIO.lastPid;
-    STUDIO.st = j;
-    if (j.project && j.project.id !== oldPid) {
-      STUDIO.lastPid = j.project.id; STUDIO.canvas.auto = true; STUDIO.fitted = false; STUDIO.nodeSig = {}; STUDIO.sig = {};
-      setTimeout(function () { if (S.view === 'studio') fitCanvas(); }, 30);
-    }
-    if (was && j.job && j.job.id === was.id && j.job.st !== 'run') toast('视频工坊：' + (j.job.msg || j.job.st), 7000);
-    renderStudio(); stSchedulePoll();
-  }).catch(function () { if (S.view === 'studio' && !STUDIO.st) setTimeout(studioFetch, 1200); })
-    .then(function () { STUDIO.fetching = null; }, function () { STUDIO.fetching = null; });
-  return STUDIO.fetching;
-}
-function studioEnter() {
-  studioFetch(); stHWStart(); clearInterval(STUDIO.t);
-  stSchedulePoll();
-  setTimeout(function () { if (S.view === 'studio' && !STUDIO.st) studioFetch(); }, 700);
-}
-function studioLeave() {
-  clearInterval(STUDIO.t); STUDIO.t = null; stHWStop();
-  if (STUDIO.audio) { try { STUDIO.audio.pause(); } catch (e) {} }
-  $$('#view-studio video').forEach(function (m) { try { m.pause(); } catch (e) {} });
-}
-
-/* ---------- 事件 ---------- */
-function stUploadRefs(files, mid) {
-  var p = studioProj(), m = stModMap()[mid]; if (!p || !m) return;
-  var cur = (m.params.refs || []).slice();
-  var list = [].slice.call(files || []).slice(0, Math.max(0, 16 - cur.length));
-  function one(file) {
-    return new Promise(function (resolve) {
-      var r = new FileReader();
-      r.onload = function () {
-        api('POST', '/api/studio/ref', { pid: p.id, name: file.name, data: r.result }, 30000)
-          .then(function (j) { if (j.rel) cur.push(j.rel); resolve(); })
-          .catch(function (e) { toast('「' + file.name + '」没放进去：' + e.message, 7000); resolve(); });
+function stHandleChatFiles(files) {
+  var p = studioProj();
+  if (!p || !files || !files.length) return;
+  [].slice.call(files).forEach(function (file) {
+    var name = file.name || 'file';
+    if (/\.(md|markdown|txt|json)$/i.test(name)) {
+      var tr = new FileReader();
+      tr.onload = function () {
+        var content = String(tr.result || '');
+        if (!content.trim()) return;
+        studioPost('script/import', { text: content }, '已导入剧本文件：' + name).catch(function () {});
       };
-      r.onerror = function () { resolve(); }; r.readAsDataURL(file);
-    });
-  }
-  list.reduce(function (pr, f) { return pr.then(function () { return one(f); }); }, Promise.resolve()).then(function () {
-    stSaveModule(mid, { refs: cur }).then(function () { toast('参考图放好了（' + cur.length + '/16）'); }).catch(function () {});
+      tr.readAsText(file);
+    } else if (/^image\//i.test(file.type)) {
+      var ir = new FileReader();
+      ir.onload = function () {
+        studioPost('ref', { name: name, data: ir.result }, '已上传参考图：' + name).then(function (j) {
+          if (j && j.rel) {
+            STUDIO.pendingAttachments.push({ rel: j.rel, name: name, kind: 'image' });
+            renderComposerMeta();
+          }
+        }).catch(function () {});
+      };
+      ir.readAsDataURL(file);
+    }
   });
 }
 
+function stUploadImageRefs(files) {
+  var p = studioProj();
+  if (!p || !files || !files.length) return;
+  var cur = ((p.image_config && p.image_config.refs) || []).slice();
+  var list = [].slice.call(files).slice(0, Math.max(0, 16 - cur.length));
+  list.reduce(function (pr, f) {
+    return pr.then(function () {
+      return new Promise(function (resolve) {
+        var r = new FileReader();
+        r.onload = function () {
+          api('POST', '/api/studio/ref', { pid: p.id, name: f.name, data: r.result }, 30000)
+            .then(function (j) { if (j && j.rel) cur.push(j.rel); resolve(); })
+            .catch(function (e) { toast(f.name + ' 上传失败：' + e.message); resolve(); });
+        };
+        r.readAsDataURL(f);
+      });
+    });
+  }, Promise.resolve()).then(function () {
+    studioPost('config', { image_config: { refs: cur } }, '已更新参考图 (' + cur.length + '/16)').catch(function () {});
+  });
+}
+
+/* ---------- 事件代理 ---------- */
 (function () {
-  var v = $('#view-studio'); if (!v) return;
-  v.addEventListener('focusin', function (ev) { if (/^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) STUDIO.editing = true; });
-  v.addEventListener('focusout', function (ev) {
-    if (!/^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) return;
-    setTimeout(function () {
-      var a = document.activeElement;
-      STUDIO.editing = !!(a && a.closest && a.closest('#view-studio') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
-      if (STUDIO.editing || STUDIO.dragging) return;
-      var node = ev.target.closest && ev.target.closest('[data-node]');
-      if (node) {
-        var mid = node.getAttribute('data-node'), m = stModMap()[mid];
-        if (m) stSaveModule(mid, stCollect(mid), true);
-      }
-      STUDIO.sig = {}; STUDIO.nodeSig = {}; renderStudio(true);
-    }, 160);
-  });
-  v.addEventListener('input', function (ev) {
-    var t = ev.target, node = t.closest && t.closest('[data-node]');
-    if (!node) return;
-    var mid = node.getAttribute('data-node');
-    if (t.hasAttribute('data-list')) return;
-    if (t.hasAttribute('data-line-text') || t.hasAttribute('data-line-tone')) { stSaveModule(mid, { lines: stCollect(mid).lines }, 'debounce'); return; }
-    if (!t.hasAttribute('data-p')) return;
-    var k = t.getAttribute('data-p');
-    if (k === 'custom_w' || k === 'custom_h') stSizeHint(mid);
-    var patch = {}; patch[k] = t.type === 'checkbox' ? !!t.checked : t.value;
-    stSaveModule(mid, patch, 'debounce');
-  });
-  v.addEventListener('change', function (ev) {
-    var t = ev.target, node = t.closest && t.closest('[data-node]');
-    if (t.id === 'stProj') { if (t.value) studioDo('select', { pid: t.value }).then(function (j) { STUDIO.st = j; STUDIO.lastPid = j.project && j.project.id; STUDIO.canvas.auto = true; STUDIO.fitted = false; STUDIO.sig = {}; STUDIO.nodeSig = {}; renderStudio(true); }).catch(function () {}); return; }
-    if (t.id === 'stImportFile') { stImport(); return; }
-    if (t.getAttribute('data-ref-file')) { stUploadRefs(t.files, t.getAttribute('data-ref-file')); t.value = ''; return; }
-    if (!node) return;
-    var mid = node.getAttribute('data-node');
-    if (t.hasAttribute('data-p')) {
-      var k = t.getAttribute('data-p');
-      var patch = {}; patch[k] = t.type === 'checkbox' ? !!t.checked : t.value;
-      if (mid === 'image') ['n', 'gif_frames', 'gif_delay_ms', 'custom_w', 'custom_h', 'selected'].forEach(function (x) { if (patch[x] != null) patch[x] = +patch[x] || 0; });
-      if (mid === 'compose' && k === 'bgm_volume') patch[k] = (+t.value || 0) / 100;
-      stSaveModule(mid, patch).then(function () { if (k === 'resolution' || k === 'selected') { STUDIO.nodeSig = {}; renderStudio(true); } }).catch(function () {});
+  var v = $('#view-studio');
+  if (!v) return;
+
+  v.addEventListener('keydown', function (ev) {
+    if (ev.target && ev.target.id === 'stChatInput' && ev.key === 'Enter' && !ev.shiftKey) {
+      ev.preventDefault();
+      stSendChat();
     }
   });
-  v.addEventListener('click', function (ev) {
-    var b = ev.target.closest('button'); if (!b || b.disabled) return;
-    var d = b.dataset, p = studioProj(), m = p && stModMap();
-    if (d.st) {
-      if (d.st === 'fit') { fitCanvas(); return; }
-      if (d.st === 'new') { studioDo('new', { topic: '', ratio: '9:16', seconds: 75, voice_id: 'local:preset:Vivian' }, '新建了空白项目').then(function (j) { STUDIO.st = j; STUDIO.lastPid = j.project && j.project.id; STUDIO.canvas.auto = true; STUDIO.fitted = false; STUDIO.sig = {}; STUDIO.nodeSig = {}; renderStudio(true); }).catch(function () {}); return; }
-      if (d.st === 'run') { stRun(); return; }
-      if (d.st === 'stop') { studioDo('stop', {}, '全部停下中：当前这一步收尾后不再往下做').then(studioFetch).catch(function () {}); return; }
+
+  v.addEventListener('input', function (ev) {
+    var t = ev.target;
+    if (t.id === 'stCmpVol') stSetText('stCmpVolVal', t.value + '%');
+    if (t.id === 'stCmpDuck') stSetText('stCmpDuckVal', t.value + '%');
+  });
+
+  v.addEventListener('change', function (ev) {
+    var t = ev.target;
+    if (t.id === 'stProj' && t.value) {
+      STUDIO.pid = t.value;
+      studioPost('select', { pid: t.value }).catch(function () {});
       return;
     }
-    if (d.run) { stRun(d.run); return; }
-    if (d.runpart) {
-      var crt = (stModMap()['compose'] || {}).runtime || {};
-      if (crt.status === 'running' || crt.status === 'queued') { stStopModule('compose'); return; }
-      stRun('compose', d.runpart); return;
+    if (t.id === 'stChatFile') {
+      stHandleChatFiles(t.files);
+      t.value = '';
+      return;
     }
-    if (d.out) { var z = String(d.out).split(':'); stSaveModule(z[0], { output: z[1] }).then(function () { STUDIO.nodeSig = {}; renderStudio(true); }).catch(function () {}); return; }
-    if (d.muxratio) { var nn = b.closest('[data-node]'); stSaveModule(nn.getAttribute('data-node'), { ratio: d.muxratio }).then(function () { STUDIO.nodeSig = {}; renderStudio(true); }); return; }
-    if (d.act === 'plan') { stPlan(); return; }
-    if (d.act === 'importToggle') { var box = $('#stImportBox'); if (box) box.hidden = !box.hidden; return; }
-    if (d.act === 'importCancel') { var b2 = $('#stImportBox'); if (b2) b2.hidden = true; return; }
-    if (d.act === 'import') { stImport(); return; }
-    if (d.act === 'lists') { stRegenLists(); return; }
-    if (d.act === 'publish') { stPublish(); return; }
-    if (d.act === 'openout') { studioDo('open', { what: 'output' }, '打开输出文件夹').catch(function () {}); return; }
-    if (d.listsave) { stSaveList(d.listsave); return; }
-    if (d.lb) { var q = String(d.lb).split(':'); var mm = m[q[0]]; if (mm) stLbOpen(p, mm, q[1], +q[2] || 0); return; }
-    if (d.lbmon) { var w = (studioJob() || {}).web || {}; if (w.preview_rel) Lightbox.open([{ url: stMedia(p.id, w.preview_rel), name: '网页动效预览', rel: w.preview_rel, pid: p.id }], 0); return; }
-    if (d.lbslide) { var pw = (studioJob() || {}).ppt || {}; var rel = (pw.slides || [])[+d.lbslide]; if (rel) Lightbox.open([{ url: stAsset(p.id, rel), name: rel, rel: rel, pid: p.id }], 0); return; }
-    if (d.lbpublish) { var cv = (p.files || {}).cover; if (cv) Lightbox.open([{ url: stAsset(p.id, cv.rel), name: cv.name, rel: cv.rel, pid: p.id }], 0); return; }
-    if (d.play) { var pz = String(d.play).split(':'), ma = m[pz[0]], aus = ma ? (ma.outputs || []).filter(function (x) { return x.kind === 'audio'; }) : []; var ao = aus[+pz[1] || 0]; if (ao) studioPlay(stAsset(p.id, ao.rel)); else toast('还没有音频'); return; }
-    if (d.lineplay) { var lz = String(d.lineplay).split(':'), lm = m[lz[0]], la = lm ? (lm.outputs || []).filter(function (x) { return x.kind === 'audio'; }) : []; var lo = la[+lz[1]]; if (lo) studioPlay(stAsset(p.id, lo.rel, lo.sha256)); else toast('这一句还没配音：点上面的「单独运行本角色配音」'); return; }
-    if (d.lineadd) { var lm2 = m[d.lineadd], ls = (lm2.params.lines || []).slice(); ls.push({ id: 'l' + (ls.length + 1), line_index: (ls.length ? Math.max.apply(null, ls.map(function (x) { return +x.line_index || 0; })) + 1 : 1), text: '', tone: '' }); stSaveModule(d.lineadd, { lines: ls }).then(function () { STUDIO.nodeSig = {}; renderStudio(true); }); return; }
-    if (d.linedel) { var dz = String(d.linedel).split(':'), dm = m[dz[0]], dl = (dm.params.lines || []).slice(); dl.splice(+dz[1], 1); stSaveModule(dz[0], { lines: dl }).then(function () { STUDIO.nodeSig = {}; renderStudio(true); }); return; }
-    if (d.bulk) { var bx = $('#stBulk-' + d.bulk); if (bx) bx.open = !bx.open; return; }
-    if (d.bulkgo) {
-      var ta = document.querySelector('#stBulk-' + d.bulkgo + ' [data-bulk-text]');
-      var raw = ta ? String(ta.value || '').split(/\r?\n/) : [];
-      var ls2 = raw.map(function (x) { return x.trim(); }).filter(Boolean).map(function (x, i) { return { id: 'l' + (i + 1), line_index: i + 1, text: x, tone: '' }; });
-      if (!ls2.length) { toast('先把台词一行一句贴进来'); return; }
-      stSaveModule(d.bulkgo, { lines: ls2 }).then(function () { STUDIO.nodeSig = {}; renderStudio(true); toast('台词换了 ' + ls2.length + ' 句'); }); return;
+    if (t.id === 'stRefUpload') {
+      stUploadImageRefs(t.files);
+      t.value = '';
+      return;
     }
-    if (d.refdel) { var rz = String(d.refdel).split(':'), rm = m[rz[0]], refs = (rm.params.refs || []).slice(); refs.splice(+rz[1], 1); stSaveModule(rz[0], { refs: refs }).catch(function () {}); return; }
+  });
+
+  v.addEventListener('click', function (ev) {
+    var p = studioProj();
+    var t = ev.target;
+
+    var avBtn = t.closest('[data-av-click]');
+    if (avBtn) {
+      var aid = avBtn.getAttribute('data-av-click');
+      STUDIO.inspectAgentId = STUDIO.inspectAgentId === aid ? '' : aid;
+      renderAvatarDock();
+      return;
+    }
+
+    var atBtn = t.closest('[data-at-agent]');
+    if (atBtn) {
+      var aidAt = atBtn.getAttribute('data-at-agent');
+      var agAt = studioAgents().filter(function (a) { return a.id === aidAt; })[0];
+      var tag = '@' + ((agAt && agAt.name.replace(' Agent', '')) || aidAt) + ' ';
+      var cin = $('#stChatInput');
+      if (cin) {
+        cin.value = (cin.value ? cin.value + ' ' : '') + tag;
+        cin.focus();
+      }
+      return;
+    }
+
+    var foldBtn = t.closest('[data-fold-pane]');
+    if (foldBtn) {
+      var fid = foldBtn.getAttribute('data-fold-pane');
+      STUDIO.collapsedPanes[fid] = !STUDIO.collapsedPanes[fid];
+      renderPaneHeaders();
+      return;
+    }
+
+    var jumpBtn = t.closest('[data-jump-pane]');
+    if (jumpBtn) {
+      stJumpToPane(jumpBtn.getAttribute('data-jump-pane'));
+      return;
+    }
+
+    var imgBox = t.closest('[data-open-img]');
+    if (imgBox && p) {
+      var imgs = (p.assets || []).filter(function (a) { return a.kind === 'image'; });
+      var rel = imgBox.getAttribute('data-rel');
+      var items = imgs.map(function (a) {
+        return { url: stAsset(p.id, a.rel, a.sha256), name: a.label || a.rel, rel: a.rel, pid: p.id, cacheHit: !!a.cache_hit };
+      });
+      var idx = Math.max(0, imgs.findIndex(function (a) { return a.rel === rel; }));
+      if (!items.length && rel) {
+        items = [{ url: stAsset(p.id, rel, imgBox.getAttribute('data-sha') || ''), name: imgBox.getAttribute('data-label') || rel, rel: rel, pid: p.id }];
+        idx = 0;
+      }
+      if (window.Lightbox && items.length) Lightbox.open(items, idx);
+      return;
+    }
+
+    var b = t.closest('button');
+    if (!b || b.disabled) return;
+    var d = b.dataset || {};
+
+    if (b.id === 'stBtnSend') { stSendChat(); return; }
+    if (d.atInsert) {
+      var ci = $('#stChatInput');
+      if (ci) { ci.value = (ci.value ? ci.value + ' ' : '') + d.atInsert; ci.focus(); }
+      return;
+    }
+    if (d.quickCmd) { stSendChat(d.quickCmd); return; }
+    if (d.cfilter) { STUDIO.chatFilter = d.cfilter; renderChatHead(); renderMessages(); return; }
+
+    if (d.replyMsg && p) {
+      var msg = (p.messages || []).filter(function (m) { return m.msg_id === d.replyMsg; })[0];
+      if (msg) {
+        STUDIO.replyTo = { msg_id: msg.msg_id, sender_name: msg.sender_name, text: msg.text };
+        renderComposerMeta();
+        var c2 = $('#stChatInput');
+        if (c2) c2.focus();
+      }
+      return;
+    }
+    if (d.delAttach != null) { STUDIO.pendingAttachments.splice(+d.delAttach, 1); renderComposerMeta(); return; }
+
+    if (d.approve) { studioPost('approval', { approval_id: d.approve, approved: true }, '已批准并开始调度执行').catch(function () {}); return; }
+    if (d.reject) { studioPost('approval', { approval_id: d.reject, approved: false, note: '用户暂缓执行' }, '已拒绝本次审批').catch(function () {}); return; }
+
+    if (d.agentRun) {
+      var extra = {};
+      if (d.shotId) extra.shot_id = d.shotId;
+      if (d.lineId) extra.line_id = d.lineId;
+      studioPost('agent/' + encodeURIComponent(d.agentRun) + '/run', { inputs: extra }, '已启动 Agent 任务').catch(function () {});
+      return;
+    }
+    if (d.agentAct) {
+      var ap = d.agentAct.split(':');
+      studioPost('agent/' + encodeURIComponent(ap[0]) + '/action', { action: ap[1] }).catch(function () {});
+      return;
+    }
+    if (d.taskAct) {
+      var tp = d.taskAct.split(':');
+      studioPost('task/' + encodeURIComponent(tp[0]) + '/action', { action: tp[1] }).catch(function () {});
+      return;
+    }
+    if (d.adoptAsset) {
+      studioPost('asset/adopt', { asset_id: d.adoptAsset }, '已切换采用资产版本').catch(function () {});
+      return;
+    }
+
+    if (d.lineSave && p) {
+      var lid = d.lineSave;
+      var lc = v.querySelector('[data-line-card="' + lid + '"]');
+      if (!lc) return;
+      var lBody = {
+        revision: p.revision,
+        role: lc.querySelector('[data-line-role]').value,
+        engine: lc.querySelector('[data-line-eng]').value,
+        speaker: lc.querySelector('[data-line-spk]').value,
+        tone: lc.querySelector('[data-line-tone]').value,
+        text: lc.querySelector('[data-line-text]').value,
+      };
+      studioReq('PATCH', 'line/' + encodeURIComponent(lid), lBody, '已保存台词（仅此句配音缓存失效）').catch(function () {});
+      return;
+    }
+
+    if (d.lineDel) {
+      studioReq('DELETE', 'line/' + encodeURIComponent(d.lineDel), {}, '已删除该句台词').catch(function () {});
+      return;
+    }
+
+    if (d.delRef != null && p) {
+      var nr = ((p.image_config && p.image_config.refs) || []).slice();
+      nr.splice(+d.delRef, 1);
+      studioPost('config', { image_config: { refs: nr } }, '已移除参考图').catch(function () {});
+      return;
+    }
+
+    if (d.act) {
+      if (d.act === 'closeInspect') { STUDIO.inspectAgentId = ''; renderAvatarDock(); return; }
+      if (d.act === 'toggleChatWidth') { STUDIO.chatWide = !STUDIO.chatWide; renderStudio(); return; }
+      if (d.act === 'toggleNewProj') { STUDIO.newProjOpen = true; STUDIO.importOpen = false; renderTop(); var nt = $('#stNewTopic'); if (nt) nt.focus(); return; }
+      if (d.act === 'cancelNewProj') { STUDIO.newProjOpen = false; renderTop(); return; }
+      if (d.act === 'createProj') {
+        var topEl = $('#stNewTopic'), ratEl = $('#stNewRatio'), secEl = $('#stNewSec');
+        var topicVal = topEl ? topEl.value.trim() : '';
+        STUDIO.newProjOpen = false;
+        studioPost('new', { topic: topicVal || '新视频项目', ratio: ratEl ? ratEl.value : '9:16', seconds: secEl ? +secEl.value || 60 : 60 }, '已创建新项目').then(function (j) {
+          if (j && j.project) STUDIO.pid = j.project.id;
+        }).catch(function () {});
+        return;
+      }
+      if (d.act === 'runFull') { stSendChat('开始从头跑通全流程制作并完成后期合成与质检'); return; }
+      if (d.act === 'stopAll') { studioPost('stop', {}, '已停止全部正在运行的任务').catch(function () {}); return; }
+      if (d.act === 'clearReply') { STUDIO.replyTo = null; renderComposerMeta(); return; }
+      if (d.act === 'exportPack') {
+        studioPost('export_prompt_pack', {}).then(function (j) {
+          if (j && j.md) {
+            var ci2 = $('#stChatInput');
+            if (ci2) { ci2.value = j.md; ci2.focus(); toast('策划包模版已填入输入框'); }
+          }
+        }).catch(function () {});
+        return;
+      }
+      if (d.act === 'planScript') {
+        studioPost('script/plan', {
+          topic: (p && p.title) || 'AI 效率工具',
+          seconds: (p && p.target_duration) || 60,
+        }, '剧本与分镜策划已更新').catch(function () {});
+        return;
+      }
+      if (d.act === 'toggleImport') { STUDIO.importOpen = !STUDIO.importOpen; STUDIO.newProjOpen = false; renderTop(); var imp = $('#stImportText'); if (imp) imp.focus(); return; }
+      if (d.act === 'doImport') {
+        var it = $('#stImportText');
+        if (!it || !it.value.trim()) { toast('请先贴入剧本内容'); return; }
+        studioPost('script/import', { text: it.value }, '已导入剧本并生成结构化分镜').then(function () {
+          STUDIO.importOpen = false;
+          renderTop();
+          renderAllPanes(true);
+        }).catch(function () {});
+        return;
+      }
+      if (d.act === 'addLine') {
+        studioPost('line/add', { role: '白页', text: '补充一句新台词。', tone: '自然' }, '已新增台词').catch(function () {});
+        return;
+      }
+      if (d.act === 'saveImgCfg') {
+        studioPost('config', {
+          image_config: {
+            model: ($('#stImgModel') || {}).value,
+            resolution: ($('#stImgRes') || {}).value,
+            output: ($('#stImgOut') || {}).value,
+          },
+        }, '已保存生图参数').catch(function () {});
+        return;
+      }
+      if (d.act === 'saveBgmCfg') {
+        studioPost('config', {
+          bgm: {
+            prompt: ($('#stBgmPrompt') || {}).value,
+            seconds: +($('#stBgmSec') || {}).value || 75,
+            steps: +($('#stBgmSteps') || {}).value || 8,
+            seed: +($('#stBgmSeed') || {}).value || 20261118,
+          },
+        }, '已保存配乐参数').catch(function () {});
+        return;
+      }
+      if (d.act === 'saveComposeCfg') {
+        var vol = +($('#stCmpVol') || {}).value;
+        var duck = +($('#stCmpDuck') || {}).value;
+        studioPost('config', {
+          compose_config: {
+            fps: +($('#stCmpFps') || {}).value || 24,
+            fade: +($('#stCmpFade') || {}).value || 2,
+            bgm_volume: isNaN(vol) ? 0.18 : vol / 100,
+            duck_depth: isNaN(duck) ? 0.16 : duck / 100,
+            subtitle: Boolean(($('#stCmpSub') || {}).checked),
+          },
+        }, '已保存视频合成参数').catch(function () {});
+        return;
+      }
+      if (d.act === 'runQa') {
+        studioPost('qa/run', {}, '已完成 FFprobe 实时质检').catch(function () {});
+        return;
+      }
+      if (d.act === 'publishProject') {
+        studioPost('to_publish', { title: (p && p.title) || '视频工坊成片' }, '已加入发布待确认队列').catch(function () {});
+        return;
+      }
+    }
   });
 })();
