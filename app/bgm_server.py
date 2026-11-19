@@ -13,7 +13,7 @@ Windows 上的关键点：
 - 用 bfloat16（显卡支持时）或 float16 加载到 CUDA。
 - 8 步对抗蒸馏模型（`rf_denoiser`）：`num_inference_steps=8`、`guidance_scale=1.0`、不传 `negative_prompt`、
   `silence_padding_duration=0.0`。CFG 已经蒸馏进权重，传 >1.0 或 negative_prompt 反而会坏。
-- 采样率 44.1 kHz 立体声；一次最长 380 秒。
+- 采样率 44.1 kHz 立体声；一次最长 380 秒（v4.0.2 起先把接口限到 120 秒，见 BGM_MAX_SECONDS）。
 
 接口沿用原来的异步任务契约（release_task / query_result / v1/audio），前端和批量队列不用大改：
   GET  /health                         → 模型加载好没有
@@ -49,7 +49,8 @@ os.environ.setdefault("DIFFUSERS_ATTN_BACKEND", "native")
 from app import paths  # noqa: E402
 
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-MIN_S, MAX_S = 10, 380
+BGM_MAX_SECONDS = 120          # v4.0.2 临时上限：200 秒长曲会溢到共享显存并出杂音；模型本身支持到 380 秒
+MIN_S, MAX_S = 10, BGM_MAX_SECONDS
 LOG = paths.LOGS / "bgm.log"
 TASK_DIR = paths.DATA / "bgm" / "tasks"
 FMT = ("wav", "mp3", "flac")

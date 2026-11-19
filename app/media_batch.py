@@ -208,6 +208,7 @@ def _rows(lines):
 
 def parse_bgm(md, name=""):
     """配乐清单 → {title, items:[{file, prompt, seconds}], warn}。"""
+    from .bgm import BGM_MAX_SECONDS
     title, secs, pre = _sections(md)
     stem = clean_name(name) if name else ""
     items, warn, seen = [], [], set()
@@ -219,7 +220,7 @@ def parse_bgm(md, name=""):
         if not prompt:
             warn.append(f"「{nm}」没写描述，跳过了")
             return
-        s = seconds_of(sec, hi=380)
+        s = seconds_of(sec, hi=BGM_MAX_SECONDS)
         if sec and s is None:
             warn.append(f"「{nm}」的时长「{sec}」没认出来，按 60 秒")
         items.append({"file": dedupe(nm, seen), "prompt": prompt, "seconds": s or 60})
@@ -721,9 +722,10 @@ class BgmBatch(Batch):
                 raise HTTPException(400, "描述太长了（最多 1000 字）")
             it["prompt"] = p
         if "seconds" in body:
-            s = seconds_of(body["seconds"], hi=380)
+            from .bgm import BGM_MAX_SECONDS
+            s = seconds_of(body["seconds"], hi=BGM_MAX_SECONDS)
             if s is None:
-                raise HTTPException(400, "时长写秒数（10~380），或者 1:30、1分30秒")
+                raise HTTPException(400, f"时长写秒数（10~{BGM_MAX_SECONDS}），或者 1:30、1分30秒")
             it["seconds"] = s
 
     async def precheck(self, todo, base):

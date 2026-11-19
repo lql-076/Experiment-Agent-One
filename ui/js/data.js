@@ -284,7 +284,7 @@ var SECTIONS = [
   ] },
   { id: 'data', name: '数据', desc: '设置、记录、记忆都只在这台电脑上。', custom: 'data' }
 ];
-var DEFAULTS = { theme: 'dark', demo: true, osdItems: 'fps,low1,cpu,gpu,vram,power', uiState: {} };
+var DEFAULTS = { theme: 'dark', demo: false, osdItems: 'fps,low1,cpu,gpu,vram,power', uiState: {} };
 SECTIONS.forEach(function (sec) { (sec.fields || []).forEach(function (f) { if (f.k && f.t !== 'secret') DEFAULTS[f.k] = f.d === undefined ? '' : f.d; }); });
 
 /* ================= 界面操作状态（v3.5.1）=================

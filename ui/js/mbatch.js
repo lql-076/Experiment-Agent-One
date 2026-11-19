@@ -11,7 +11,7 @@ var MB_CFG = {
     help: '一段用「## 文件名」开头，下面是要念的字。要换音色写一行「音色：名字」（我的音色、预设音色、云端音色的名字都行），不写就用中间选的；还能写「语气：」。也能一次选几个 .txt，一个文件一段。' },
   bgm: { api: '/api/bgm/batch', unit: '首', what: '配乐', name: '配乐清单',
     ph: '# 第 5 期 · 配乐清单\n\n## bgm01_开场\n时长：30 秒\n描述：轻快的电子乐，明亮的合成器，节奏清晰\n\n## bgm02_讲解\n时长：1分30秒\n描述：安静的钢琴独奏，舒缓，留白多\n\n也能一行一首：bgm03_结尾 | 45 | 温暖的木吉他',
-    help: '一首用「## 名字」开头，下面写「时长：30 秒」和描述（不写「描述：」就把这一节的字当描述）。也能一行一首「名字 | 时长 | 描述」，或者 Markdown 表格。' }
+    help: '一首用「## 名字」开头，下面写「时长：30 秒」和描述（不写「描述：」就把这一节的字当描述）。也能一行一首「名字 | 时长 | 描述」，或者 Markdown 表格。配乐最长 2 分钟（更长容易出杂音）。' }
 };
 /* v3.3「DeepSeek 帮我认」：生图、配音、配乐、发布四个批量共用一个开关（默认开，存在浏览器里）。开着就先让 DeepSeek 把随便写的清单整理成标准格式 */
 var SMART_KEY = 'agentSmart.v1';
@@ -96,7 +96,7 @@ function mbRowHTML(k, it, run) {
       '<div class="mb-ed2"><label>音色<input class="inp" data-mbf="voice" value="' + esc(it.voice || '') + '" placeholder="不写用中间选的"' + dis + '></label>' +
         '<label>语气<input class="inp" data-mbf="tone" value="' + esc(it.tone || '') + '" placeholder="不写用中间写的"' + dis + '></label></div>' :
       '<textarea class="inp" data-mbf="prompt" rows="3" spellcheck="false"' + dis + '>' + esc(it.prompt) + '</textarea>' +
-      '<div class="mb-ed2"><label>时长（秒）<input class="inp num" data-mbf="seconds" type="number" min="10" max="380" step="5" value="' + (+it.seconds || 60) + '"' + dis + '></label>' +
+      '<div class="mb-ed2"><label>时长（秒）<input class="inp num" data-mbf="seconds" type="number" min="10" max="' + (typeof BGM_MAX_SECONDS === 'number' ? BGM_MAX_SECONDS : 120) + '" step="5" value="' + (+it.seconds || 60) + '"' + dis + '></label>' +
         (it.st === 'ok' ? '<button class="btn mini" data-mba="tows1" data-mbi="' + it.id + '">这一首放进工作区</button>' : '') + '</div>') +
       (it.edited ? '<div class="cap">改过（和清单里写的不一样）；改完点 ↻ 重新出</div>' : '') + '</div>';
   }

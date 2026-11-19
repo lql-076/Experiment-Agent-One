@@ -47,3 +47,13 @@ __pycache__/
 *.egg-info/
 # 配乐（本地 ACE-Step 出的）、语音的参考音频都是你自己的
 配乐输出/
+
+# ── 隐私清单兜底（2026-11-18 同步时补） ──
+记忆/
+*.key
+*.pem
+*[Ss]ecret*
+*[Tt]oken*
+*[Cc]ookie*
+*.db
+*.log
