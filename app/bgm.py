@@ -1,7 +1,7 @@
 r"""配乐（v3.4）：本地 Stable Audio 3 Medium 出纯音乐。
 
 模型：`stabilityai/stable-audio-3-medium`（1.4B DiT + SAME-L 44.1kHz 立体声自编码器 + T5Gemma 文本编码器；
-8 步对抗蒸馏，单次 10~380 秒）。许可证是 Stability AI Community License + Gemma Terms：
+8 步对抗蒸馏，单次 10~380 秒；v4.0.2 起接口先限到 120 秒，见 BGM_MAX_SECONDS）。许可证是 Stability AI Community License + Gemma Terms：
 非商用免费；年收入 100 万美元以下可商用；超过要 Enterprise。用在要挣钱的视频里之前先看清。
 
 怎么装：设置 › 整备 ›「配音、语音、配乐」一键装好（scripts\install_bgm.py）：
@@ -39,7 +39,8 @@ MODEL = Path(os.environ.get("AGENT_BGM_MODEL") or paths.BGM_MODEL)     # 转换�
 SRC = Path(os.environ.get("AGENT_BGM_SRC") or paths.BGM_SRC)           # 原始 checkpoint + T5Gemma（转换用）
 SERVER = paths.APP / "bgm_server.py"
 NEED_GB = 7.0
-MIN_S, MAX_S = 10, 380
+BGM_MAX_SECONDS = 120          # v4.0.2 临时上限：200 秒长曲会溢到共享显存并出杂音；模型本身支持到 380 秒
+MIN_S, MAX_S = 10, BGM_MAX_SECONDS
 JOBN = "配乐"
 CN = re.compile(r"[一-鿿]")
 
