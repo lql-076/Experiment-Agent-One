@@ -491,6 +491,102 @@ def apply_lists(p):
     invalidate_dependents(p, "lists")
 
 
+def apply_doc(p, doc):
+    """把剧本 doc 直接落到 7 个模块（导入后不用再手动保存清单才能跑）。"""
+    shots = doc.get("shots") or []
+    if not shots:
+        raise GraphError("剧本里没有 shots（生图任务列表）")
+    ratio = p.get("ratio") if p.get("ratio") in ("9:16", "16:9") else "16:9"
+
+    buckets = {"白页": [], "紫苏": []}
+    for i, s in enumerate(shots, 1):
+        v = s.get("voice") or {}
+        role = str(v.get("role") or ("白页" if i % 2 else "紫苏"))
+        if role == "旁白":
+            role = "白页"
+        if role not in buckets:
+            role = "白页"
+        text = str(v.get("text") or "").strip()
+        if not text:
+            continue
+        buckets[role].append({"id": f"l{i}", "line_index": i, "text": text[:500],
+                              "tone": str(v.get("tone") or "")[:60],
+                              "speaker": str(v.get("speaker") or "")[:80],
+                              "engine": str(v.get("engine") or "auto")[:20]})
+    for mid, role in (("voice-white", "白页"), ("voice-zisu", "紫苏")):
+        m = module_of(p, mid)
+        lines = buckets[role]
+        spk = next((x["speaker"] for x in lines if x["speaker"]), "")
+        eng = next((x["engine"] for x in lines if x["engine"] and x["engine"] != "auto"), "")
+        m["params"].update({"role": role, "lines": lines,
+                            "speaker": spk or m["params"].get("speaker") or ("local:preset:Serena" if role == "白页" else "local:preset:Dylan"),
+                            "tone": m["params"].get("tone") or ("冷静吐槽" if role == "白页" else "轻松调侃"),
+                            "engine": eng or m["params"].get("engine") or "auto"})
+
+    items, cshots = [], []
+    for i, s in enumerate(shots, 1):
+        im = s.get("image") or {}
+        v = s.get("voice") or {}
+        prompt = str(im.get("prompt") or s.get("image_prompt") or "").strip()
+        raw_name = str(im.get("filename") or "").strip()
+        out = str(im.get("output") or "normal").lower()
+        if out not in ("normal", "gif"):
+            out = "normal"
+        fmt = "gif" if out == "gif" else (str(im.get("format") or "png").lower() if str(im.get("format") or "png").lower() in ("png", "jpeg", "jpg", "webp") else "png")
+        if not raw_name:
+            raw_name = f"s{i:02d}.{fmt}"
+        elif not Path(raw_name).suffix:
+            raw_name += "." + fmt
+        stem = Path(raw_name).stem or f"s{i:02d}"
+        item = {"id": f"i{i}", "shot_id": str(s.get("id") or f"s{i:02d}"), "line_index": i, "label": f"第 {i} 镜",
+                "filename": raw_name[:80], "prompt": prompt, "ratio": im.get("ratio") or ratio,
+                "transparent": bool(im.get("transparent")), "output": out, "format": fmt,
+                "model": str(im.get("model") or ""), "resolution": str(im.get("resolution") or "2k"),
+                "quality": str(im.get("quality") or "high"), "complexity": str(im.get("complexity") or "medium"),
+                "n": max(1, min(4, int(im.get("n") or 1))),
+                "custom_w": max(0, int(im.get("custom_w") or 0)), "custom_h": max(0, int(im.get("custom_h") or 0)),
+                "gif_frames": max(2, min(16, int(im.get("gif_frames") or 8))),
+                "gif_delay_ms": max(20, min(2000, int(im.get("gif_delay_ms") or 150))),
+                "refs": im.get("refs") or [], "selected": 0, "status": "idle"}
+        items.append(item)
+        cshots.append({"id": str(s.get("id") or f"s{i:02d}"), "line_index": i,
+                       "render": s.get("render") if s.get("render") in ("web", "ppt", "static") else "static",
+                       "text": str(v.get("text") or "")[:500], "visual": prompt[:1000],
+                       "seconds": float(s.get("seconds") or 6), "transition": str(s.get("transition") or "淡入")[:20],
+                       "image_prompt": prompt, "image": "", "_dest_stem": stem,
+                       "img_model": item["model"], "img_ratio": item["ratio"], "img_resolution": item["resolution"],
+                       "img_quality": item["quality"], "img_complexity": item["complexity"], "img_transparent": item["transparent"],
+                       "img_output": out, "img_format": fmt, "img_n": item["n"],
+                       "img_custom_w": item["custom_w"], "img_custom_h": item["custom_h"],
+                       "gif_frames": item["gif_frames"], "gif_delay_ms": item["gif_delay_ms"], "img_refs": item["refs"]})
+    im = module_of(p, "image")
+    first = items[0] if items else {}
+    im["params"].update({"items": items, "model": first.get("model") or im["params"].get("model") or "",
+                         "ratio": first.get("ratio") or ratio, "resolution": first.get("resolution") or "2k",
+                         "quality": first.get("quality") or "high", "complexity": first.get("complexity") or "medium",
+                         "output": first.get("output") or "normal", "format": first.get("format") or "png",
+                         "gif_frames": first.get("gif_frames") or 8, "gif_delay_ms": first.get("gif_delay_ms") or 150,
+                         "transparent": bool(first.get("transparent"))})
+    module_of(p, "compose")["params"].update({"shots": cshots, "ratio": ratio})
+
+    seg = ((doc.get("bgm") or {}).get("segments") or [{}])[0]
+    module_of(p, "bgm")["params"].update({"prompt": seg.get("prompt") or "upbeat electronic, no vocals",
+                                          "seconds": max(10, min(380, float(seg.get("seconds") or 180))),
+                                          "steps": max(1, min(32, int(seg.get("steps") or 8))),
+                                          "seed": int(seg.get("seed") or 20261118)})
+    p["title"] = str(doc.get("title") or p.get("title") or "")[:30]
+    p["desc"] = str(doc.get("desc") or p.get("desc") or "")[:300]
+    p["tags"] = doc.get("tags") or p.get("tags") or []
+    for mid in ("image", "voice-white", "voice-zisu", "bgm", "compose"):
+        m = module_of(p, mid)
+        m["cache_key"] = ""
+        m["cache_hit"] = False
+        if m.get("status") in ("ok", "warn"):
+            m["status"] = "stale"
+    invalidate_dependents(p, "script")
+    return {"items": len(items), "shots": len(cshots)}
+
+
 def invalidate_dependents(p, mid):
     targets = []
     if mid in ("voice-white", "voice-zisu", "bgm", "lists", "script", "image"):
@@ -702,6 +798,8 @@ def _norm_doc(j):
                                        "resolution": im.get("resolution") or "2k", "quality": im.get("quality") or "high",
                                        "complexity": im.get("complexity") or "medium", "transparent": bool(im.get("transparent")),
                                        "output": im.get("output") or "normal", "format": im.get("format") or "png", "n": n_img,
+                                       "filename": str(im.get("filename") or im.get("file") or "").strip()[:80],
+                                       "custom_w": max(0, int(im.get("custom_w") or 0)), "custom_h": max(0, int(im.get("custom_h") or 0)),
                                        "refs": [str(x)[:300] for x in (im.get("refs") or [])][:16],
                                        "gif_frames": max(2, min(16, int(im.get("gif_frames") or 8))),
                                        "gif_delay_ms": max(20, min(2000, int(im.get("gif_delay_ms") or 150)))},

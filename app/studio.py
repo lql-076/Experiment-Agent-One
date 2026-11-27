@@ -917,7 +917,7 @@ class Studio:
         ratio = body.get("ratio") if body.get("ratio") in video_maker.SIZES else "9:16"
         topic = str(body.get("topic") or "").strip()
         try:
-            seconds = max(65, min(85, int(body.get("seconds") or 75)))
+            seconds = max(15, min(600, int(body.get("seconds") or 75)))
         except (TypeError, ValueError):
             seconds = 75
         voice = voice_config(body.get("voice_id"))
@@ -948,6 +948,7 @@ class Studio:
                                  "source_text": text[:60000], "script_doc": doc, "title": doc["title"], "desc": doc["desc"], "tags": doc["tags"]})
         p["title"], p["desc"], p["tags"] = doc["title"], doc["desc"], doc["tags"]
         data = graph.write_lists(p, doc)
+        graph.apply_doc(p, doc)
         _mark(p, "plan", "ok", f"剧本导入：{len(doc['shots'])} 个分镜")
         script["status"] = "ok"
         video_maker.save_project(p)
@@ -982,6 +983,7 @@ class Studio:
         p["title"], p["desc"], p["tags"] = doc["title"], doc["desc"], doc["tags"]
         p["cost"]["plan_cny"] = round(float((p.get("cost") or {}).get("plan_cny") or 0) + cny, 4)
         data = graph.write_lists(p, doc)
+        graph.apply_doc(p, doc)
         script["status"] = "ok"
         took = time.time() - t0
         self._set_runtime(p, "script", f"已完成（{len(doc['shots'])} 个分镜，耗时 {took:.1f}s）", 100, "ok", took)
@@ -1091,6 +1093,9 @@ class Studio:
         p = self._load(_pid_of(body))
         mid = str(body.get("id") or "")
         part = str(body.get("part") or "")
+        if mid == "image" and body.get("batch"):
+            shot_id = str(body.get("shot_id") or part or "").strip()
+            part = "batch" + (":" + shot_id if shot_id else "")
         loop = asyncio.get_running_loop()
         if mid:
             graph.module_of(p, mid)
@@ -1253,8 +1258,75 @@ class Studio:
             self._save(p, True)
             self._task = None
 
+    async def _gen_project_images(self, p, ids=None):
+        """按 compose 的分镜逐张出图（普通/GIF），把结果写回分镜的 image，供终混直接用。
+        ids 为空时全部；给了 shot id / line_index 时只重绘这些镜。"""
+        compose = graph.module_of(p, "compose")
+        cshots = (compose.get("params") or {}).get("shots") or []
+        if not cshots:
+            return 0
+        all_cshots = [dict(s) for s in cshots]
+        if ids:
+            want = {str(x) for x in ids}
+            targets = [s for s in all_cshots if str(s.get("id")) in want or str(s.get("line_index")) in want]
+        else:
+            targets = all_cshots
+        if not targets:
+            return 0
+        pp = self._pseudo(p, targets)
+        im = graph.module_of(p, "image").get("params") or {}
+        pp["settings"] = dict(pp.get("settings") or {})
+        for k in ("img_model", "img_resolution", "img_quality", "img_complexity", "img_output", "img_format",
+                  "gif_frames", "gif_delay_ms", "img_n", "img_custom_w", "img_custom_h", "img_transparent", "img_refs"):
+            if im.get(k) not in (None, "", []):
+                pp["settings"][k] = im[k]
+        for s in pp["shots"]:
+            s.setdefault("image_prompt", s.get("visual") or s.get("text") or "")
+            s["image_st"] = "idle"
+            s["img_variants"] = []
+            s["img_selected"] = 0
+        tok_m = _CUR_MID.set("image")
+        tok_p = _CUR_P.set(p)
+        tok_j = _CUR_JOB.set(self.job)
+        try:
+            await self._gen_images(pp)
+        finally:
+            _CUR_MID.reset(tok_m)
+            _CUR_P.reset(tok_p)
+            _CUR_JOB.reset(tok_j)
+        by_id = {str(s.get("id")): s for s in pp["shots"]}
+        img_items = graph.module_of(p, "image").get("params", {}).get("items") or []
+        for s in cshots:
+            q = by_id.get(str(s.get("id")))
+            if not q:
+                continue
+            for k in ("image", "img_variants", "img_selected", "img_model", "image_st", "image_err",
+                      "image_cache_hit", "image_ver", "image_w", "image_h"):
+                if k in q:
+                    s[k] = q[k]
+            for it in img_items:
+                if (it.get("line_index") == s.get("line_index")) or (str(it.get("shot_id")) == str(s.get("id"))):
+                    if q.get("image"):
+                        it["rel"] = q["image"]
+                        it["status"] = "ok"
+                    it["variants"] = q.get("img_variants") or []
+                    it["selected"] = q.get("img_selected") or 0
+        p["cost"]["images_usd"] = round(float((p.get("cost") or {}).get("images_usd") or 0) +
+                                        float((pp.get("cost") or {}).get("images_usd") or 0), 4)
+        n_ok = sum(1 for s in all_cshots if s.get("image"))
+        im_mod = graph.module_of(p, "image")
+        im_mod["status"] = "ok" if n_ok else "warn"
+        rt = im_mod.setdefault("runtime", {})
+        rt.update(status="ok" if n_ok else "warn", pct=100, phase=f"生图完成（{n_ok}/{len(all_cshots)} 张）",
+                  last_took_s=rt.get("last_took_s") or 0)
+        video_maker.save_project(p)
+        return n_ok
+
     async def _run_full(self, p):
-        self.job.update(stage=1, msg="第一阶段：白页配音 + 紫苏配音 + 背景配乐，三路并行", pct=2)
+        self.job.update(stage=1, msg="第一阶段：生图 + 白页配音 + 紫苏配音 + 背景配乐", pct=2)
+        await self._gen_project_images(p)
+        if self._stopped():
+            raise StopRequested()
         tasks = [(mid, self._start_module_task(p, mid, "", keep_job=True)) for mid in ("voice-white", "voice-zisu", "bgm")]
         res = await asyncio.gather(*(t for _m, t in tasks), return_exceptions=True)
         if self._stopped():
@@ -1316,6 +1388,8 @@ class Studio:
         if mid == "script":
             return self._exec_script(p, m)
         if mid == "image":
+            if str(part or "").startswith("batch"):
+                return await self._exec_image_batch(p, m, part)
             return await self._exec_image(p, m)
         if mid in ("voice-white", "voice-zisu"):
             return await self._exec_voice(p, m)
@@ -1385,6 +1459,29 @@ class Studio:
             raise StudioError("生图没返回可用的图片")
         prm["selected"] = int(s.get("img_selected") or 0)
         m["cache_hit"] = bool(s.get("image_cache_hit"))
+        return outs
+
+    async def _exec_image_batch(self, p, m, part=""):
+        """视频工坊的生图 Agent：按 compose 分镜批量出图，part=batch[:s01,s02] 可只重绘指定镜。"""
+        ids = []
+        if ":" in str(part or ""):
+            ids = [x.strip() for x in str(part).split(":", 1)[1].split(",") if x.strip()]
+        self._phase("生图 Agent：准备批量出图…" if not ids else f"生图 Agent：只重绘 {', '.join(ids)}…", 2, "running")
+        n = await self._gen_project_images(p, ids or None)
+        if not n:
+            raise StudioError("批量生图一张都没出来：看每个分镜的报错")
+        items = (m.get("params") or {}).get("items") or []
+        outs, seen = [], set()
+        for it in items:
+            rel = str(it.get("rel") or "")
+            if not rel or rel in seen:
+                continue
+            seen.add(rel)
+            o = _out(p, rel, "image", {"index": len(outs), "shot_id": it.get("shot_id") or "", "line": it.get("line_index") or ""})
+            if o:
+                outs.append(o)
+        if not outs:
+            raise StudioError("批量生图没有可用的图片")
         return outs
 
     # ---------- 模块 3/4：两个独立配音 ----------
@@ -1523,10 +1620,16 @@ class Studio:
         if not shots:
             shots = list(prm.get("shots") or [])
         old = {str(x.get("id")): x for x in (prm.get("shots") or []) if isinstance(x, dict)}
+        keep = ("render_clip", "render_image", "image", "image_prompt", "_dest_stem", "img_model", "img_ratio",
+                "img_resolution", "img_quality", "img_complexity", "img_transparent", "img_output", "img_format",
+                "img_n", "img_custom_w", "img_custom_h", "gif_frames", "gif_delay_ms", "img_refs")
         for x in shots:
             q = old.get(str(x.get("id"))) or {}
-            x["render_clip"] = q.get("render_clip") or ""
-            x["render_image"] = q.get("render_image") or ""
+            for k in keep:
+                if q.get(k) not in (None, "", []):
+                    x[k] = q[k]
+            x.setdefault("image_prompt", x.get("visual") or x.get("text") or "")
+            x.setdefault("image", "")
         if not shots:
             shots = [{"id": "s1", "line_index": 1, "render": "web", "text": "视频制作总成测试字幕",
                       "visual": "深色科技感排版", "seconds": 6, "transition": "淡入", "render_clip": "", "render_image": ""}]
@@ -1575,7 +1678,7 @@ class Studio:
                     p.setdefault("files", {})[k] = pp["files"][k]
             p["total_seconds"] = pp.get("total_seconds") or 0
         web = [s for s in shots if s.get("render") == "web"]
-        ppt = [s for s in shots if s.get("render") in ("ppt", "static")]
+        ppt = [s for s in shots if s.get("render") == "ppt" or (s.get("render") == "static" and not s.get("image"))]
         if part in ("", "web") and (web or part == "web"):
             self._phase("正在渲染网页动效…", 20, "running")
             await self._render_web(p, m, web)
@@ -1773,10 +1876,36 @@ class Studio:
         proj = copy.deepcopy(p)
         proj["_transient"] = True
         proj["shots"] = []
-        for s in shots:
+        tl_by_idx = {}
+        try:
+            tl_rel = (p.get("files") or {}).get("timeline") or "tts/timeline.json"
+            tl = json.loads((d / tl_rel).read_text("utf-8"))
+            for i, x in enumerate(tl.get("shots") or []):
+                mnum = re.search(r"\d+", str(x.get("id") or ""))
+                tl_by_idx[int(mnum.group()) if mnum else i + 1] = x
+        except Exception:
+            tl_by_idx = {}
+        for i, s in enumerate(shots):
             dur = max(1.0, float(s.get("seconds") or 5))
+            li = int(s.get("line_index") or 0)
+            if not li:
+                mnum = re.search(r"\d+", str(s.get("id") or ""))
+                li = int(mnum.group()) if mnum else i + 1
+            seg = tl_by_idx.get(li)
+            if seg and seg.get("end") is not None:
+                try:
+                    start, end = float(seg.get("start") or 0), float(seg.get("end") or 0)
+                    if end > start:
+                        dur = max(0.1, end - start)
+                    else:
+                        start = 0.0
+                except (TypeError, ValueError):
+                    start, end = 0.0, dur
+            else:
+                start, end = 0.0, dur
             proj["shots"].append({"id": s["id"], "text": s.get("text") or "", "role": s.get("role") or "", "tone": s.get("tone") or "",
-                                  "duration": dur, "start": 0.0, "end": dur, "image": "", "render": s.get("render") or "static",
+                                  "duration": dur, "start": start, "end": end, "image": s.get("image") or "",
+                                  "render": s.get("render") or "static",
                                   "render_clip": s.get("render_clip") or "", "render_image": s.get("render_image") or "",
                                   "n": 1, "seconds_hint": dur})
         proj["files"] = {k: (p.get("files") or {}).get(k) for k in ("voice", "srt", "timeline", "bgm") if (p.get("files") or {}).get(k)}

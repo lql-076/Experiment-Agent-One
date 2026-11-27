@@ -320,8 +320,10 @@ KNOWN = {      # 按 API易 文档和网页版「AI 图片大师」的列表（2
     "gpt-image-2.5-all": _m("openai", "GPT Image 2.5 All", "逆向", .03, 60, "ChatGPT 网页版线路（Images 2.5），文字还原度好、内容限制少；不认尺寸，比例写进提示词",
                             size="prompt", refs=5),
     "gpt-image-2-all": _m("openai", "GPT Image 2 All", "逆向", .025, 90, "ChatGPT 网页版线路；不认尺寸，比例写进提示词", size="prompt", refs=5),
-    "gpt-image-2.6-sunburst": _m("openai", "GPT Image 2.6 Sunburst", "逆向", .03, 80, "2.6 Sunburst，支持普通/GIF/SVG、最多 16 张参考图、透明背景", q=Q4, trans="api", refs=16) | {"gif": True, "svg": True},
-    "gpt-image-2.6-sunburst-vip": _m("openai", "GPT Image 2.6 Sunburst VIP", "逆向", .03, 80, "2.6 Sunburst VIP，支持普通/GIF/SVG、30 档尺寸、透明背景", q=Q4, trans="api", refs=16) | {"gif": True, "svg": True},
+    "gpt-image-2.6-sunburst": _m("openai", "GPT Image 2.6 Sunburst", "逆向", .03, 80, "2.6 Sunburst，支持普通/GIF/SVG、最多 16 张参考图、透明背景", q=Q6, trans="api", refs=16) | {"gif": True, "svg": True},
+    "gpt-image-2.6-sunburst-vip": _m("openai", "GPT Image 2.6 Sunburst VIP", "逆向", .03, 80, "2.6 Sunburst VIP，支持普通/GIF/SVG、30 档尺寸、透明背景", q=Q6, trans="api", refs=16) | {"gif": True, "svg": True},
+    "gpt-image-2.6-flare": _m("openai", "GPT Image 2.6 Flare", "逆向", .03, 60, "2.6 Flare，速度优先；支持普通/GIF/SVG/WebP/透明，最多 16 张参考图", q=Q6, trans="api", refs=16) | {"gif": True, "svg": True},
+    "gpt-image-2.6-all": _m("openai", "GPT Image 2.6 All", "逆向", .03, 60, "2.6 All，ChatGPT 网页版线路；支持普通/GIF/SVG/WebP/透明，不认尺寸，比例写进提示词", size="prompt", refs=16) | {"gif": True, "svg": True},
     "gpt-image-2.5-sunburst": _m("openai", "GPT Image 2.5 Sunburst", "官转", None, 40, "画质优先，按 token 计费（画质开高很贵）；5 档画质", q=Q6, trans="api", refs=8),
     "gpt-image-2.5-flare": _m("openai", "GPT Image 2.5 Flare", "官转", None, 20, "速度优先，按 token 计费；5 档画质", q=Q6, trans="api", refs=8),
     "gpt-image-2": _m("openai", "GPT Image 2", "官转", None, 90, "上一代官转，按 token 计费", q=Q4, refs=8),
@@ -650,8 +652,9 @@ async def _call_openai_images(c, base, k, cd, prompt, ratio, tier, quality, tran
         f["background"] = "transparent" if transparent else "opaque"
     if output_type == "gif" and cd.get("gif"):
         f["output_format"] = "gif"
-        f["gif_frames"] = max(2, min(16, int(gif_frames or 8)))
-        f["gif_delay_ms"] = max(20, min(2000, int(gif_delay_ms or 150)))
+        # API易 / GPT Image 2.6 的真实字段名（2026-11 文档/实测）：frame_count / frame_duration_ms
+        f["frame_count"] = max(2, min(16, int(gif_frames or 8)))
+        f["frame_duration_ms"] = max(20, min(2000, int(gif_delay_ms or 150)))
     elif output_type == "svg" and cd.get("svg"):
         f["output_format"] = "svg"
     else:
